@@ -2,7 +2,7 @@
 
 **A framework for general intelligence built on four fundamental principles, validated on ARC-AGI.**
 
-Based on the research and principles proposed by [Vibhor Jain](https://github.com/vibhor-jain).
+Based on the research and principles proposed by [Vibhor Jain](https://github.com/vibhor-77).
 
 ---
 
@@ -58,16 +58,23 @@ Current AI systems "reset" with each training run — knowledge doesn't compound
 
 ```bash
 # Clone the repository
-git clone https://github.com/vibhor-jain/four-pillars-agi.git
-cd four-pillars-agi
+git clone https://github.com/vibhor-77/agi-mvp-general.git
+cd agi-mvp-general
 
-# No external dependencies required (stdlib only)
+# Install development dependencies (pytest for testing)
+pip install -r requirements.txt
+
 # Run the evaluation
 python -m arc_agent.main
 
 # Run tests
 python -m pytest tests/ -v
+
+# Alternative: run tests without pytest
+python run_tests.py
 ```
+
+**Requirements:** Python 3.9+. The agent itself has zero runtime dependencies (stdlib only). `pytest` is needed only for running the full test suite.
 
 ## Results (v0.1 — Sample Tasks)
 
@@ -82,11 +89,13 @@ python -m pytest tests/ -v
 ## Project Structure
 
 ```
-four-pillars-agi/
+agi-mvp-general/
 ├── README.md                        # This file
 ├── four_pillars_research_plan.md    # Formal research plan with metrics & protocols
 ├── DESIGN_NOTES.md                  # Implementation thoughts and design decisions
-├── requirements.txt                 # Python dependencies
+├── requirements.txt                 # Python dependencies (pytest only)
+├── pyproject.toml                   # Python project configuration
+├── run_tests.py                     # Test runner (works with or without pytest)
 ├── arc_agent/                       # Core agent implementation
 │   ├── __init__.py                  # Package definition
 │   ├── concepts.py                  # Concept, Program, Toolkit, Archive (Pillar 3)
@@ -154,6 +163,6 @@ If you use this work, please cite:
   author = {Jain, Vibhor},
   title = {Four Pillars of General Learning: A Framework for Artificial General Intelligence},
   year = {2026},
-  url = {https://github.com/vibhor-jain/four-pillars-agi}
+  url = {https://github.com/vibhor-77/agi-mvp-general}
 }
 ```

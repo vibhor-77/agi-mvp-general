@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Any
 import json
 import copy
-import numpy as np
 
 
 # Type alias for ARC grids
