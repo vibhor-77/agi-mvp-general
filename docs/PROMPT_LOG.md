@@ -143,9 +143,45 @@ The roadmap Phase 1 priorities are:
 | Persistence | None | Full JSON roundtrip |
 | Object reasoning | None | Connected components, extraction, recoloring |
 
-### Next Steps (from this session)
+---
 
-1. **Full ARC-AGI-1 evaluation** — Download dataset, run at scale
+## Session 3 (continued) — ARC-AGI Benchmark Harness
+
+### Prompt
+
+> Continue from where you left off. It is ok to pip install some utility and lightweight dependencies like pytest, pytest-cov etc. Also, did you run the full ARC-AGI benchmark, or is it part of the instructions?
+
+### Claude's Reasoning
+
+The full ARC-AGI benchmark has NOT been run yet. The 10/10 results were on 10 hand-crafted sample tasks. The sandbox blocks both pip installs and git clones (network access restricted), so we cannot download the ARC-AGI dataset or install pytest here. However, we can build all the infrastructure so running the real benchmark is a single command locally.
+
+### Work Done
+
+1. **`dataset.py`** — ARC-AGI dataset loader with `load_task()`, `load_dataset()`, and `evaluate_dataset()`. Handles the official JSON format, progress tracking, per-task metrics, test validation, and result export.
+
+2. **`evaluate.py`** — Full benchmark CLI with `--data-dir`, `--output`, `--limit`, `--save-toolkit`, `--save-archive`, `--population`, `--generations`, `--seed`, `--quiet` flags.
+
+3. **`test_dataset.py`** — 11 tests (TDD): task loading, dataset loading, evaluation harness, result export, metric validation.
+
+4. Updated README with benchmark instructions, updated project structure and test count.
+
+| Metric | Value |
+|--------|-------|
+| Total tests | 155 |
+| All passing | Yes |
+| Evaluation harness ready | Yes |
+| Full benchmark run | Not yet (requires dataset download) |
+
+### How to Run the Full Benchmark (User Action Required)
+
+```bash
+git clone https://github.com/fchollet/ARC-AGI.git
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
+```
+
+### Next Steps
+
+1. **Run full ARC-AGI-1 benchmark** on user's machine (dataset download required)
 2. **Conditional logic** — If-then-else branching in programs
 3. **Task decomposition** — Fractal problem-solving for hard tasks
 4. **Improve coverage** — Target 70%+ line coverage

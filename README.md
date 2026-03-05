@@ -62,7 +62,31 @@ python -m arc_agent.main --task mirror_h
 | Knowledge compounding | Yes (Task 10 reuses Task 6's learned concept) |
 | Persistence | Toolkit survives across runs via JSON serialization |
 | LLM used | None — pure 4 Pillars |
-| Test coverage | 144 tests, 47.6% line coverage |
+| Test coverage | 155 tests, built-in line coverage measurement |
+
+## Running the Full ARC-AGI Benchmark
+
+The sample tasks above are hand-crafted. To evaluate on the real ARC-AGI-1 dataset (400+ tasks):
+
+```bash
+# 1. Clone the official ARC-AGI dataset
+git clone https://github.com/fchollet/ARC-AGI.git
+
+# 2. Run on training set (400 tasks)
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
+
+# 3. Run on evaluation set (400 tasks, held-out)
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation
+
+# 4. Quick test on first 20 tasks
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --limit 20
+
+# 5. Save results and learned toolkit
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
+    --output results.json --save-toolkit learned_toolkit.json
+```
+
+**Note:** Full ARC-AGI-1 benchmark results are pending — the evaluation harness is ready but has not yet been run on the full dataset. Results will be added here once available.
 
 ## Project Structure
 
@@ -87,16 +111,19 @@ agi-mvp-general/
 │   ├── solver.py                    # Main learning loop (all 4 pillars)
 │   ├── scorer.py                    # Feedback scoring engine (Pillar 1)
 │   ├── explorer.py                  # Explore/exploit engine (Pillar 4)
+│   ├── dataset.py                   # ARC-AGI dataset loader
+│   ├── evaluate.py                  # Full benchmark evaluation CLI
 │   ├── sample_tasks.py              # 10 sample ARC-AGI tasks
 │   └── main.py                      # CLI entry point with persistence flags
-└── tests/                           # Test suite (144 tests)
+└── tests/                           # Test suite (155 tests)
     ├── test_concepts.py             # Unit tests for concept system (21 tests)
     ├── test_primitives.py           # Unit tests for DSL primitives (30 tests)
     ├── test_objects.py              # Unit tests for object primitives (19 tests)
     ├── test_scorer.py               # Unit tests for scoring engine (18 tests)
     ├── test_synthesizer.py          # Unit tests for program synthesis (12 tests)
     ├── test_explorer.py             # Unit tests for exploration engine (14 tests)
-    ├── test_persistence.py          # Unit tests for serialization (8 tests)
+    ├── test_persistence.py          # Unit tests for serialization (7 tests)
+    ├── test_dataset.py              # Unit tests for dataset loader (11 tests)
     └── test_integration.py          # Integration tests (full pipeline, 22 tests)
 ```
 
@@ -156,7 +183,8 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] **Object-level primitives** (connected components, extraction, recoloring)
 - [x] **Persistent Toolkit serialization** (save/load across runs)
 - [x] **Test suite with coverage** (144 tests, built-in coverage measurement)
-- [ ] **Full ARC-AGI-1 evaluation** (400 training + 400 eval tasks)
+- [x] **ARC-AGI-1 evaluation harness** (dataset loader + benchmark CLI)
+- [ ] **Run full ARC-AGI-1 evaluation** and record results
 - [ ] **Conditional logic in programs** (if-then-else branching)
 - [ ] **Task decomposition** (fractal problem-solving for hard tasks)
 - [ ] **Ablation studies** (validate each pillar is necessary)

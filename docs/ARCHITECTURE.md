@@ -117,9 +117,25 @@ The main learning loop:
 
 Also implements batch solving with cumulative culture metrics.
 
+### `dataset.py` — ARC-AGI Dataset Loader
+
+Loads the official ARC-AGI JSON dataset format. Provides:
+
+- **`load_task()`**: Load a single task JSON file.
+- **`load_dataset()`**: Load all task JSONs from a directory (sorted by filename).
+- **`evaluate_dataset()`**: Run the full Four Pillars solver on a dataset with progress tracking, test validation, and result export to JSON.
+
+### `evaluate.py` — Benchmark CLI
+
+CLI entry point for running the full ARC-AGI benchmark:
+
+- Supports `--data-dir`, `--output`, `--limit`, `--save-toolkit`, `--save-archive`
+- Progress tracking with per-task status output
+- Result export to JSON for analysis
+
 ### `main.py` — Entry Point
 
-Runs full evaluation, test validation, and prints cumulative culture metrics.
+Runs evaluation on built-in sample tasks, with persistence flags for save/load.
 
 ## Data Flow
 
