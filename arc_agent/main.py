@@ -9,18 +9,36 @@ Demonstrates Vibhor Jain's 4 Pillars framework on ARC-AGI tasks:
   4. Exploration: UCB-based explore/exploit tradeoff
 
 Usage:
-    python -m arc_agent.main
+    python -m arc_agent.main                    # Full evaluation
+    python -m arc_agent.main --task mirror_h    # Single task
+    python -m arc_agent.main --save-toolkit t.json  # Save after eval
+    python -m arc_agent.main --load-toolkit t.json  # Resume from saved
 """
+import argparse
 import json
-import time
+import os
 import random
 from .solver import FourPillarsSolver
 from .sample_tasks import SAMPLE_TASKS
 from .scorer import validate_on_test
+from .persistence import save_toolkit, load_toolkit, save_archive
 
 
-def run_evaluation():
-    """Run the full evaluation on sample ARC-AGI tasks."""
+def run_evaluation(
+    save_path: str = "",
+    load_path: str = "",
+    archive_path: str = "",
+) -> dict:
+    """Run the full evaluation on sample ARC-AGI tasks.
+
+    Args:
+        save_path: If set, save the Toolkit to this path after evaluation.
+        load_path: If set, load a pre-trained Toolkit from this path.
+        archive_path: If set, save the Archive to this path after evaluation.
+
+    Returns:
+        Dict mapping task_id → result dict.
+    """
     print("=" * 60)
     print("FOUR PILLARS AGI AGENT — ARC-AGI Evaluation")
     print("Based on the research of Vibhor Jain")
@@ -36,7 +54,7 @@ def run_evaluation():
     # Set random seed for reproducibility
     random.seed(42)
 
-    # Create the solver
+    # Create the solver (optionally loading a saved toolkit)
     solver = FourPillarsSolver(
         population_size=60,
         max_generations=30,
@@ -44,10 +62,21 @@ def run_evaluation():
         verbose=True,
     )
 
-    print(f"Initial toolkit: {solver.toolkit.size} concepts")
+    # If loading a pre-trained toolkit, replace the default one
+    if load_path and os.path.exists(load_path):
+        print(f"Loading toolkit from: {load_path}")
+        solver.toolkit = load_toolkit(load_path)
+        # Re-wire synthesizer and explorer to use loaded toolkit
+        solver.synthesizer.toolkit = solver.toolkit
+        solver.explorer.toolkit = solver.toolkit
+        print(f"Loaded toolkit: {solver.toolkit.size} concepts")
+    else:
+        print(f"Initial toolkit: {solver.toolkit.size} concepts")
+
     print()
 
     # Solve all sample tasks
+    initial_size = solver.toolkit.size
     results = solver.solve_batch(SAMPLE_TASKS)
 
     # Validate on test examples
@@ -61,7 +90,6 @@ def run_evaluation():
     for task_id, result in results.items():
         task = SAMPLE_TASKS[task_id]
         if result["solved"]:
-            # Find the actual program to validate
             programs = solver.archive.task_solutions.get(task_id, [])
             if programs:
                 program = programs[0]
@@ -96,8 +124,17 @@ def run_evaluation():
     print(f"  Pillar 1 (Feedback):      {solver.tasks_attempted} tasks scored")
     print(f"  Pillar 2 (Approximation): Avg score = "
           f"{sum(r['score'] for r in results.values())/len(results):.3f}")
-    print(f"  Pillar 3 (Composability): {solver.toolkit.size - 50} new concepts learned")
+    print(f"  Pillar 3 (Composability): "
+          f"{solver.toolkit.size - initial_size} new concepts learned")
     print(f"  Pillar 4 (Exploration):   epsilon = {solver.explorer.epsilon:.3f}")
+
+    # Save toolkit and archive if requested
+    if save_path:
+        save_toolkit(solver.toolkit, save_path)
+        print(f"\nToolkit saved to: {save_path}")
+    if archive_path:
+        save_archive(solver.archive, archive_path)
+        print(f"Archive saved to: {archive_path}")
 
     return results
 
@@ -122,5 +159,38 @@ def run_single_task(task_name: str):
     print(f"\nResult: {json.dumps(result, indent=2)}")
 
 
+def main():
+    """CLI entry point with argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Four Pillars AGI Agent — ARC-AGI Evaluation"
+    )
+    parser.add_argument(
+        "--task", type=str, default="",
+        help="Run a single task by name (e.g., 'mirror_h')"
+    )
+    parser.add_argument(
+        "--save-toolkit", type=str, default="",
+        help="Save the toolkit to this JSON file after evaluation"
+    )
+    parser.add_argument(
+        "--load-toolkit", type=str, default="",
+        help="Load a pre-trained toolkit from this JSON file"
+    )
+    parser.add_argument(
+        "--save-archive", type=str, default="",
+        help="Save the archive to this JSON file after evaluation"
+    )
+    args = parser.parse_args()
+
+    if args.task:
+        run_single_task(args.task)
+    else:
+        run_evaluation(
+            save_path=args.save_toolkit,
+            load_path=args.load_toolkit,
+            archive_path=args.save_archive,
+        )
+
+
 if __name__ == "__main__":
-    run_evaluation()
+    main()

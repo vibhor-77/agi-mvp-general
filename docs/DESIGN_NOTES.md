@@ -76,14 +76,14 @@ Over time, the Toolkit grows from simple primitives to increasingly complex comp
 
 ## What's Missing (Known Limitations)
 
-### 1. Object-Level Reasoning
+### 1. Object-Level Reasoning — *Partially Addressed in v0.2*
 
-The current DSL operates on whole grids. Many ARC tasks require reasoning about *objects within* grids — finding connected components, detecting sub-patterns, reasoning about spatial relationships between objects. This needs:
+~~The current DSL operates on whole grids.~~ v0.2 added `objects.py` with connected component extraction, object property detection, and basic object transforms (extract, recolor, mirror). Still missing:
 
-- Connected component extraction
-- Object property detection (size, color, position, shape)
 - Object-to-object relationships (same color, touching, aligned, contains)
-- Object-level transformations (move object, recolor object, duplicate object)
+- Object movement (translate object to position)
+- Object duplication and pattern repetition
+- Sub-pattern detection within objects
 
 ### 2. Conditional Logic
 
@@ -104,13 +104,13 @@ Hard ARC tasks often require solving sub-problems. For example: "Find the patter
 
 This is the fractal problem-solving from Vibhor's framework — recursively breaking hard problems into simpler ones.
 
-### 4. Persistent State
+### 4. Persistent State — *Addressed in v0.2*
 
-Currently, the Toolkit lives in memory and dies when the process ends. For true "cumulative culture," we need:
+~~Currently, the Toolkit lives in memory and dies when the process ends.~~ v0.2 added `persistence.py` with full JSON serialization of Toolkit and Archive. Composed concepts survive via recipe-based reconstruction. Still needed:
 
-- Serialization/deserialization of the Toolkit
 - Version management (concept library versions)
 - Selective forgetting (prune low-utility concepts to prevent bloat)
+- Migration support when primitives change between code versions
 
 ### 5. Scale
 
@@ -121,8 +121,8 @@ The prototype works on 10 hand-crafted tasks. Real validation requires the full 
 | Framework Concept | Implementation |
 |------------------|----------------|
 | "Interaction is the only source of truth" | Programs are only scored by running them against examples |
-| "The Reset Button Problem" | Concept promotion prevents knowledge loss between tasks |
-| "Cumulative culture" | Toolkit grows monotonically; later tasks build on earlier learning |
+| "The Reset Button Problem" | Concept promotion + persistent serialization (v0.2) |
+| "Cumulative culture" | Toolkit grows monotonically; persists across runs via save/load |
 | "Fractal intelligence" | Concepts compose recursively; programs of any depth |
 | "Substrate independence" | Pure Python with no ML dependencies |
 | "Concept grammar" | Dataclass hierarchy: Constant \| Operator \| Composed |

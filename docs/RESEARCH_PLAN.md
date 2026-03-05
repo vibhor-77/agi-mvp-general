@@ -2,7 +2,7 @@
 
 **Author:** Vibhor Jain
 **Date:** March 2026
-**Status:** Active Research — Prototype v0.1 Complete
+**Status:** Active Research — Prototype v0.2 Complete (object primitives + persistence)
 
 ---
 
@@ -240,28 +240,31 @@ The prototype's evolutionary program synthesis is related to:
 
 ```
 arc_agent/
-├── __init__.py          # Package definition
+├── __init__.py          # Package definition (v0.2.0)
 ├── concepts.py          # Concept, Program, Toolkit, Archive (Pillar 3)
 ├── primitives.py        # DSL primitives — 43 grid transformations
+├── objects.py           # Object-level primitives — 30 concepts (v0.2)
+├── persistence.py       # Toolkit/Archive save/load — JSON (v0.2)
 ├── synthesizer.py       # Evolutionary program synthesis (Pillar 2)
 ├── solver.py            # Main learning loop (integrates all 4 pillars)
 ├── scorer.py            # Feedback scoring engine (Pillar 1)
 ├── explorer.py          # Explore/exploit engine (Pillar 4)
 ├── sample_tasks.py      # 10 sample ARC-AGI tasks
-└── main.py              # Entry point and evaluation runner
+└── main.py              # CLI entry point with persistence flags
 ```
 
 ---
 
 ## 9. Next Steps (Immediate)
 
-1. **Download full ARC-AGI-1 dataset** and run evaluation at scale
-2. **Add object-level primitives** — extract connected components, detect patterns, find symmetries
-3. **Implement task decomposition** — when a task is too hard, break it into sub-problems
-4. **Add persistent concept serialization** — save/load the Toolkit so it survives across runs (solving the "Reset Button" problem)
-5. **Run ablation studies** to validate each pillar is necessary
-6. **Prepare ARC-AGI-3 integration** — interactive environment support
-7. **Begin Zork agent** implementation using Jericho framework
+1. ~~**Add object-level primitives**~~ ✅ Done in v0.2 — 30 concepts (connected components, extraction, recoloring)
+2. ~~**Add persistent concept serialization**~~ ✅ Done in v0.2 — JSON save/load of Toolkit and Archive
+3. **Download full ARC-AGI-1 dataset** and run evaluation at scale
+4. **Add conditional logic** — if-then-else branching in programs, predicate evaluation
+5. **Implement task decomposition** — when a task is too hard, break it into sub-problems
+6. **Run ablation studies** to validate each pillar is necessary
+7. **Prepare ARC-AGI-3 integration** — interactive environment support
+8. **Begin Zork agent** implementation using Jericho framework
 
 ---
 

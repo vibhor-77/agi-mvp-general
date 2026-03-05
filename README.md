@@ -19,6 +19,87 @@ General intelligence is not a single algorithm. It is an emergent property that 
 
 These pillars are substrate-independent and scale fractally — from neurons to brains to societies.
 
+## Key Innovation: No Reset Button
+
+Current AI systems "reset" with each training run — knowledge doesn't compound. This agent implements **cumulative culture**: successful programs become first-class concepts in the Toolkit, available for future composition. Later tasks benefit from earlier learning. The Toolkit can be saved to disk and loaded across runs, solving the Reset Button Problem completely.
+
+## Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/vibhor-77/agi-mvp-general.git
+cd agi-mvp-general
+
+# Install development dependencies (optional — agent has zero runtime deps)
+pip install -r requirements.txt
+
+# Run the evaluation
+python -m arc_agent.main
+
+# Save learned knowledge for later reuse
+python -m arc_agent.main --save-toolkit toolkit.json --save-archive archive.json
+
+# Resume from saved knowledge (cumulative culture across runs)
+python -m arc_agent.main --load-toolkit toolkit.json
+
+# Run tests with coverage
+python run_tests.py
+
+# Run a single task for debugging
+python -m arc_agent.main --task mirror_h
+```
+
+**Requirements:** Python 3.9+. Zero runtime dependencies (stdlib only). `pytest` and `pytest-cov` are optional dev dependencies for enhanced testing.
+
+## Results (v0.2 — Sample Tasks)
+
+| Metric | Result |
+|--------|--------|
+| Training solve rate | 10/10 (100%) |
+| Test solve rate (held-out) | 9/10 (90%) |
+| Initial toolkit size | 73 concepts (43 grid + 30 object-level) |
+| Multi-step compositions evolved | 2 per run |
+| Knowledge compounding | Yes (Task 10 reuses Task 6's learned concept) |
+| Persistence | Toolkit survives across runs via JSON serialization |
+| LLM used | None — pure 4 Pillars |
+| Test coverage | 144 tests, 47.6% line coverage |
+
+## Project Structure
+
+```
+agi-mvp-general/
+├── README.md                        # This file — project overview
+├── requirements.txt                 # Dev dependencies (pytest, pytest-cov)
+├── pyproject.toml                   # Python project configuration
+├── run_tests.py                     # Test runner with built-in coverage
+├── docs/                            # Documentation
+│   ├── ARCHITECTURE.md              # Detailed technical architecture guide
+│   ├── DESIGN_NOTES.md              # Design decisions and rationale
+│   ├── RESEARCH_PLAN.md             # Formal research plan with metrics
+│   └── PROMPT_LOG.md                # Full session history, prompts & results
+├── arc_agent/                       # Core agent implementation
+│   ├── __init__.py                  # Package definition (v0.2.0)
+│   ├── concepts.py                  # Concept, Program, Toolkit, Archive (Pillar 3)
+│   ├── primitives.py                # 43 DSL grid transformations
+│   ├── objects.py                   # Object-level primitives (30 concepts)
+│   ├── persistence.py               # Toolkit/Archive save/load (JSON)
+│   ├── synthesizer.py               # Evolutionary program synthesis (Pillar 2)
+│   ├── solver.py                    # Main learning loop (all 4 pillars)
+│   ├── scorer.py                    # Feedback scoring engine (Pillar 1)
+│   ├── explorer.py                  # Explore/exploit engine (Pillar 4)
+│   ├── sample_tasks.py              # 10 sample ARC-AGI tasks
+│   └── main.py                      # CLI entry point with persistence flags
+└── tests/                           # Test suite (144 tests)
+    ├── test_concepts.py             # Unit tests for concept system (21 tests)
+    ├── test_primitives.py           # Unit tests for DSL primitives (30 tests)
+    ├── test_objects.py              # Unit tests for object primitives (19 tests)
+    ├── test_scorer.py               # Unit tests for scoring engine (18 tests)
+    ├── test_synthesizer.py          # Unit tests for program synthesis (12 tests)
+    ├── test_explorer.py             # Unit tests for exploration engine (14 tests)
+    ├── test_persistence.py          # Unit tests for serialization (8 tests)
+    └── test_integration.py          # Integration tests (full pipeline, 22 tests)
+```
+
 ## Architecture
 
 ```
@@ -48,93 +129,36 @@ These pillars are substrate-independent and scale fractally — from neurons to 
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## Key Innovation: No Reset Button
-
-Current AI systems "reset" with each training run — knowledge doesn't compound. This agent implements **cumulative culture**: successful programs become first-class concepts in the Toolkit, available for future composition. Later tasks benefit from earlier learning.
-
-**Demonstrated in v0.1:** Task 10 reused a concept evolved during Task 6, solving it faster by building on prior knowledge rather than starting from scratch.
-
-## Quick Start
-
-```bash
-# Clone the repository
-git clone https://github.com/vibhor-77/agi-mvp-general.git
-cd agi-mvp-general
-
-# Install development dependencies (pytest for testing)
-pip install -r requirements.txt
-
-# Run the evaluation
-python -m arc_agent.main
-
-# Run tests
-python -m pytest tests/ -v
-
-# Alternative: run tests without pytest
-python run_tests.py
-```
-
-**Requirements:** Python 3.9+. The agent itself has zero runtime dependencies (stdlib only). `pytest` is needed only for running the full test suite.
-
-## Results (v0.1 — Sample Tasks)
-
-| Metric | Result |
-|--------|--------|
-| Training solve rate | 10/10 (100%) |
-| Test solve rate (held-out) | 9/10 (90%) |
-| Multi-step compositions evolved | 2 (crop→mirror→rotate, invert→swap→crop) |
-| Concepts compounded across tasks | Yes (Task 10 reused Task 6's learned concept) |
-| LLM used | None — pure 4 Pillars |
-
-## Project Structure
-
-```
-agi-mvp-general/
-├── README.md                        # This file
-├── four_pillars_research_plan.md    # Formal research plan with metrics & protocols
-├── DESIGN_NOTES.md                  # Implementation thoughts and design decisions
-├── requirements.txt                 # Python dependencies (pytest only)
-├── pyproject.toml                   # Python project configuration
-├── run_tests.py                     # Test runner (works with or without pytest)
-├── arc_agent/                       # Core agent implementation
-│   ├── __init__.py                  # Package definition
-│   ├── concepts.py                  # Concept, Program, Toolkit, Archive (Pillar 3)
-│   ├── primitives.py                # 43 DSL grid transformations
-│   ├── synthesizer.py               # Evolutionary program synthesis (Pillar 2)
-│   ├── solver.py                    # Main learning loop (all 4 pillars)
-│   ├── scorer.py                    # Feedback scoring engine (Pillar 1)
-│   ├── explorer.py                  # Explore/exploit engine (Pillar 4)
-│   ├── sample_tasks.py              # 10 sample ARC-AGI tasks
-│   └── main.py                      # Entry point and evaluation runner
-└── tests/                           # Test suite
-    ├── test_concepts.py             # Unit tests for concept system
-    ├── test_primitives.py           # Unit tests for DSL primitives
-    ├── test_scorer.py               # Unit tests for scoring engine
-    ├── test_synthesizer.py          # Unit tests for program synthesis
-    ├── test_explorer.py             # Unit tests for exploration engine
-    └── test_integration.py          # Integration tests (full pipeline)
-```
+For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## The Four Pillars in Code
 
-### Pillar 1: Feedback Loops (`scorer.py`)
-Every candidate program is tested against training examples. The scorer provides continuous feedback — not just "right or wrong" but *how close* — enabling gradient-free optimization.
+**Pillar 1: Feedback Loops** (`scorer.py`) — Every candidate program is tested against training examples. The scorer provides continuous feedback — not just "right or wrong" but *how close* — enabling gradient-free optimization.
 
-### Pillar 2: Approximability (`synthesizer.py`)
-Evolutionary search (mutation + crossover + selection) iteratively refines programs. Partial-credit scoring creates a smooth fitness landscape where better programs survive and reproduce.
+**Pillar 2: Approximability** (`synthesizer.py`) — Evolutionary search (mutation + crossover + selection) iteratively refines programs. Partial-credit scoring creates a smooth fitness landscape where better programs survive and reproduce.
 
-### Pillar 3: Abstraction & Composability (`concepts.py`, `primitives.py`)
-Programs are sequences of composable Concepts following a recursive grammar: `Concept → Constant | Operator | Concept Op Concept`. Successful multi-step programs are promoted to first-class Concepts in the Toolkit.
+**Pillar 3: Abstraction & Composability** (`concepts.py`, `primitives.py`, `objects.py`) — Programs are sequences of composable Concepts following a recursive grammar: `Concept → Constant | Operator | Concept Op Concept`. Successful multi-step programs are promoted to first-class Concepts in the Toolkit. Object-level primitives enable reasoning about discrete objects within grids.
 
-### Pillar 4: Exploration (`explorer.py`)
-UCB1 (Upper Confidence Bound) balances exploitation of known-good concepts with curiosity-driven exploration of under-tested ones. Novel programs are generated by composing concepts in untested ways.
+**Pillar 4: Exploration** (`explorer.py`) — UCB1 (Upper Confidence Bound) balances exploitation of known-good concepts with curiosity-driven exploration of under-tested ones. Novel programs are generated by composing concepts in untested ways.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Detailed technical architecture, module responsibilities, data flow |
+| [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Design decisions, rationale, known limitations, future directions |
+| [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | Formal research plan with metrics, protocols, and benchmarks |
+| [docs/PROMPT_LOG.md](docs/PROMPT_LOG.md) | Full session history: prompts given, reasoning, results obtained |
 
 ## Roadmap
 
+- [x] **Core 4 Pillars prototype** (feedback, approximability, composability, exploration)
+- [x] **Object-level primitives** (connected components, extraction, recoloring)
+- [x] **Persistent Toolkit serialization** (save/load across runs)
+- [x] **Test suite with coverage** (144 tests, built-in coverage measurement)
 - [ ] **Full ARC-AGI-1 evaluation** (400 training + 400 eval tasks)
-- [ ] **Object-level primitives** (connected components, pattern detection)
+- [ ] **Conditional logic in programs** (if-then-else branching)
 - [ ] **Task decomposition** (fractal problem-solving for hard tasks)
-- [ ] **Persistent Toolkit serialization** (save/load across runs)
 - [ ] **Ablation studies** (validate each pillar is necessary)
 - [ ] **ARC-AGI-2** evaluation
 - [ ] **ARC-AGI-3** interactive environment support (launching March 25, 2026)

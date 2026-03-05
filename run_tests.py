@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """
-Test runner — works with or without pytest.
+Test runner with built-in coverage measurement.
+
+Works with or without pytest. Measures line coverage using Python's
+built-in trace module and reports per-module statistics.
 
 Usage:
     # With pytest (recommended):
     pip install pytest
-    pytest tests/ -v
+    python -m pytest tests/ -v
 
-    # Without pytest (fallback):
+    # Without pytest (with coverage):
     python run_tests.py
+
+    # Without pytest (without coverage):
+    python run_tests.py --no-coverage
 """
 import sys
 import os
+import unittest
+import trace
+import argparse
 
 # Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+ARC_AGENT_DIR = os.path.join(PROJECT_ROOT, "arc_agent")
 
 
 def run_with_pytest():
@@ -23,144 +34,123 @@ def run_with_pytest():
     return pytest.main(["-v", "tests/"])
 
 
-def run_without_pytest():
-    """Fallback: run a subset of tests using unittest (no pytest fixtures)."""
-    import unittest
-    import random
-    random.seed(42)
+def discover_and_run_tests(with_coverage: bool = True):
+    """Discover and run all unittest-based tests with optional coverage.
 
-    # We can't easily run pytest-fixture-based tests without pytest,
-    # so we run a focused integration test instead
-    from arc_agent.solver import FourPillarsSolver
-    from arc_agent.sample_tasks import SAMPLE_TASKS
-    from arc_agent.scorer import validate_on_test
-    from arc_agent.primitives import (
-        rotate_90_cw, mirror_horizontal, scale_2x, gravity_down,
-        fill_enclosed, outline, identity, crop_to_nonzero,
-        build_initial_toolkit,
+    Uses unittest discovery to find all test_*.py files in tests/.
+    Optionally traces execution to measure line coverage of arc_agent/.
+
+    Args:
+        with_coverage: If True, measure and report line coverage.
+
+    Returns:
+        Exit code (0 = all tests passed, 1 = failures).
+    """
+    # Discover all tests
+    loader = unittest.TestLoader()
+    suite = loader.discover("tests", pattern="test_*.py", top_level_dir=".")
+
+    if not with_coverage:
+        runner = unittest.TextTestRunner(verbosity=2)
+        result = runner.run(suite)
+        return 0 if result.wasSuccessful() else 1
+
+    # Run with coverage tracing
+    tracer = trace.Trace(
+        count=True,
+        trace=False,
+        countfuncs=False,
+        countcallers=False,
     )
-    from arc_agent.concepts import Concept, Program, Toolkit, Archive
-    from arc_agent.synthesizer import ProgramSynthesizer
-    from arc_agent.explorer import ExplorationEngine
-    from arc_agent.scorer import pixel_accuracy, structural_similarity
 
-    passed = 0
-    failed = 0
-    errors = []
+    # Run tests under trace
+    result_holder = {}
 
-    def check(name, condition):
-        nonlocal passed, failed
-        if condition:
-            passed += 1
-            print(f"  ✓ {name}")
-        else:
-            failed += 1
-            errors.append(name)
-            print(f"  ✗ {name}")
+    def traced_runner():
+        runner = unittest.TextTestRunner(verbosity=2)
+        result_holder["result"] = runner.run(suite)
 
-    # ── Primitives Tests ──
-    print("\n=== Primitives ===")
-    check("rotate_90_cw", rotate_90_cw([[1,2],[3,4]]) == [[3,1],[4,2]])
-    check("mirror_horizontal", mirror_horizontal([[1,2,3]]) == [[3,2,1]])
-    check("scale_2x", scale_2x([[1]]) == [[1,1],[1,1]])
-    check("gravity_down", gravity_down([[1,0],[0,2]]) == [[0,0],[1,2]])
-    check("fill_enclosed", fill_enclosed([[1,1,1],[1,0,1],[1,1,1]]) == [[1,1,1],[1,1,1],[1,1,1]])
-    check("outline", outline([[1,1,1],[1,1,1],[1,1,1]]) == [[1,1,1],[1,0,1],[1,1,1]])
-    check("identity_is_copy", identity([[1]])[0][0] == 1)
-    check("crop_to_nonzero", crop_to_nonzero([[0,0],[0,5]]) == [[5]])
-    check("toolkit_has_concepts", build_initial_toolkit().size > 20)
+    tracer.runfunc(traced_runner)
+    test_result = result_holder["result"]
 
-    # ── Concepts Tests ──
-    print("\n=== Concepts ===")
-    c = Concept(kind="operator", name="id", implementation=lambda g: g)
-    c.apply([[1]])
-    check("concept_usage_tracking", c.usage_count == 1)
-    c.reinforce(True)
-    check("concept_reinforcement", c.success_count == 1)
+    # Gather coverage results
+    results = tracer.results()
+    counts = results.counts  # dict of (filename, lineno) → count
 
-    p = Program([c, c])
-    check("program_chaining", p.execute([[1]]) == [[1]])
-    check("program_length", len(p) == 2)
+    # Analyze coverage per module
+    print("\n" + "=" * 60)
+    print("COVERAGE REPORT")
+    print("=" * 60)
 
-    tk = Toolkit()
-    tk.add_concept(c)
-    check("toolkit_add", tk.size == 1)
+    source_files = {}
+    for filename, lineno in counts:
+        abs_path = os.path.abspath(filename)
+        if ARC_AGENT_DIR in abs_path and abs_path.endswith(".py"):
+            if abs_path not in source_files:
+                source_files[abs_path] = set()
+            source_files[abs_path].add(lineno)
 
-    archive = Archive()
-    archive.record_solution("t1", p, 1.0)
-    check("archive_records", len(archive.history) == 1)
+    # Count total executable lines per source file
+    total_covered = 0
+    total_executable = 0
+    file_stats = []
 
-    # ── Scorer Tests ──
-    print("\n=== Scorer ===")
-    check("pixel_accuracy_perfect", pixel_accuracy([[1,2],[3,4]], [[1,2],[3,4]]) == 1.0)
-    check("pixel_accuracy_partial", pixel_accuracy([[1,2],[3,0]], [[1,2],[3,4]]) == 0.75)
-    check("pixel_accuracy_none", pixel_accuracy([[9,9],[9,9]], [[1,2],[3,4]]) == 0.0)
-    check("structural_similarity_range",
-          0.0 <= structural_similarity([[1]], [[2]]) <= 1.0)
+    for filepath in sorted(os.listdir(ARC_AGENT_DIR)):
+        if not filepath.endswith(".py"):
+            continue
+        full_path = os.path.join(ARC_AGENT_DIR, filepath)
+        abs_path = os.path.abspath(full_path)
 
-    # ── Synthesizer Tests ──
-    print("\n=== Synthesizer ===")
-    random.seed(42)
-    tk2 = build_initial_toolkit()
-    synth = ProgramSynthesizer(tk2, population_size=20, max_program_length=3)
-    pop = synth.generate_initial_population()
-    check("population_size", len(pop) == 20)
-    check("has_single_programs", any(len(p) == 1 for p in pop))
-    mutated = synth.mutate(pop[0])
-    check("mutation_produces_program", isinstance(mutated, Program))
+        # Count executable lines (non-blank, non-comment, non-decorator-only)
+        executable = set()
+        with open(full_path, "r") as f:
+            for i, line in enumerate(f, 1):
+                stripped = line.strip()
+                if (stripped and
+                    not stripped.startswith("#") and
+                    not stripped.startswith('"""') and
+                    not stripped.startswith("'''") and
+                    stripped != '"""' and
+                    stripped != "'''"):
+                    executable.add(i)
 
-    task = {"train": [{"input": [[1,2],[3,4]], "output": [[1,2],[3,4]]}]}
-    best, history = synth.synthesize(task, max_generations=5)
-    check("synthesize_finds_identity", best.fitness >= 0.99)
+        covered = source_files.get(abs_path, set()) & executable
+        n_exec = len(executable)
+        n_covered = len(covered)
+        total_executable += n_exec
+        total_covered += n_covered
 
-    # ── Explorer Tests ──
-    print("\n=== Explorer ===")
-    random.seed(42)
-    tk3 = build_initial_toolkit()
-    ar = Archive()
-    exp = ExplorationEngine(tk3, ar, epsilon=0.3)
-    concept = exp.select_concept_ucb()
-    check("ucb_returns_concept", isinstance(concept, Concept))
-    novels = exp.generate_novel_programs(5)
-    check("generates_novel_programs", len(novels) > 0)
-    check("epsilon_decay", (exp.decay_epsilon() or True) and exp.epsilon < 0.3)
+        pct = (n_covered / n_exec * 100) if n_exec > 0 else 100.0
+        file_stats.append((filepath, n_covered, n_exec, pct))
 
-    c1 = Concept(kind="operator", name="s1", implementation=lambda g: g)
-    c2 = Concept(kind="operator", name="s2", implementation=lambda g: g)
-    new_c = exp.discover_new_concept(Program([c1, c2]), "test")
-    check("discover_multi_step", new_c is not None and new_c.kind == "composed")
-    check("discover_skips_single", exp.discover_new_concept(Program([c1]), "t") is None)
+    for filename, covered, total, pct in file_stats:
+        bar = "█" * int(pct // 5) + "░" * (20 - int(pct // 5))
+        print(f"  {filename:25s}  {covered:3d}/{total:3d}  {bar} {pct:5.1f}%")
 
-    # ── Integration Tests ──
-    print("\n=== Integration (Full Pipeline) ===")
-    random.seed(42)
-    solver = FourPillarsSolver(population_size=40, max_generations=20, verbose=False)
+    overall_pct = (total_covered / total_executable * 100) if total_executable else 100
+    print(f"\n  {'TOTAL':25s}  {total_covered:3d}/{total_executable:3d}  "
+          f"{'█' * int(overall_pct // 5)}{'░' * (20 - int(overall_pct // 5))} "
+          f"{overall_pct:5.1f}%")
+    print("=" * 60)
 
-    for task_name in ["mirror_h", "rotate_90", "scale_2x", "gravity_down",
-                      "fill_enclosed", "outline_task", "color_swap_1_to_2"]:
-        result = solver.solve_task(SAMPLE_TASKS[task_name], task_name)
-        check(f"solves_{task_name}", result["solved"])
-
-    result = solver.solve_task(SAMPLE_TASKS["crop_then_mirror"], "crop_then_mirror")
-    check("composition_partial", result["score"] > 0.5)
-    check("archive_has_history", len(solver.archive.history) >= 2)
-    check("result_format", all(k in result for k in
-          ["task_id", "solved", "score", "program", "time_seconds"]))
-
-    # Summary
-    total = passed + failed
-    print(f"\n{'='*50}")
-    print(f"Results: {passed}/{total} passed, {failed} failed")
-    if errors:
-        print(f"Failures: {', '.join(errors)}")
-    print(f"{'='*50}")
-    return 0 if failed == 0 else 1
+    return 0 if test_result.wasSuccessful() else 1
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description="Run tests with coverage")
+    parser.add_argument(
+        "--no-coverage", action="store_true",
+        help="Skip coverage measurement (faster)"
+    )
+    args = parser.parse_args()
+
     try:
         sys.exit(run_with_pytest())
     except ImportError:
-        print("pytest not installed, running fallback test suite...")
-        print("Install pytest for full test coverage: pip install pytest")
-        sys.exit(run_without_pytest())
+        print("pytest not installed, running unittest discovery...")
+        print("Install pytest for full test coverage: pip install pytest\n")
+        sys.exit(discover_and_run_tests(with_coverage=not args.no_coverage))
+
+
+if __name__ == "__main__":
+    main()

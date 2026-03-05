@@ -380,13 +380,17 @@ def has_single_color(grid: Grid) -> bool:
 # TOOLKIT INITIALIZATION
 # ============================================================
 
-def build_initial_toolkit() -> Toolkit:
+def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
     """Build the initial toolkit with all primitive concepts.
 
     This is the 'seed' — the equivalent of the basic biological
     machinery that evolution starts with. From Vibhor's framework,
     these are the base concepts that will be composed into
     higher-level abstractions through the learning loop.
+
+    Args:
+        include_objects: If True, include object-level primitives
+            (connected components, extraction, etc). Default True.
     """
     toolkit = Toolkit()
 
@@ -442,5 +446,10 @@ def build_initial_toolkit() -> Toolkit:
             name=name,
             implementation=_make_recolor_nonzero(color),
         ))
+
+    # Add object-level primitives
+    if include_objects:
+        from .objects import add_object_concepts
+        add_object_concepts(toolkit)
 
     return toolkit
