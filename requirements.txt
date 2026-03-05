@@ -1,0 +1,6 @@
+# Core dependencies: None! The agent uses only Python stdlib.
+# This is deliberate — Vibhor's framework argues intelligence emerges
+# from principles, not from pre-trained models or heavy dependencies.
+
+# Development/testing dependencies
+pytest>=7.0
