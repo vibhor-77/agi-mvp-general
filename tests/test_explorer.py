@@ -1,22 +1,22 @@
 """Unit tests for Exploration Engine (Pillar 4: Explore/Exploit)."""
-
+import pytest
 import random
 from arc_agent.explorer import ExplorationEngine
 from arc_agent.primitives import build_initial_toolkit
 from arc_agent.concepts import Toolkit, Archive, Program, Concept
 
 
-# fixture
+@pytest.fixture
 def toolkit():
     return build_initial_toolkit()
 
 
-# fixture
+@pytest.fixture
 def archive():
     return Archive()
 
 
-# fixture
+@pytest.fixture
 def explorer(toolkit, archive):
     return ExplorationEngine(toolkit, archive, epsilon=0.3)
 

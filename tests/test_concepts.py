@@ -1,5 +1,5 @@
 """Unit tests for the Concept system (Pillar 3: Abstraction & Composability)."""
-
+import pytest
 from arc_agent.concepts import Concept, Program, Toolkit, Archive, Grid
 
 

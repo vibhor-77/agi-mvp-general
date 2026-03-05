@@ -1,5 +1,5 @@
 """Unit tests for the Scoring Engine (Pillar 1: Feedback Loops)."""
-
+import pytest
 from arc_agent.scorer import (
     pixel_accuracy, structural_similarity,
     score_program_on_task, validate_on_test,

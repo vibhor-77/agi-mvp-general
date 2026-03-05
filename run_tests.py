@@ -1,101 +1,166 @@
 #!/usr/bin/env python3
 """
-Test runner that works without pytest.
-Imports all test classes and runs them using unittest.
+Test runner — works with or without pytest.
+
+Usage:
+    # With pytest (recommended):
+    pip install pytest
+    pytest tests/ -v
+
+    # Without pytest (fallback):
+    python run_tests.py
 """
-import unittest
 import sys
-import random
+import os
 
-# Ensure reproducibility
-random.seed(42)
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# We need to convert pytest-style tests to unittest-compatible
-# by wrapping them in a simple adapter
 
-def run_all_tests():
-    """Discover and run all tests."""
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
+def run_with_pytest():
+    """Run tests using pytest."""
+    import pytest
+    return pytest.main(["-v", "tests/"])
 
-    # Import all test modules
-    from tests import test_concepts, test_primitives, test_scorer
-    from tests import test_synthesizer, test_explorer, test_integration
 
-    modules = [
-        test_concepts, test_primitives, test_scorer,
-        test_synthesizer, test_explorer, test_integration,
-    ]
+def run_without_pytest():
+    """Fallback: run a subset of tests using unittest (no pytest fixtures)."""
+    import unittest
+    import random
+    random.seed(42)
 
-    for mod in modules:
-        # Find all classes in the module
-        for name in dir(mod):
-            obj = getattr(mod, name)
-            if isinstance(obj, type) and name.startswith("Test"):
-                # Convert pytest-style test class to unittest
-                # Create a unittest.TestCase subclass dynamically
-                methods = [m for m in dir(obj) if m.startswith("test_")]
-                for method_name in methods:
-                    method = getattr(obj, method_name)
+    # We can't easily run pytest-fixture-based tests without pytest,
+    # so we run a focused integration test instead
+    from arc_agent.solver import FourPillarsSolver
+    from arc_agent.sample_tasks import SAMPLE_TASKS
+    from arc_agent.scorer import validate_on_test
+    from arc_agent.primitives import (
+        rotate_90_cw, mirror_horizontal, scale_2x, gravity_down,
+        fill_enclosed, outline, identity, crop_to_nonzero,
+        build_initial_toolkit,
+    )
+    from arc_agent.concepts import Concept, Program, Toolkit, Archive
+    from arc_agent.synthesizer import ProgramSynthesizer
+    from arc_agent.explorer import ExplorationEngine
+    from arc_agent.scorer import pixel_accuracy, structural_similarity
 
-                    # Check if method expects fixtures
-                    import inspect
-                    sig = inspect.signature(method)
-                    params = list(sig.parameters.keys())
-                    params = [p for p in params if p != 'self']
+    passed = 0
+    failed = 0
+    errors = []
 
-                    # Create a test case
-                    def make_test(cls, mname, fixture_params):
-                        def test_fn(self):
-                            random.seed(42)
-                            instance = cls()
-                            fn = getattr(instance, mname)
-                            # Resolve fixtures
-                            kwargs = {}
-                            for param in fixture_params:
-                                if param == 'toolkit':
-                                    from arc_agent.primitives import build_initial_toolkit
-                                    kwargs[param] = build_initial_toolkit()
-                                elif param == 'archive':
-                                    from arc_agent.concepts import Archive
-                                    kwargs[param] = Archive()
-                                elif param == 'synth':
-                                    from arc_agent.primitives import build_initial_toolkit
-                                    from arc_agent.synthesizer import ProgramSynthesizer
-                                    tk = build_initial_toolkit()
-                                    kwargs[param] = ProgramSynthesizer(tk, population_size=20, max_program_length=3)
-                                elif param == 'explorer':
-                                    from arc_agent.primitives import build_initial_toolkit
-                                    from arc_agent.explorer import ExplorationEngine
-                                    from arc_agent.concepts import Archive
-                                    tk = build_initial_toolkit()
-                                    ar = Archive()
-                                    kwargs[param] = ExplorationEngine(tk, ar, epsilon=0.3)
-                                elif param == 'solver':
-                                    from arc_agent.solver import FourPillarsSolver
-                                    kwargs[param] = FourPillarsSolver(
-                                        population_size=40, max_generations=20,
-                                        max_program_length=4, verbose=False
-                                    )
-                            fn(**kwargs)
-                        test_fn.__name__ = f"test_{cls.__name__}_{mname}"
-                        return test_fn
+    def check(name, condition):
+        nonlocal passed, failed
+        if condition:
+            passed += 1
+            print(f"  ✓ {name}")
+        else:
+            failed += 1
+            errors.append(name)
+            print(f"  ✗ {name}")
 
-                    # Create a TestCase class for this test
-                    test_case_name = f"{name}_{method_name}"
-                    test_method = make_test(obj, method_name, params)
+    # ── Primitives Tests ──
+    print("\n=== Primitives ===")
+    check("rotate_90_cw", rotate_90_cw([[1,2],[3,4]]) == [[3,1],[4,2]])
+    check("mirror_horizontal", mirror_horizontal([[1,2,3]]) == [[3,2,1]])
+    check("scale_2x", scale_2x([[1]]) == [[1,1],[1,1]])
+    check("gravity_down", gravity_down([[1,0],[0,2]]) == [[0,0],[1,2]])
+    check("fill_enclosed", fill_enclosed([[1,1,1],[1,0,1],[1,1,1]]) == [[1,1,1],[1,1,1],[1,1,1]])
+    check("outline", outline([[1,1,1],[1,1,1],[1,1,1]]) == [[1,1,1],[1,0,1],[1,1,1]])
+    check("identity_is_copy", identity([[1]])[0][0] == 1)
+    check("crop_to_nonzero", crop_to_nonzero([[0,0],[0,5]]) == [[5]])
+    check("toolkit_has_concepts", build_initial_toolkit().size > 20)
 
-                    tc = type(test_case_name, (unittest.TestCase,), {
-                        method_name: test_method,
-                    })
-                    suite.addTest(tc(method_name))
+    # ── Concepts Tests ──
+    print("\n=== Concepts ===")
+    c = Concept(kind="operator", name="id", implementation=lambda g: g)
+    c.apply([[1]])
+    check("concept_usage_tracking", c.usage_count == 1)
+    c.reinforce(True)
+    check("concept_reinforcement", c.success_count == 1)
 
-    # Run with verbosity
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-    return result
+    p = Program([c, c])
+    check("program_chaining", p.execute([[1]]) == [[1]])
+    check("program_length", len(p) == 2)
+
+    tk = Toolkit()
+    tk.add_concept(c)
+    check("toolkit_add", tk.size == 1)
+
+    archive = Archive()
+    archive.record_solution("t1", p, 1.0)
+    check("archive_records", len(archive.history) == 1)
+
+    # ── Scorer Tests ──
+    print("\n=== Scorer ===")
+    check("pixel_accuracy_perfect", pixel_accuracy([[1,2],[3,4]], [[1,2],[3,4]]) == 1.0)
+    check("pixel_accuracy_partial", pixel_accuracy([[1,2],[3,0]], [[1,2],[3,4]]) == 0.75)
+    check("pixel_accuracy_none", pixel_accuracy([[9,9],[9,9]], [[1,2],[3,4]]) == 0.0)
+    check("structural_similarity_range",
+          0.0 <= structural_similarity([[1]], [[2]]) <= 1.0)
+
+    # ── Synthesizer Tests ──
+    print("\n=== Synthesizer ===")
+    random.seed(42)
+    tk2 = build_initial_toolkit()
+    synth = ProgramSynthesizer(tk2, population_size=20, max_program_length=3)
+    pop = synth.generate_initial_population()
+    check("population_size", len(pop) == 20)
+    check("has_single_programs", any(len(p) == 1 for p in pop))
+    mutated = synth.mutate(pop[0])
+    check("mutation_produces_program", isinstance(mutated, Program))
+
+    task = {"train": [{"input": [[1,2],[3,4]], "output": [[1,2],[3,4]]}]}
+    best, history = synth.synthesize(task, max_generations=5)
+    check("synthesize_finds_identity", best.fitness >= 0.99)
+
+    # ── Explorer Tests ──
+    print("\n=== Explorer ===")
+    random.seed(42)
+    tk3 = build_initial_toolkit()
+    ar = Archive()
+    exp = ExplorationEngine(tk3, ar, epsilon=0.3)
+    concept = exp.select_concept_ucb()
+    check("ucb_returns_concept", isinstance(concept, Concept))
+    novels = exp.generate_novel_programs(5)
+    check("generates_novel_programs", len(novels) > 0)
+    check("epsilon_decay", (exp.decay_epsilon() or True) and exp.epsilon < 0.3)
+
+    c1 = Concept(kind="operator", name="s1", implementation=lambda g: g)
+    c2 = Concept(kind="operator", name="s2", implementation=lambda g: g)
+    new_c = exp.discover_new_concept(Program([c1, c2]), "test")
+    check("discover_multi_step", new_c is not None and new_c.kind == "composed")
+    check("discover_skips_single", exp.discover_new_concept(Program([c1]), "t") is None)
+
+    # ── Integration Tests ──
+    print("\n=== Integration (Full Pipeline) ===")
+    random.seed(42)
+    solver = FourPillarsSolver(population_size=40, max_generations=20, verbose=False)
+
+    for task_name in ["mirror_h", "rotate_90", "scale_2x", "gravity_down",
+                      "fill_enclosed", "outline_task", "color_swap_1_to_2"]:
+        result = solver.solve_task(SAMPLE_TASKS[task_name], task_name)
+        check(f"solves_{task_name}", result["solved"])
+
+    result = solver.solve_task(SAMPLE_TASKS["crop_then_mirror"], "crop_then_mirror")
+    check("composition_partial", result["score"] > 0.5)
+    check("archive_has_history", len(solver.archive.history) >= 2)
+    check("result_format", all(k in result for k in
+          ["task_id", "solved", "score", "program", "time_seconds"]))
+
+    # Summary
+    total = passed + failed
+    print(f"\n{'='*50}")
+    print(f"Results: {passed}/{total} passed, {failed} failed")
+    if errors:
+        print(f"Failures: {', '.join(errors)}")
+    print(f"{'='*50}")
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":
-    result = run_all_tests()
-    sys.exit(0 if result.wasSuccessful() else 1)
+    try:
+        sys.exit(run_with_pytest())
+    except ImportError:
+        print("pytest not installed, running fallback test suite...")
+        print("Install pytest for full test coverage: pip install pytest")
+        sys.exit(run_without_pytest())

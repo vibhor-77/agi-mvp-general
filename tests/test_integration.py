@@ -1,5 +1,5 @@
 """Integration tests — full pipeline exercising all 4 pillars together."""
-
+import pytest
 import random
 from arc_agent.solver import FourPillarsSolver
 from arc_agent.sample_tasks import SAMPLE_TASKS
@@ -9,7 +9,7 @@ from arc_agent.scorer import validate_on_test
 class TestFullPipeline:
     """Tests that the complete solver works end-to-end."""
 
-    # fixture
+    @pytest.fixture
     def solver(self):
         random.seed(42)
         return FourPillarsSolver(

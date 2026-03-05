@@ -1,5 +1,5 @@
 """Unit tests for DSL primitives (grid transformations)."""
-
+import pytest
 from arc_agent.primitives import (
     rotate_90_cw, rotate_90_ccw, rotate_180,
     mirror_horizontal, mirror_vertical, transpose, identity,

@@ -1,17 +1,17 @@
 """Unit tests for Program Synthesizer (Pillar 2: Approximability)."""
-
+import pytest
 import random
 from arc_agent.synthesizer import ProgramSynthesizer
 from arc_agent.primitives import build_initial_toolkit
 from arc_agent.concepts import Program
 
 
-# fixture
+@pytest.fixture
 def toolkit():
     return build_initial_toolkit()
 
 
-# fixture
+@pytest.fixture
 def synth(toolkit):
     return ProgramSynthesizer(toolkit, population_size=20, max_program_length=3)
 
