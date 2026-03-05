@@ -179,9 +179,66 @@ git clone https://github.com/fchollet/ARC-AGI.git
 python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
 ```
 
+---
+
+## Session 4 — ARC-AGI-1 Benchmark Results & v0.3 Improvements (March 2026)
+
+### Prompt
+
+> [User ran the full ARC-AGI-1 benchmark locally and pasted 400-task output]
+
+### ARC-AGI-1 Benchmark Results (v0.2)
+
+The user ran `python -m arc_agent.evaluate --data-dir ARC-AGI/data/training` on all 400 training tasks:
+
+| Metric | Result |
+|--------|--------|
+| **Solved (exact)** | **20/400 (5.0%)** |
+| Partial (>80%) | 185/400 (46.3%) |
+| Test correct | 19/400 (4.8%) |
+| Total time | 159.7s (avg 0.40s/task) |
+| Toolkit growth | 73 → 76 (only 3 concepts learned) |
+
+### Analysis
+
+1. **185 tasks scored >80% but only 20 exact** — the evolutionary search gets close but can't finish. Huge improvement opportunity.
+2. **Only 3 new concepts learned** — concept promotion threshold of 0.99 is too strict. Almost no knowledge compounding happened.
+3. **All 20 solves are single-primitive** — multi-step composition never fired for real tasks.
+4. **Missing primitives** — grid partitioning, border detection, color replacement patterns absent from toolkit.
+
+### v0.3 Changes
+
+1. **Expanded toolkit**: 73 → 104 concepts
+   - 13 new primitives: `get_top/bottom/left/right_half`, `get_border`, `get_interior`, `recolor_to_most_common`, `deduplicate_rows/cols`, `upscale_to_max`, `sort_rows_by_color_count`, `reverse_rows/cols`
+   - 9 `fill_bg_N` operators (replace background with color N)
+   - 9 `erase_N` operators (replace color N with background)
+
+2. **Lowered concept promotion threshold**: 0.99 → 0.95
+   - Near-miss solutions (≥0.95 score) are now promoted to reusable concepts
+   - Critical for cumulative culture — imperfect solutions contain useful sub-patterns
+
+3. **Richer seed generation** in explorer.py:
+   - Feature-guided seeds for shrinking tasks (partitioning, dedup)
+   - Half-size output detection → partition seeds
+   - 2-step combo seeds (crop+mirror, fill+outline, etc.)
+   - More novel programs per task (5 → 10)
+   - More transfer programs per task (5 → 10)
+
+4. **Tests expanded**: 155 → 180 tests (25 new tests for partitioning, pattern, and toolkit registration)
+
+### Verification
+
+| Metric | Value |
+|--------|-------|
+| Total tests | 180 |
+| All passing | Yes |
+| Sample task training | 9/10 (90%) |
+| Sample task test | 8/10 (80%) |
+| Toolkit size | 104 concepts |
+
 ### Next Steps
 
-1. **Run full ARC-AGI-1 benchmark** on user's machine (dataset download required)
+1. **Re-run full ARC-AGI-1 benchmark** with v0.3 changes to measure improvement
 2. **Conditional logic** — If-then-else branching in programs
 3. **Task decomposition** — Fractal problem-solving for hard tasks
 4. **Improve coverage** — Target 70%+ line coverage

@@ -218,6 +218,153 @@ class TestPredicates(unittest.TestCase):
         self.assertIs(has_single_color([[0, 0], [0, 0]]), True)
 
 
+class TestGridPartitioning(unittest.TestCase):
+    """Tests for grid partitioning and pattern primitives (v0.3)."""
+
+    def test_get_top_half(self):
+        from arc_agent.primitives import get_top_half
+        grid = [[1, 2], [3, 4], [5, 6], [7, 8]]
+        self.assertEqual(get_top_half(grid), [[1, 2], [3, 4]])
+
+    def test_get_bottom_half(self):
+        from arc_agent.primitives import get_bottom_half
+        grid = [[1, 2], [3, 4], [5, 6], [7, 8]]
+        self.assertEqual(get_bottom_half(grid), [[5, 6], [7, 8]])
+
+    def test_get_left_half(self):
+        from arc_agent.primitives import get_left_half
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8]]
+        self.assertEqual(get_left_half(grid), [[1, 2], [5, 6]])
+
+    def test_get_right_half(self):
+        from arc_agent.primitives import get_right_half
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8]]
+        self.assertEqual(get_right_half(grid), [[3, 4], [7, 8]])
+
+    def test_get_border(self):
+        from arc_agent.primitives import get_border
+        grid = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        result = get_border(grid)
+        self.assertEqual(result, [[1, 2, 3], [4, 0, 6], [7, 8, 9]])
+
+    def test_get_interior(self):
+        from arc_agent.primitives import get_interior
+        grid = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        self.assertEqual(get_interior(grid), [[5]])
+
+    def test_get_interior_small_grid(self):
+        from arc_agent.primitives import get_interior
+        grid = [[1, 2], [3, 4]]
+        # Too small for interior, returns copy
+        self.assertEqual(get_interior(grid), [[1, 2], [3, 4]])
+
+    def test_replace_color(self):
+        from arc_agent.primitives import replace_color
+        grid = [[1, 2, 1], [2, 1, 2]]
+        self.assertEqual(replace_color(grid, 1, 3), [[3, 2, 3], [2, 3, 2]])
+
+    def test_most_common_color(self):
+        from arc_agent.primitives import most_common_color
+        grid = [[1, 2, 1], [1, 2, 0]]
+        self.assertEqual(most_common_color(grid), 1)
+
+    def test_least_common_color(self):
+        from arc_agent.primitives import least_common_color
+        grid = [[1, 2, 1], [1, 2, 0]]
+        self.assertEqual(least_common_color(grid), 2)
+
+    def test_most_common_color_empty(self):
+        from arc_agent.primitives import most_common_color
+        self.assertEqual(most_common_color([[0, 0], [0, 0]]), 0)
+
+    def test_recolor_to_most_common(self):
+        from arc_agent.primitives import recolor_to_most_common
+        grid = [[1, 2, 1], [1, 0, 3]]
+        result = recolor_to_most_common(grid)
+        self.assertEqual(result, [[1, 1, 1], [1, 0, 1]])
+
+    def test_deduplicate_rows(self):
+        from arc_agent.primitives import deduplicate_rows
+        grid = [[1, 2], [1, 2], [3, 4], [3, 4], [3, 4]]
+        self.assertEqual(deduplicate_rows(grid), [[1, 2], [3, 4]])
+
+    def test_deduplicate_cols(self):
+        from arc_agent.primitives import deduplicate_cols
+        grid = [[1, 1, 2], [3, 3, 4]]
+        self.assertEqual(deduplicate_cols(grid), [[1, 2], [3, 4]])
+
+    def test_sort_rows_by_color_count(self):
+        from arc_agent.primitives import sort_rows_by_color_count
+        grid = [[1, 2, 3], [0, 0, 1], [1, 0, 0]]
+        result = sort_rows_by_color_count(grid)
+        # Sorted by number of non-zero: [0,0,1] and [1,0,0] have 1 each, [1,2,3] has 3
+        self.assertEqual(result[-1], [1, 2, 3])
+
+    def test_reverse_rows(self):
+        from arc_agent.primitives import reverse_rows
+        grid = [[1, 2], [3, 4], [5, 6]]
+        self.assertEqual(reverse_rows(grid), [[5, 6], [3, 4], [1, 2]])
+
+    def test_reverse_cols(self):
+        from arc_agent.primitives import reverse_cols
+        grid = [[1, 2, 3], [4, 5, 6]]
+        self.assertEqual(reverse_cols(grid), [[3, 2, 1], [6, 5, 4]])
+
+    def test_upscale_to_max_small(self):
+        from arc_agent.primitives import upscale_to_max
+        grid = [[1, 2], [3, 4]]
+        result = upscale_to_max(grid)
+        # 2x2 → 3x scale → 6x6
+        self.assertEqual(len(result), 6)
+        self.assertEqual(len(result[0]), 6)
+
+    def test_upscale_to_max_medium(self):
+        from arc_agent.primitives import upscale_to_max
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 1, 2, 3], [4, 5, 6, 7]]
+        result = upscale_to_max(grid)
+        # 4x4 → 2x scale → 8x8
+        self.assertEqual(len(result), 8)
+
+    def test_upscale_to_max_large(self):
+        from arc_agent.primitives import upscale_to_max
+        grid = [[i for i in range(10)] for _ in range(10)]
+        result = upscale_to_max(grid)
+        # 10x10 → no scale, returns copy
+        self.assertEqual(len(result), 10)
+
+
+class TestToolkitNewPrimitives(unittest.TestCase):
+    """Verify new primitives are registered in the toolkit."""
+
+    def test_toolkit_has_partitioning_ops(self):
+        tk = build_initial_toolkit()
+        for name in ["get_top_half", "get_bottom_half", "get_left_half",
+                      "get_right_half", "get_border", "get_interior"]:
+            self.assertIn(name, tk.concepts, f"Missing: {name}")
+
+    def test_toolkit_has_pattern_ops(self):
+        tk = build_initial_toolkit()
+        for name in ["recolor_to_most_common", "deduplicate_rows",
+                      "deduplicate_cols", "reverse_rows", "reverse_cols",
+                      "sort_rows_by_color_count", "upscale_to_max"]:
+            self.assertIn(name, tk.concepts, f"Missing: {name}")
+
+    def test_toolkit_has_fill_bg_ops(self):
+        tk = build_initial_toolkit()
+        for color in range(1, 10):
+            self.assertIn(f"fill_bg_{color}", tk.concepts)
+
+    def test_toolkit_has_erase_ops(self):
+        tk = build_initial_toolkit()
+        for color in range(1, 10):
+            self.assertIn(f"erase_{color}", tk.concepts)
+
+    def test_toolkit_size_increased(self):
+        tk = build_initial_toolkit()
+        # Was 73 in v0.2, should now be 73 + 13 partitioning + 9 fill_bg + 9 erase = 104+
+        self.assertGreaterEqual(tk.size, 100)
+
+
 class TestBuildToolkit(unittest.TestCase):
     def test_toolkit_has_primitives(self):
         tk = build_initial_toolkit()

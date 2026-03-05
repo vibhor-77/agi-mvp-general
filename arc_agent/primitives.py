@@ -377,6 +377,152 @@ def has_single_color(grid: Grid) -> bool:
 
 
 # ============================================================
+# GRID PARTITIONING AND PATTERN OPERATIONS
+# ============================================================
+
+def get_top_half(grid: Grid) -> Grid:
+    """Extract the top half of the grid."""
+    h = len(grid)
+    return _deep_copy_grid(grid[:h // 2])
+
+
+def get_bottom_half(grid: Grid) -> Grid:
+    """Extract the bottom half of the grid."""
+    h = len(grid)
+    return _deep_copy_grid(grid[h // 2:])
+
+
+def get_left_half(grid: Grid) -> Grid:
+    """Extract the left half of the grid."""
+    w = len(grid[0]) if grid else 0
+    return [row[:w // 2] for row in grid]
+
+
+def get_right_half(grid: Grid) -> Grid:
+    """Extract the right half of the grid."""
+    w = len(grid[0]) if grid else 0
+    return [row[w // 2:] for row in grid]
+
+
+def get_border(grid: Grid) -> Grid:
+    """Extract only the border cells, zero out the interior."""
+    if not grid or not grid[0]:
+        return _deep_copy_grid(grid)
+    h, w = len(grid), len(grid[0])
+    result = [[0] * w for _ in range(h)]
+    for r in range(h):
+        for c in range(w):
+            if r == 0 or r == h - 1 or c == 0 or c == w - 1:
+                result[r][c] = grid[r][c]
+    return result
+
+
+def get_interior(grid: Grid) -> Grid:
+    """Extract only the interior cells (remove 1-cell border)."""
+    if not grid or len(grid) < 3 or len(grid[0]) < 3:
+        return _deep_copy_grid(grid)
+    return [row[1:-1] for row in grid[1:-1]]
+
+
+def replace_color(grid: Grid, old: int, new: int) -> Grid:
+    """Replace all occurrences of old color with new color."""
+    return [[new if c == old else c for c in row] for row in grid]
+
+
+def _make_replace_bg(new_color: int):
+    """Factory: replace background (0) with a specific color."""
+    def _replace(grid: Grid) -> Grid:
+        return replace_color(grid, 0, new_color)
+    return _replace
+
+
+def _make_replace_with_bg(old_color: int):
+    """Factory: replace a specific color with background (0)."""
+    def _replace(grid: Grid) -> Grid:
+        return replace_color(grid, old_color, 0)
+    return _replace
+
+
+def most_common_color(grid: Grid) -> int:
+    """Find the most common non-zero color in the grid."""
+    counts: dict[int, int] = {}
+    for row in grid:
+        for c in row:
+            if c != 0:
+                counts[c] = counts.get(c, 0) + 1
+    if not counts:
+        return 0
+    return max(counts, key=lambda k: counts[k])
+
+
+def least_common_color(grid: Grid) -> int:
+    """Find the least common non-zero color in the grid."""
+    counts: dict[int, int] = {}
+    for row in grid:
+        for c in row:
+            if c != 0:
+                counts[c] = counts.get(c, 0) + 1
+    if not counts:
+        return 0
+    return min(counts, key=lambda k: counts[k])
+
+
+def recolor_to_most_common(grid: Grid) -> Grid:
+    """Recolor all non-zero cells to the most common color."""
+    mc = most_common_color(grid)
+    if mc == 0:
+        return _deep_copy_grid(grid)
+    return [[mc if c != 0 else 0 for c in row] for row in grid]
+
+
+def deduplicate_rows(grid: Grid) -> Grid:
+    """Remove duplicate consecutive rows."""
+    if not grid:
+        return []
+    result = [grid[0][:]]
+    for row in grid[1:]:
+        if row != result[-1]:
+            result.append(row[:])
+    return result
+
+
+def deduplicate_cols(grid: Grid) -> Grid:
+    """Remove duplicate consecutive columns."""
+    if not grid or not grid[0]:
+        return _deep_copy_grid(grid)
+    t = transpose(grid)
+    deduped = deduplicate_rows(t)
+    return transpose(deduped)
+
+
+def upscale_to_max(grid: Grid) -> Grid:
+    """Upscale grid by 2x or 3x based on size (targets ~10x10)."""
+    h, w = len(grid), len(grid[0]) if grid else 0
+    if h <= 3 and w <= 3:
+        return scale_3x(grid)
+    elif h <= 5 and w <= 5:
+        return scale_2x(grid)
+    return _deep_copy_grid(grid)
+
+
+def sort_rows_by_color_count(grid: Grid) -> Grid:
+    """Sort rows by number of non-zero cells (ascending)."""
+    rows = [row[:] for row in grid]
+    rows.sort(key=lambda r: sum(1 for c in r if c != 0))
+    return rows
+
+
+def reverse_rows(grid: Grid) -> Grid:
+    """Reverse the order of rows (flip vertically)."""
+    return _deep_copy_grid(grid[::-1])
+
+
+def reverse_cols(grid: Grid) -> Grid:
+    """Reverse each row (flip horizontally). Same as mirror_h."""
+    return [row[::-1] for row in grid]
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -445,6 +591,48 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
             kind="operator",
             name=name,
             implementation=_make_recolor_nonzero(color),
+        ))
+
+    # Grid partitioning and pattern operators
+    partitioning_ops = [
+        ("get_top_half", get_top_half),
+        ("get_bottom_half", get_bottom_half),
+        ("get_left_half", get_left_half),
+        ("get_right_half", get_right_half),
+        ("get_border", get_border),
+        ("get_interior", get_interior),
+        ("recolor_to_most_common", recolor_to_most_common),
+        ("deduplicate_rows", deduplicate_rows),
+        ("deduplicate_cols", deduplicate_cols),
+        ("upscale_to_max", upscale_to_max),
+        ("sort_rows_by_color_count", sort_rows_by_color_count),
+        ("reverse_rows", reverse_rows),
+        ("reverse_cols", reverse_cols),
+    ]
+
+    for name, impl in partitioning_ops:
+        toolkit.add_concept(Concept(
+            kind="operator",
+            name=name,
+            implementation=impl,
+        ))
+
+    # Background replacement operators (fill bg with color)
+    for color in range(1, 10):
+        name = f"fill_bg_{color}"
+        toolkit.add_concept(Concept(
+            kind="operator",
+            name=name,
+            implementation=_make_replace_bg(color),
+        ))
+
+    # Erase-color operators (replace color with background)
+    for color in range(1, 10):
+        name = f"erase_{color}"
+        toolkit.add_concept(Concept(
+            kind="operator",
+            name=name,
+            implementation=_make_replace_with_bg(color),
         ))
 
     # Add object-level primitives

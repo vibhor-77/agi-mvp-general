@@ -145,37 +145,81 @@ class ExplorationEngine:
 
         # 1. Get programs from similar tasks (EXPLOIT past learning)
         similar_programs = self.archive.get_programs_for_similar_tasks(task_features)
-        seeds.extend(similar_programs[:5])
+        seeds.extend(similar_programs[:10])
 
         # 2. Feature-guided heuristic programs
         if task_features.get("same_dims"):
-            # Input/output same size → likely a color or local transformation
-            for name in ["identity", "invert_colors", "fill_enclosed", "outline"]:
+            # Input/output same size → color or local transformation
+            for name in ["identity", "invert_colors", "fill_enclosed", "outline",
+                         "recolor_to_most_common", "reverse_rows", "reverse_cols"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
+            # Try gravity ops (same dims, rearrange cells)
+            for name in ["gravity_down", "gravity_up", "gravity_left", "gravity_right",
+                         "sort_rows_by_color_count"]:
+                if name in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[name]]))
+            # Try erase + fill combos for same-dims tasks
+            for color in range(1, 5):
+                erase = f"erase_{color}"
+                fill = f"fill_bg_{color}"
+                if erase in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[erase]]))
+                if fill in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[fill]]))
 
         if task_features.get("grows"):
             # Output bigger than input → scaling or tiling
-            for name in ["scale_2x", "scale_3x", "tile_2x2", "tile_3x3"]:
+            for name in ["scale_2x", "scale_3x", "tile_2x2", "tile_3x3",
+                         "upscale_to_max"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
 
         if task_features.get("shrinks"):
-            # Output smaller → cropping
-            if "crop_nonzero" in self.toolkit.concepts:
-                seeds.append(Program([self.toolkit.concepts["crop_nonzero"]]))
+            # Output smaller → cropping, partitioning, dedup
+            for name in ["crop_nonzero", "get_top_half", "get_bottom_half",
+                         "get_left_half", "get_right_half", "get_interior",
+                         "deduplicate_rows", "deduplicate_cols"]:
+                if name in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[name]]))
 
         h_ratio = task_features.get("h_ratio", 1.0)
         w_ratio = task_features.get("w_ratio", 1.0)
         if abs(h_ratio - 1.0) < 0.01 and abs(w_ratio - 1.0) < 0.01:
             # Same size → try geometric transforms
             for name in ["rotate_90_cw", "rotate_90_ccw", "rotate_180",
-                         "mirror_h", "mirror_v", "transpose"]:
+                         "mirror_h", "mirror_v", "transpose",
+                         "get_border", "flood_fill_bg"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
 
-        # 3. Add novel explorations (EXPLORE new territory)
-        seeds.extend(self.generate_novel_programs(5))
+        # Half-size output → likely a partitioning task
+        if abs(h_ratio - 0.5) < 0.1 or abs(w_ratio - 0.5) < 0.1:
+            for name in ["get_top_half", "get_bottom_half",
+                         "get_left_half", "get_right_half"]:
+                if name in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[name]]))
+
+        # 3. Two-step combo seeds for common patterns
+        combos = [
+            ("crop_nonzero", "mirror_h"),
+            ("crop_nonzero", "mirror_v"),
+            ("crop_nonzero", "rotate_90_cw"),
+            ("crop_nonzero", "scale_2x"),
+            ("fill_enclosed", "outline"),
+            ("outline", "fill_enclosed"),
+            ("get_interior", "crop_nonzero"),
+            ("invert_colors", "crop_nonzero"),
+        ]
+        for a_name, b_name in combos:
+            if a_name in self.toolkit.concepts and b_name in self.toolkit.concepts:
+                seeds.append(Program([
+                    self.toolkit.concepts[a_name],
+                    self.toolkit.concepts[b_name],
+                ]))
+
+        # 4. Add novel explorations (EXPLORE new territory)
+        seeds.extend(self.generate_novel_programs(10))
 
         return seeds
 

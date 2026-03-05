@@ -118,12 +118,25 @@ class FourPillarsSolver:
         elapsed = time.time() - start_time
         best_score = best_program.fitness if best_program else 0.0
 
-        # Step 5: If we found a good solution, promote it (COMPOSABILITY)
+        # Step 5: Promote solutions to reusable concepts (COMPOSABILITY)
+        # Lower threshold (0.95) allows near-miss knowledge to compound.
+        # This is critical for cumulative culture — even imperfect solutions
+        # contain useful sub-patterns that should be available for future tasks.
         if best_score >= 0.99:
             self._record_success(task_id, best_program, best_score, elapsed)
+        elif best_score >= 0.95:
+            # Near-miss: promote as concept but don't count as "solved"
+            self.tasks_partially_solved += 1
+            self.archive.record_solution(task_id, best_program, best_score)
+            new_concept = self.explorer.discover_new_concept(best_program, task_id)
+            if new_concept:
+                self.toolkit.add_concept(new_concept)
+                if self.verbose:
+                    print(f"  ◆ Near-miss concept promoted: {new_concept.name} "
+                          f"(score={best_score:.3f})")
         elif best_score > 0.8:
             self.tasks_partially_solved += 1
-            # Still worth recording — partial solutions are useful for transfer
+            # Record for transfer but don't promote to toolkit
             self.archive.record_solution(task_id, best_program, best_score)
 
         # Record concept library growth

@@ -51,22 +51,38 @@ python -m arc_agent.main --task mirror_h
 
 **Requirements:** Python 3.9+. Zero runtime dependencies (stdlib only). `pytest` and `pytest-cov` are optional dev dependencies for enhanced testing.
 
-## Results (v0.2 — Sample Tasks)
+## Results
+
+### ARC-AGI-1 Full Benchmark (v0.2 — 400 training tasks)
 
 | Metric | Result |
 |--------|--------|
-| Training solve rate | 10/10 (100%) |
-| Test solve rate (held-out) | 9/10 (90%) |
-| Initial toolkit size | 73 concepts (43 grid + 30 object-level) |
-| Multi-step compositions evolved | 2 per run |
-| Knowledge compounding | Yes (Task 10 reuses Task 6's learned concept) |
-| Persistence | Toolkit survives across runs via JSON serialization |
+| **Exact solve rate** | **20/400 (5.0%)** |
+| Partial solve rate (>80%) | 185/400 (46.3%) |
+| Test correct (held-out test pairs) | 19/400 (4.8%) |
+| Total time | 159.7s (avg 0.40s/task) |
+| Final toolkit | 76 concepts (3 learned from solving) |
 | LLM used | None — pure 4 Pillars |
-| Test coverage | 155 tests, built-in line coverage measurement |
+
+### v0.3 Improvements (pending re-run)
+
+| Change | Details |
+|--------|---------|
+| Toolkit expanded | 73 → 104 concepts (+13 partitioning, +9 fill bg, +9 erase color) |
+| Concept promotion threshold | Lowered from 0.99 → 0.95 (near-miss knowledge compounds) |
+| Seed generation | Richer feature-guided heuristics + 2-step combo seeds |
+| New primitive categories | Grid partitioning, border extraction, color replacement, dedup, sorting |
+| Test suite | 155 → 180 tests |
+
+### Sample Tasks (v0.3)
+
+| Metric | Result |
+|--------|--------|
+| Training solve rate | 9/10 (90%) |
+| Test solve rate (held-out) | 8/10 (80%) |
+| Initial toolkit size | 104 concepts |
 
 ## Running the Full ARC-AGI Benchmark
-
-The sample tasks above are hand-crafted. To evaluate on the real ARC-AGI-1 dataset (400+ tasks):
 
 ```bash
 # 1. Clone the official ARC-AGI dataset
@@ -86,8 +102,6 @@ python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
     --output results.json --save-toolkit learned_toolkit.json
 ```
 
-**Note:** Full ARC-AGI-1 benchmark results are pending — the evaluation harness is ready but has not yet been run on the full dataset. Results will be added here once available.
-
 ## Project Structure
 
 ```
@@ -102,9 +116,9 @@ agi-mvp-general/
 │   ├── RESEARCH_PLAN.md             # Formal research plan with metrics
 │   └── PROMPT_LOG.md                # Full session history, prompts & results
 ├── arc_agent/                       # Core agent implementation
-│   ├── __init__.py                  # Package definition (v0.2.0)
+│   ├── __init__.py                  # Package definition (v0.3.0)
 │   ├── concepts.py                  # Concept, Program, Toolkit, Archive (Pillar 3)
-│   ├── primitives.py                # 43 DSL grid transformations
+│   ├── primitives.py                # 56 DSL grid transformations
 │   ├── objects.py                   # Object-level primitives (30 concepts)
 │   ├── persistence.py               # Toolkit/Archive save/load (JSON)
 │   ├── synthesizer.py               # Evolutionary program synthesis (Pillar 2)
@@ -115,9 +129,9 @@ agi-mvp-general/
 │   ├── evaluate.py                  # Full benchmark evaluation CLI
 │   ├── sample_tasks.py              # 10 sample ARC-AGI tasks
 │   └── main.py                      # CLI entry point with persistence flags
-└── tests/                           # Test suite (155 tests)
+└── tests/                           # Test suite (180 tests)
     ├── test_concepts.py             # Unit tests for concept system (21 tests)
-    ├── test_primitives.py           # Unit tests for DSL primitives (30 tests)
+    ├── test_primitives.py           # Unit tests for DSL primitives (55 tests)
     ├── test_objects.py              # Unit tests for object primitives (19 tests)
     ├── test_scorer.py               # Unit tests for scoring engine (18 tests)
     ├── test_synthesizer.py          # Unit tests for program synthesis (12 tests)
@@ -182,9 +196,11 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] **Core 4 Pillars prototype** (feedback, approximability, composability, exploration)
 - [x] **Object-level primitives** (connected components, extraction, recoloring)
 - [x] **Persistent Toolkit serialization** (save/load across runs)
-- [x] **Test suite with coverage** (144 tests, built-in coverage measurement)
+- [x] **Test suite with coverage** (180 tests, built-in coverage measurement)
 - [x] **ARC-AGI-1 evaluation harness** (dataset loader + benchmark CLI)
-- [ ] **Run full ARC-AGI-1 evaluation** and record results
+- [x] **Run full ARC-AGI-1 evaluation** — 20/400 (5.0%) exact, 185/400 (46.3%) partial
+- [x] **Expanded toolkit** (104 concepts with partitioning, border, color ops)
+- [x] **Knowledge compounding** (near-miss concept promotion at 0.95 threshold)
 - [ ] **Conditional logic in programs** (if-then-else branching)
 - [ ] **Task decomposition** (fractal problem-solving for hard tasks)
 - [ ] **Ablation studies** (validate each pillar is necessary)
