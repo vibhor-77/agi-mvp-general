@@ -236,10 +236,25 @@ The user ran `python -m arc_agent.evaluate --data-dir ARC-AGI/data/training` on 
 | Sample task test | 8/10 (80%) |
 | Toolkit size | 104 concepts |
 
+### ARC-AGI-1 Benchmark Results (v0.3)
+
+User ran the full benchmark with v0.3 changes:
+
+| Metric | v0.2 | v0.3 | Change |
+|--------|------|------|--------|
+| **Exact solve** | 20/400 (5.0%) | **24/400 (6.0%)** | **+20%** |
+| Test correct | 19/400 (4.8%) | 23/400 (5.8%) | +21% |
+| Partial (>80%) | 185 | 200 | +15 tasks |
+| Concepts learned | 3 | 24 | **8× more** |
+| Toolkit growth | 73→76 | 104→118 | 14 concepts compounded |
+| Speed | 0.40s/task | 0.27s/task | 33% faster |
+
+**Key insight:** The lower concept promotion threshold (0.95 vs 0.99) unlocked real knowledge compounding. 24 concepts learned vs 3 — the cumulative culture mechanism is now working as intended.
+
 ### Next Steps
 
-1. **Re-run full ARC-AGI-1 benchmark** with v0.3 changes to measure improvement
-2. **Conditional logic** — If-then-else branching in programs
-3. **Task decomposition** — Fractal problem-solving for hard tasks
-4. **Improve coverage** — Target 70%+ line coverage
-5. **Ablation studies** — Validate each pillar is necessary
+1. **Conditional logic** — If-then-else branching in programs
+2. **Task decomposition** — Fractal problem-solving for hard tasks
+3. **Improve coverage** — Target 70%+ line coverage
+4. **Ablation studies** — Validate each pillar is necessary
+5. **Analyze the 200 partial tasks** — find patterns in what's close but not exact

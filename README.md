@@ -53,18 +53,19 @@ python -m arc_agent.main --task mirror_h
 
 ## Results
 
-### ARC-AGI-1 Full Benchmark (v0.2 — 400 training tasks)
+### ARC-AGI-1 Full Benchmark (400 training tasks)
 
-| Metric | Result |
-|--------|--------|
-| **Exact solve rate** | **20/400 (5.0%)** |
-| Partial solve rate (>80%) | 185/400 (46.3%) |
-| Test correct (held-out test pairs) | 19/400 (4.8%) |
-| Total time | 159.7s (avg 0.40s/task) |
-| Final toolkit | 76 concepts (3 learned from solving) |
-| LLM used | None — pure 4 Pillars |
+| Metric | v0.2 | v0.3 | Change |
+|--------|------|------|--------|
+| **Exact solve rate** | 20/400 (5.0%) | **24/400 (6.0%)** | **+20%** |
+| Test correct (held-out) | 19/400 (4.8%) | 23/400 (5.8%) | +21% |
+| Partial solve rate (>80%) | 185/400 | 200/400 | +15 tasks |
+| Concepts learned | 3 | 24 | **8× more compounding** |
+| Toolkit growth | 73 → 76 | 104 → 118 | 14 concepts compounded |
+| Total time | 159.7s (0.40s/task) | 107.0s (0.27s/task) | 33% faster |
+| LLM used | None | None | Pure 4 Pillars |
 
-### v0.3 Improvements (pending re-run)
+### v0.3 Key Changes
 
 | Change | Details |
 |--------|---------|
@@ -73,14 +74,6 @@ python -m arc_agent.main --task mirror_h
 | Seed generation | Richer feature-guided heuristics + 2-step combo seeds |
 | New primitive categories | Grid partitioning, border extraction, color replacement, dedup, sorting |
 | Test suite | 155 → 180 tests |
-
-### Sample Tasks (v0.3)
-
-| Metric | Result |
-|--------|--------|
-| Training solve rate | 9/10 (90%) |
-| Test solve rate (held-out) | 8/10 (80%) |
-| Initial toolkit size | 104 concepts |
 
 ## Running the Full ARC-AGI Benchmark
 
