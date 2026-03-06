@@ -26,6 +26,24 @@ from .concepts import Grid
 
 
 # ---------------------------------------------------------------------------
+# Guard: validate that program output is an actual grid
+# ---------------------------------------------------------------------------
+
+def _is_valid_grid(value) -> bool:
+    """Return True only if value is a non-empty list-of-lists of numbers.
+
+    Programs that implement predicates (is_symmetric, has_color, …) return
+    bool.  Programs that count, sum, or otherwise reduce return int or float.
+    Neither can be scored as a grid — silently skip them rather than crash.
+    """
+    return (
+        isinstance(value, list)
+        and len(value) > 0
+        and isinstance(value[0], list)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Core similarity metrics (operate on pre-converted numpy arrays)
 # ---------------------------------------------------------------------------
 
@@ -85,7 +103,7 @@ def pixel_accuracy(predicted: Grid, expected: Grid) -> float:
 
     Returns float in [0, 1]. Dimension mismatch → small partial score.
     """
-    if not predicted or not expected:
+    if not _is_valid_grid(predicted) or not _is_valid_grid(expected):
         return 0.0
 
     pred_h, pred_w = len(predicted), len(predicted[0])
@@ -110,7 +128,7 @@ def structural_similarity(predicted: Grid, expected: Grid) -> float:
 
     Converts inputs on every call. Use TaskCache for repeated scoring.
     """
-    if not predicted or not expected:
+    if not _is_valid_grid(predicted) or not _is_valid_grid(expected):
         return 0.0
 
     pred_h, pred_w = len(predicted), len(predicted[0])
@@ -165,7 +183,7 @@ class TaskCache:
         total = 0.0
         for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
             predicted = program.execute(inp)
-            if predicted is None:
+            if not _is_valid_grid(predicted):
                 continue
             pred_h = len(predicted)
             if pred_h == 0:
@@ -189,7 +207,7 @@ class TaskCache:
             total = 0.0
             for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
                 predicted = program.execute(inp)
-                if predicted is None:
+                if not _is_valid_grid(predicted):
                     continue
                 pred_h = len(predicted)
                 if pred_h == 0:
@@ -209,10 +227,10 @@ class TaskCache:
         total_score = 0.0
         for inp, e in zip(self._test_inputs, self._test_expected):
             predicted = program.execute(inp)
-            if predicted is None:
+            if not _is_valid_grid(predicted):
                 all_exact = False
                 continue
-            pred_h, pred_w = len(predicted), len(predicted[0]) if predicted else 0
+            pred_h, pred_w = len(predicted), len(predicted[0])
             exp_h,  exp_w  = e.shape
             if pred_h == exp_h and pred_w == exp_w:
                 p     = np.array(predicted, dtype=np.uint8)
