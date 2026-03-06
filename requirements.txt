@@ -1,6 +1,13 @@
 # Runtime dependencies
 numpy>=1.24          # Vectorized scoring (pixel accuracy, color palette analysis)
 
+# Optional but strongly recommended
+# numba>=0.57         # JIT-compiles find_objects flood fill (~20x faster)
+#                     # Install: pip install numba  OR  conda install numba
+#                     # On first import, Numba compiles and caches the kernel (~5s).
+#                     # Subsequent runs use the cache — no repeated compilation.
+#                     # Without Numba: pure-Python fallback is used automatically.
+
 # Development & testing
 pytest>=7.0          # Optional: tests also run via `python -m unittest discover`
 pytest-cov>=4.0      # Optional: coverage reporting

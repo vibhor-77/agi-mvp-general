@@ -20,6 +20,7 @@ from .synthesizer import ProgramSynthesizer
 from .explorer import ExplorationEngine
 from .decompose import DecompositionEngine
 from .scorer import (
+    TaskCache,
     score_program_on_task,
     validate_on_test,
     extract_task_features,
@@ -84,6 +85,11 @@ class FourPillarsSolver:
             print(f"Toolkit size: {self.toolkit.size}")
             print(f"{'='*60}")
 
+        # Pre-convert expected outputs once for all scoring in this task.
+        # The cache is passed to _try_single_primitives and synthesizer.synthesize
+        # so np.array() is called once per training example, not thousands of times.
+        cache = TaskCache(task)
+
         # Step 1: Extract task features (for cross-task transfer)
         features = extract_task_features(task)
         self.archive.record_features(task_id, features)
@@ -101,7 +107,7 @@ class FourPillarsSolver:
             print(f"Seed programs from transfer: {len(seed_programs)}")
 
         # Step 3: Quick check — does any single primitive solve it?
-        best_single = self._try_single_primitives(task)
+        best_single = self._try_single_primitives(task, cache)
         if best_single and best_single.fitness >= 0.99:
             elapsed = time.time() - start_time
             self._record_success(task_id, best_single, best_single.fitness, elapsed)
@@ -115,6 +121,7 @@ class FourPillarsSolver:
             target_score=0.99,
             seed_programs=seed_programs,
             verbose=self.verbose,
+            cache=cache,
         )
 
         elapsed = time.time() - start_time
@@ -175,14 +182,20 @@ class FourPillarsSolver:
 
         return self._make_result(task_id, best_program, best_score, elapsed, method)
 
-    def _try_single_primitives(self, task: dict) -> Optional[Program]:
+    def _try_single_primitives(self, task: dict,
+                                cache: "TaskCache | None" = None) -> Optional[Program]:
         """Quick pass: try every single primitive individually.
 
         This is a fast "exploit" check before committing to evolution.
         Skips predicates (which don't transform grids).
+
+        Uses the shared TaskCache so expected outputs are not re-converted.
         """
+        if cache is None:
+            cache = TaskCache(task)
+
         best_program = None
-        best_score = 0.0
+        best_score   = 0.0
 
         for concept in self.toolkit.concepts.values():
             # Skip predicates — they test conditions, not transform grids
@@ -190,9 +203,9 @@ class FourPillarsSolver:
                 continue
 
             program = Program([concept])
-            score = score_program_on_task(program, task)
+            score = cache.score_program(program)
             if score > best_score:
-                best_score = score
+                best_score   = score
                 best_program = program
                 best_program.fitness = score
 

@@ -13,7 +13,7 @@ import random
 import copy
 from typing import Optional
 from .concepts import Concept, ConditionalConcept, Program, Toolkit, Grid, Predicate
-from .scorer import score_program_on_task, score_population_on_task
+from .scorer import TaskCache, score_program_on_task
 
 
 class ProgramSynthesizer:
@@ -180,6 +180,7 @@ class ProgramSynthesizer:
         self,
         population: list[Program],
         task: dict,
+        cache: "TaskCache | None" = None,
     ) -> list[Program]:
         """Evolve one generation: score → select → mutate → crossover.
 
@@ -188,11 +189,19 @@ class ProgramSynthesizer:
         2. SELECT: Keep the best (Pillar 2: exploit what's close)
         3. MUTATE: Vary the survivors (Pillar 4: explore)
         4. CROSSOVER: Combine successful programs (Pillar 3: compose)
+
+        Args:
+            cache: Pre-converted TaskCache. If supplied, expected outputs are
+                   not re-converted from list-of-lists this generation (~40%
+                   faster). Pass None to fall back to on-the-fly conversion.
         """
-        # Score all programs in one pass (FEEDBACK LOOP)
-        # score_population_on_task iterates training examples once per program,
-        # amortizing Python overhead vs calling score_program_on_task individually.
-        scores = score_population_on_task(population, task)
+        # Score all programs in one pass (FEEDBACK LOOP).
+        # If a TaskCache is provided, expected outputs were already converted
+        # to numpy arrays once for the whole task — no redundant work.
+        if cache is not None:
+            scores = cache.score_population(population)
+        else:
+            scores = TaskCache(task).score_population(population)
         for program, score in zip(population, scores):
             program.fitness = score
 
@@ -232,6 +241,7 @@ class ProgramSynthesizer:
         target_score: float = 1.0,
         seed_programs: Optional[list[Program]] = None,
         verbose: bool = False,
+        cache: "TaskCache | None" = None,
     ) -> tuple[Program, list[dict]]:
         """Run the full evolutionary synthesis loop.
 
@@ -244,10 +254,18 @@ class ProgramSynthesizer:
             target_score: Stop if we reach this score
             seed_programs: Pre-existing programs to seed population with
             verbose: Print progress
+            cache: Pre-converted TaskCache (created once by solver, reused
+                   across all generations). Pass None to auto-create.
 
         Returns:
             (best_program, history) — the best found and evolution log
         """
+        # Pre-convert expected outputs once for all generations.
+        # This is the key optimisation: np.array() is called once per
+        # training example, not once per (program × generation × example).
+        if cache is None:
+            cache = TaskCache(task)
+
         # Initialize population
         population = self.generate_initial_population()
 
@@ -263,7 +281,7 @@ class ProgramSynthesizer:
         best_ever_score = 0.0
 
         for gen in range(max_generations):
-            population = self.evolve_generation(population, task)
+            population = self.evolve_generation(population, task, cache=cache)
 
             best = population[0]
             avg_fitness = sum(p.fitness for p in population) / len(population)
