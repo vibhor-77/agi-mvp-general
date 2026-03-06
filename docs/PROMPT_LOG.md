@@ -306,3 +306,81 @@ Integrated into solver.py as a fallback after evolutionary synthesis if score < 
 3. **Improve code coverage** — Target 70%+ line coverage
 4. **Analyze partial solves** — Find patterns in the 200 >80% tasks to guide next primitives
 5. **Zork agent** — Text adventure environment modeling
+
+---
+
+## Session 6 — NumPy Acceleration & Multiprocessing (v0.5, March 2026)
+
+### Prompt
+
+> "I have an M1 Max Macbook Pro with 64GB RAM. Take full advantage of it, but don't crash it. I have installed homebrew and conda. I have installed numpy and numba. You should take advantage of them to avoid the python tax/overhead and run heavy computation natively to get enormous speedup. Feel free to take advantage of pip utilities and libraries, such standard dependencies are ok, but let's not depend on external services like LLMs, or other dependencies which cause us to deviate from first principles."
+
+### Claude's Reasoning
+
+The M1 Max has 10 CPU cores and 64GB RAM. The bottlenecks identified were:
+
+1. **Scoring**: `structural_similarity()` was called millions of times per benchmark run (population × generations × examples × tasks). Pure-Python per-pixel loops were the hot path.
+2. **Task serialisation**: Each ARC task was evaluated sequentially. With 400 tasks, 10 idle cores were wasted.
+3. **Population batch overhead**: Scoring each program individually re-iterated over train examples per program, rather than amortizing the iteration.
+
+**Strategy:**
+- **NumPy vectorization** for `pixel_accuracy` and `structural_similarity`: replace Python loops with `np.array(dtype=uint8)` operations. Use `np.bincount` (O(10) lookup table) instead of `np.unique` + Python set ops for the ARC color palette (colors 0-9). Pure-Python fallback retained for portability.
+- **`multiprocessing.Pool`** for parallel task evaluation: each worker gets an independent `FourPillarsSolver` instance (avoids shared-state race conditions). Tasks distributed round-robin. Per-worker random seeds ensure reproducibility.
+- **`score_population_on_task()`** batch scorer: amortizes train-example iteration across the entire population per generation.
+- **`--workers` CLI flag**: defaults to 0 (use all CPU cores). `workers=1` gives single-process path for debugging.
+
+### Work Done
+
+**`arc_agent/scorer.py`** — Full NumPy rewrite:
+- `pixel_accuracy()`: uses `np.sum(p == e)` for vectorized comparison
+- `structural_similarity()`: uses `np.bincount(ravel, minlength=10)` for color palette scoring; `np.count_nonzero()` for non-zero count; all sub-scores computed without Python loops
+- Pure-Python fallback retained (importable without NumPy)
+- New `score_population_on_task(programs, task)`: batch scores entire population
+
+**`arc_agent/dataset.py`** — Full multiprocessing rewrite:
+- `_solve_chunk(args)`: worker function, runs in a subprocess; creates independent solver, processes its chunk of tasks, returns results dict
+- `evaluate_dataset(..., workers=0)`: round-robin distributes tasks across N workers; per-worker seeds = seed + i×1000; uses `Pool.map()` for parallel execution; merges results and prints summary with `workers_used`
+- `workers=1` path: calls `_solve_chunk` directly in-process (no subprocess overhead, good for debugging)
+
+**`arc_agent/evaluate.py`** — Added `--workers` CLI flag:
+```
+--workers: Parallel worker processes (0 = use all CPU cores)
+```
+
+**`arc_agent/synthesizer.py`** — Updated `evolve_generation()`:
+- Now calls `score_population_on_task(population, task)` for batch scoring
+- Removes the per-program loop in favour of the amortized batch call
+
+**`arc_agent/__init__.py`** — Bumped to `v0.5.0`
+
+**`tests/test_performance.py`** — 15 new tests:
+- `TestPixelAccuracyNumPy`: NumPy path produces identical results to pure-Python reference
+- `TestStructuralSimilarityNumPy`: same equivalence guarantee for composite scorer
+- `TestScorePopulationOnTask`: batch scores match per-program scores exactly
+- `TestParallelEvaluation`: `workers=1` and `workers=2` produce identical solve counts on trivial tasks; `--workers` flag accepted by CLI
+- `TestNumPyAvailability`: sanity check that NumPy is importable
+
+### Verification Results
+
+| Metric | v0.4 | v0.5 |
+|--------|------|------|
+| Total tests | 216 | **231** |
+| All passing | Yes | Yes |
+| NumPy accelerated | No | **Yes** |
+| Parallel evaluation | No | **Yes (all cores)** |
+| Batch population scoring | No | **Yes** |
+| `--workers` CLI flag | No | **Yes** |
+| Expected speedup (scoring) | baseline | **~10-20× (NumPy vectorisation)** |
+| Expected speedup (eval) | baseline | **~10× (10 cores, M1 Max)** |
+
+### Next Steps
+
+1. **Run full v0.4+v0.5 ARC-AGI-1 benchmark** to measure actual speedup:
+   ```bash
+   python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 10 --output results_v05.json
+   ```
+2. **Numba JIT** on flood-fill and object-extraction hot loops in `objects.py` for further speedup
+3. **Ablation studies** — Validate each pillar is necessary
+4. **ARC-AGI-2** — Test on second benchmark set
+5. **Analyze partial solves** — 200 tasks with >80% accuracy — find patterns to guide new primitives
+6. **Zork agent** — Text adventure environment modeling

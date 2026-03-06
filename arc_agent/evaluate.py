@@ -78,6 +78,10 @@ def main():
         "--quiet", action="store_true",
         help="Suppress per-task output"
     )
+    parser.add_argument(
+        "--workers", type=int, default=0,
+        help="Parallel worker processes (0 = use all CPU cores)"
+    )
     args = parser.parse_args()
 
     if not os.path.isdir(args.data_dir):
@@ -108,6 +112,7 @@ def main():
         verbose=not args.quiet,
         output_path=args.output,
         seed=args.seed,
+        workers=args.workers,
     )
 
     if args.output:

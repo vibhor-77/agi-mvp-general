@@ -13,7 +13,7 @@ import random
 import copy
 from typing import Optional
 from .concepts import Concept, ConditionalConcept, Program, Toolkit, Grid, Predicate
-from .scorer import score_program_on_task
+from .scorer import score_program_on_task, score_population_on_task
 
 
 class ProgramSynthesizer:
@@ -189,9 +189,12 @@ class ProgramSynthesizer:
         3. MUTATE: Vary the survivors (Pillar 4: explore)
         4. CROSSOVER: Combine successful programs (Pillar 3: compose)
         """
-        # Score all programs (FEEDBACK LOOP)
-        for program in population:
-            program.fitness = score_program_on_task(program, task)
+        # Score all programs in one pass (FEEDBACK LOOP)
+        # score_population_on_task iterates training examples once per program,
+        # amortizing Python overhead vs calling score_program_on_task individually.
+        scores = score_population_on_task(population, task)
+        for program, score in zip(population, scores):
+            program.fitness = score
 
         # Sort by fitness (APPROXIMABILITY — better programs survive)
         population.sort(key=lambda p: p.fitness, reverse=True)
