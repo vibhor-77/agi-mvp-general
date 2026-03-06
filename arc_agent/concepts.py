@@ -19,6 +19,10 @@ import copy
 Grid = list[list[int]]
 
 
+# Type for predicates
+Predicate = Callable[[Grid], bool]
+
+
 @dataclass
 class Concept:
     """A composable building block of intelligence.
@@ -64,6 +68,70 @@ class Concept:
             child_names = [c.name for c in self.children]
             return f"Concept({self.name}: {' → '.join(child_names)})"
         return f"Concept({self.kind}:{self.name})"
+
+
+class ConditionalConcept(Concept):
+    """A concept that applies conditional logic based on a predicate.
+
+    Implements if-then-else: test a predicate on input, apply the
+    appropriate branch (then_concept or else_concept).
+
+    This extends the concept grammar to support branching:
+      Concept → ... | If(Predicate, ThenConcept, ElseConcept)
+    """
+
+    def __init__(
+        self,
+        predicate: Predicate,
+        then_concept: Concept,
+        else_concept: Concept,
+        name: str = "",
+    ):
+        """Initialize a conditional concept.
+
+        Args:
+            predicate: A function Grid -> bool that tests a condition
+            then_concept: Concept to apply if predicate is True
+            else_concept: Concept to apply if predicate is False
+            name: Optional custom name (auto-generated if not provided)
+        """
+        self.predicate = predicate
+        self.then_concept = then_concept
+        self.else_concept = else_concept
+
+        # Auto-generate name from predicate + branch names if not provided
+        if not name:
+            pred_name = getattr(predicate, '__name__', 'pred')
+            name = f"if_{pred_name}_{then_concept.name}_else_{else_concept.name}"
+
+        # Initialize parent Concept
+        super().__init__(
+            kind="conditional",
+            name=name,
+            implementation=self._conditional_impl,
+            children=[then_concept, else_concept],
+        )
+
+    def _conditional_impl(self, grid: Grid) -> Optional[Grid]:
+        """Implementation: evaluate predicate and apply appropriate branch."""
+        try:
+            if self.predicate(grid):
+                return self.then_concept.apply(grid)
+            else:
+                return self.else_concept.apply(grid)
+        except Exception:
+            return None
+
+    def apply(self, grid: Grid) -> Optional[Grid]:
+        """Apply the conditional concept (override to use proper implementation)."""
+        try:
+            self.usage_count += 1
+            result = self._conditional_impl(grid)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+        return None
 
 
 class Program:

@@ -18,6 +18,7 @@ from .concepts import Toolkit, Archive, Program
 from .primitives import build_initial_toolkit
 from .synthesizer import ProgramSynthesizer
 from .explorer import ExplorationEngine
+from .decompose import DecompositionEngine
 from .scorer import (
     score_program_on_task,
     validate_on_test,
@@ -55,6 +56,7 @@ class FourPillarsSolver:
             toolkit=self.toolkit,
             archive=self.archive,
         )
+        self.decomposer = DecompositionEngine(toolkit=self.toolkit)
 
         self.max_generations = max_generations
         self.verbose = verbose
@@ -118,6 +120,25 @@ class FourPillarsSolver:
         elapsed = time.time() - start_time
         best_score = best_program.fitness if best_program else 0.0
 
+        # Step 4.5: Try decomposition as fallback (COMPOSABILITY)
+        # If the evolved solution is weak, attempt problem decomposition
+        if best_score < 0.99:
+            decomposed = self.decomposer.decompose_if_needed(
+                task,
+                best_score,
+                lambda t: self.synthesizer.synthesize(
+                    task=t,
+                    max_generations=self.max_generations // 2,
+                    target_score=0.99,
+                    verbose=False,
+                )
+            )
+            if decomposed is not None and decomposed.fitness > best_score:
+                best_program = decomposed
+                best_score = decomposed.fitness
+                if self.verbose:
+                    print(f"  ◆ Decomposition improved score to {best_score:.3f}")
+
         # Step 5: Promote solutions to reusable concepts (COMPOSABILITY)
         # Lower threshold (0.95) allows near-miss knowledge to compound.
         # This is critical for cumulative culture — even imperfect solutions
@@ -158,11 +179,16 @@ class FourPillarsSolver:
         """Quick pass: try every single primitive individually.
 
         This is a fast "exploit" check before committing to evolution.
+        Skips predicates (which don't transform grids).
         """
         best_program = None
         best_score = 0.0
 
         for concept in self.toolkit.concepts.values():
+            # Skip predicates — they test conditions, not transform grids
+            if concept.kind == "predicate":
+                continue
+
             program = Program([concept])
             score = score_program_on_task(program, task)
             if score > best_score:

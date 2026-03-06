@@ -251,10 +251,58 @@ User ran the full benchmark with v0.3 changes:
 
 **Key insight:** The lower concept promotion threshold (0.95 vs 0.99) unlocked real knowledge compounding. 24 concepts learned vs 3 — the cumulative culture mechanism is now working as intended.
 
+---
+
+## Session 5 — Conditional Logic & Task Decomposition (v0.4, March 2026)
+
+### Prompt
+
+> "both, but systematically, methodically and incrementally (but parallel progress is also good). Can you do as much work yourself as possible without asking me to run scripts that you can run yourself and verify?"
+
+### Claude's Reasoning
+
+Two independent features developed in parallel, both integrated and verified without user involvement.
+
+### Work Done
+
+**Feature 1: Conditional Logic (`concepts.py`, `primitives.py`, `synthesizer.py`)**
+
+Extended the concept grammar to support if-then-else branching:
+`Concept → ... | If(Predicate, ThenConcept, ElseConcept)`
+
+- `ConditionalConcept` class added to `concepts.py` — a proper Concept subclass that evaluates a `Grid → bool` predicate and dispatches to the appropriate branch. Fits seamlessly into Program.execute() via the existing Concept.apply() interface.
+- 6 new predicates added to `primitives.py`: `is_tall`, `is_wide`, `has_many_colors`, `is_small`, `is_large`, `has_background_majority` (plus existing 4: `is_symmetric_h/v`, `is_square`, `has_single_color`)
+- All 10 predicates registered in `build_initial_toolkit()` as kind="predicate"
+- `ProgramSynthesizer` updated with `conditional_rate=0.1` parameter, `_random_conditional()` method, conditional mutation type, and conditional programs in initial population generation
+- Predicates excluded from single-primitive sweep in solver (they return bool, not Grid)
+
+**Feature 2: Task Decomposition (`decompose.py`, `solver.py`)**
+
+`DecompositionEngine` with 3 strategies, each taking a `synthesize_fn` callback:
+
+1. **Color-channel decomposition** — Extracts binary mask per color, synthesizes independently per channel, merges results. Useful for multi-color tasks with independent channel transformations.
+2. **Spatial quadrant decomposition** — Splits grid into TL/TR/BL/BR quadrants, synthesizes per quadrant, merges. Useful for tasks with spatially local patterns.
+3. **Diff-focus decomposition** — Finds changed cells between in/out, focuses synthesis on the minimal bounding region. Useful for tasks with sparse changes.
+
+Integrated into solver.py as a fallback after evolutionary synthesis if score < 0.99.
+
+### Verification Results
+
+| Metric | v0.3 | v0.4 |
+|--------|------|------|
+| Sample task training | 9/10 | **10/10** |
+| Sample task test | 8/10 | **9/10** |
+| Total tests | 180 | **216** |
+| All passing | Yes | Yes |
+| Toolkit size (initial) | 104 | **114** (10 predicates added) |
+| Concepts learned (sample run) | 1 | **2** |
+
+`invert_then_crop` now solved again (regression in v0.3 fixed by richer program space).
+
 ### Next Steps
 
-1. **Conditional logic** — If-then-else branching in programs
-2. **Task decomposition** — Fractal problem-solving for hard tasks
-3. **Improve coverage** — Target 70%+ line coverage
-4. **Ablation studies** — Validate each pillar is necessary
-5. **Analyze the 200 partial tasks** — find patterns in what's close but not exact
+1. **Run full ARC-AGI-1 benchmark** with v0.4 — measure impact of conditionals + decomposition
+2. **Ablation studies** — Validate each pillar is necessary
+3. **Improve code coverage** — Target 70%+ line coverage
+4. **Analyze partial solves** — Find patterns in the 200 >80% tasks to guide next primitives
+5. **Zork agent** — Text adventure environment modeling

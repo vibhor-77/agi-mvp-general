@@ -376,6 +376,50 @@ def has_single_color(grid: Grid) -> bool:
     return len(colors) <= 1
 
 
+def is_tall(grid: Grid) -> bool:
+    """Check if grid is taller than it is wide (height > width)."""
+    h, w = _grid_dims(grid)
+    return h > w
+
+
+def is_wide(grid: Grid) -> bool:
+    """Check if grid is wider than it is tall (width > height)."""
+    h, w = _grid_dims(grid)
+    return w > h
+
+
+def has_many_colors(grid: Grid) -> bool:
+    """Check if grid has more than 3 non-zero colors."""
+    colors = set()
+    for row in grid:
+        for cell in row:
+            if cell != 0:
+                colors.add(cell)
+    return len(colors) > 3
+
+
+def is_small(grid: Grid) -> bool:
+    """Check if grid is small (total cells < 50)."""
+    h, w = _grid_dims(grid)
+    return h * w < 50
+
+
+def is_large(grid: Grid) -> bool:
+    """Check if grid is large (total cells > 200)."""
+    h, w = _grid_dims(grid)
+    return h * w > 200
+
+
+def has_background_majority(grid: Grid) -> bool:
+    """Check if more than 50% of cells are background (0)."""
+    h, w = _grid_dims(grid)
+    if h == 0 or w == 0:
+        return True
+    total_cells = h * w
+    zero_count = sum(1 for row in grid for cell in row if cell == 0)
+    return zero_count > total_cells / 2
+
+
 # ============================================================
 # GRID PARTITIONING AND PATTERN OPERATIONS
 # ============================================================
@@ -633,6 +677,27 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
             kind="operator",
             name=name,
             implementation=_make_replace_with_bg(color),
+        ))
+
+    # Add predicates (for conditional logic)
+    predicates = [
+        ("is_symmetric_h", is_symmetric_h),
+        ("is_symmetric_v", is_symmetric_v),
+        ("is_square", is_square),
+        ("has_single_color", has_single_color),
+        ("is_tall", is_tall),
+        ("is_wide", is_wide),
+        ("has_many_colors", has_many_colors),
+        ("is_small", is_small),
+        ("is_large", is_large),
+        ("has_background_majority", has_background_majority),
+    ]
+
+    for name, predicate_fn in predicates:
+        toolkit.add_concept(Concept(
+            kind="predicate",
+            name=name,
+            implementation=predicate_fn,
         ))
 
     # Add object-level primitives

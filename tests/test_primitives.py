@@ -388,7 +388,10 @@ class TestBuildToolkit(unittest.TestCase):
         tk = build_initial_toolkit()
         grid = [[1, 2], [3, 4]]
         for name, concept in tk.concepts.items():
-            # Every concept should be able to process a grid without crashing
+            # Skip predicates (they return booleans, not grids)
+            if concept.kind == "predicate":
+                continue
+            # Every non-predicate concept should be able to process a grid
             result = concept.apply(grid)
             # Result should be a list of lists or None
             self.assertTrue(

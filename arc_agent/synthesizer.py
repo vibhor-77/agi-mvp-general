@@ -12,7 +12,7 @@ from __future__ import annotations
 import random
 import copy
 from typing import Optional
-from .concepts import Concept, Program, Toolkit, Grid
+from .concepts import Concept, ConditionalConcept, Program, Toolkit, Grid, Predicate
 from .scorer import score_program_on_task
 
 
@@ -32,6 +32,7 @@ class ProgramSynthesizer:
         mutation_rate: float = 0.3,
         crossover_rate: float = 0.2,
         elite_fraction: float = 0.1,
+        conditional_rate: float = 0.1,
     ):
         self.toolkit = toolkit
         self.population_size = population_size
@@ -39,11 +40,47 @@ class ProgramSynthesizer:
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
         self.elite_fraction = elite_fraction
+        self.conditional_rate = conditional_rate
+        # Cache available predicates from toolkit
+        self._predicates: Optional[list[Predicate]] = None
+
+    def _get_predicates(self) -> list[Predicate]:
+        """Get all available predicates from the toolkit.
+
+        Predicates are stored as Concept objects with kind="predicate".
+        """
+        if self._predicates is None:
+            self._predicates = []
+            for concept in self.toolkit.concepts.values():
+                if concept.kind == "predicate":
+                    # Extract the actual predicate function
+                    # For predicates, implementation is the predicate function
+                    if callable(concept.implementation):
+                        self._predicates.append(concept.implementation)
+        return self._predicates
 
     def _random_concept(self) -> Concept:
-        """Pick a random concept from the toolkit."""
-        concepts = list(self.toolkit.concepts.values())
-        return random.choice(concepts)
+        """Pick a random concept from the toolkit.
+
+        Excludes predicates (which are only for conditionals).
+        """
+        concepts = [c for c in self.toolkit.concepts.values() if c.kind != "predicate"]
+        return random.choice(concepts) if concepts else list(self.toolkit.concepts.values())[0]
+
+    def _random_conditional(self) -> Optional[ConditionalConcept]:
+        """Create a random conditional concept from random predicate and branches.
+
+        Returns None if no predicates are available.
+        """
+        predicates = self._get_predicates()
+        if not predicates:
+            return None
+
+        predicate = random.choice(predicates)
+        then_concept = self._random_concept()
+        else_concept = self._random_concept()
+
+        return ConditionalConcept(predicate, then_concept, else_concept)
 
     def _random_program(self, max_len: Optional[int] = None) -> Program:
         """Generate a random program (sequence of concepts)."""
@@ -54,17 +91,26 @@ class ProgramSynthesizer:
     def generate_initial_population(self) -> list[Program]:
         """Generate the initial population of random programs.
 
-        Includes single-concept programs (to test each primitive alone)
-        plus random compositions.
+        Includes single-concept programs (to test each primitive alone),
+        random compositions, and some conditional programs.
+        Excludes predicates (which are only for conditionals).
         """
         population = []
 
-        # First: try every single primitive alone
+        # First: try every single primitive alone (skip predicates)
         for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
             population.append(Program([concept]))
 
-        # Then: generate random compositions to fill the population
+        # Then: generate random compositions and conditionals to fill population
         while len(population) < self.population_size:
+            if random.random() < self.conditional_rate:
+                # Try to create a conditional program
+                cond = self._random_conditional()
+                if cond is not None:
+                    population.append(Program([cond]))
+                    continue
             population.append(self._random_program())
 
         return population[:self.population_size]
@@ -77,10 +123,16 @@ class ProgramSynthesizer:
         2. Insert a new step at a random position
         3. Remove a random step (if length > 1)
         4. Swap two adjacent steps
+        5. Replace a step with a conditional (if predicates available)
         """
         steps = [s for s in program.steps]  # shallow copy of list
 
-        mutation_type = random.choice(["replace", "insert", "remove", "swap"])
+        # Include "conditional" as an option if predicates are available
+        mutation_types = ["replace", "insert", "remove", "swap"]
+        if self._get_predicates():
+            mutation_types.append("conditional")
+
+        mutation_type = random.choice(mutation_types)
 
         if mutation_type == "replace" and steps:
             idx = random.randint(0, len(steps) - 1)
@@ -97,6 +149,12 @@ class ProgramSynthesizer:
         elif mutation_type == "swap" and len(steps) >= 2:
             idx = random.randint(0, len(steps) - 2)
             steps[idx], steps[idx + 1] = steps[idx + 1], steps[idx]
+
+        elif mutation_type == "conditional" and steps:
+            idx = random.randint(0, len(steps) - 1)
+            cond = self._random_conditional()
+            if cond is not None:
+                steps[idx] = cond
 
         return Program(steps)
 
