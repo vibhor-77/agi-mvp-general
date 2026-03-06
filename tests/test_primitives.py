@@ -9,6 +9,13 @@ from arc_agent.primitives import (
     extract_unique_colors, count_nonzero_per_row,
     is_symmetric_h, is_symmetric_v, is_square, has_single_color,
     build_initial_toolkit,
+    complete_symmetry_h, complete_symmetry_v, complete_symmetry_4,
+    denoise_3x3, denoise_5x5,
+    xor_halves_v, or_halves_v, and_halves_v,
+    xor_halves_h, or_halves_h, and_halves_h,
+    swap_most_least, recolor_least_common,
+    repeat_rows_2x, repeat_cols_2x,
+    stack_with_mirror_v, stack_with_mirror_h,
 )
 
 
@@ -398,6 +405,142 @@ class TestBuildToolkit(unittest.TestCase):
                 result is None or isinstance(result, list),
                 f"Concept {name} returned {type(result)}"
             )
+
+
+class TestSymmetryCompletion(unittest.TestCase):
+    def test_complete_symmetry_h_basic(self):
+        # Left has content, right is empty -> mirror left onto right
+        grid = [[1, 2, 0, 0]]
+        result = complete_symmetry_h(grid)
+        self.assertEqual(result, [[1, 2, 2, 1]])
+
+    def test_complete_symmetry_h_right_heavier(self):
+        # Right has more content -> mirror right onto left
+        grid = [[0, 0, 3, 4]]
+        result = complete_symmetry_h(grid)
+        self.assertEqual(result, [[4, 3, 3, 4]])
+
+    def test_complete_symmetry_v_basic(self):
+        # Top has content, bottom is empty
+        grid = [[1, 2], [3, 4], [0, 0], [0, 0]]
+        result = complete_symmetry_v(grid)
+        self.assertEqual(result, [[1, 2], [3, 4], [3, 4], [1, 2]])
+
+    def test_complete_symmetry_4(self):
+        grid = [[1, 0], [0, 0]]
+        result = complete_symmetry_4(grid)
+        # After H: [[1,1],[0,0]], after V: [[1,1],[1,1]]
+        self.assertEqual(result, [[1, 1], [1, 1]])
+
+
+class TestDenoise(unittest.TestCase):
+    def test_denoise_3x3_fixes_noise(self):
+        # Single noisy pixel in a field of 1s
+        grid = [
+            [1, 1, 1],
+            [1, 0, 1],  # center pixel is "noise"
+            [1, 1, 1],
+        ]
+        result = denoise_3x3(grid)
+        # Majority of 3x3 neighborhood is 1 -> center becomes 1
+        self.assertEqual(result[1][1], 1)
+
+    def test_denoise_3x3_preserves_real_boundary(self):
+        # Large region boundary should not be erased
+        grid = [
+            [1, 1, 0],
+            [1, 1, 0],
+            [0, 0, 0],
+        ]
+        result = denoise_3x3(grid)
+        self.assertEqual(result[0][0], 1)
+        self.assertEqual(result[2][2], 0)
+
+
+class TestGridOverlay(unittest.TestCase):
+    def test_xor_halves_v(self):
+        grid = [
+            [1, 0, 2],
+            [0, 3, 0],
+            [1, 0, 0],  # bottom half
+            [0, 0, 2],
+        ]
+        result = xor_halves_v(grid)
+        # Row 0: xor([1,0,2], [1,0,0]) -> [0,0,2]
+        # Row 1: xor([0,3,0], [0,0,2]) -> [0,3,2]
+        self.assertEqual(result, [[0, 0, 2], [0, 3, 2]])
+
+    def test_or_halves_v(self):
+        grid = [
+            [1, 0],
+            [0, 2],
+        ]
+        result = or_halves_v(grid)
+        # or([1,0], [0,2]) -> [1,2]
+        self.assertEqual(result, [[1, 2]])
+
+    def test_and_halves_h(self):
+        grid = [
+            [1, 0, 1, 2],
+        ]
+        result = and_halves_h(grid)
+        # and([1,0], [1,2]) -> [1,0]
+        self.assertEqual(result, [[1, 0]])
+
+    def test_xor_halves_h(self):
+        grid = [
+            [1, 0, 0, 2],
+        ]
+        result = xor_halves_h(grid)
+        # xor([1,0], [0,2]) -> [1,2]
+        self.assertEqual(result, [[1, 2]])
+
+
+class TestColorFrequency(unittest.TestCase):
+    def test_swap_most_least(self):
+        # Color 1 appears 3x, color 2 appears 1x
+        grid = [[1, 1, 1], [2, 0, 0]]
+        result = swap_most_least(grid)
+        self.assertEqual(result, [[2, 2, 2], [1, 0, 0]])
+
+    def test_recolor_least_common(self):
+        grid = [[1, 1, 1], [2, 0, 0]]
+        result = recolor_least_common(grid)
+        self.assertEqual(result, [[1, 1, 1], [1, 0, 0]])
+
+
+class TestPatternStacking(unittest.TestCase):
+    def test_repeat_rows_2x(self):
+        grid = [[1, 2], [3, 4]]
+        result = repeat_rows_2x(grid)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result, [[1, 2], [3, 4], [1, 2], [3, 4]])
+
+    def test_repeat_cols_2x(self):
+        grid = [[1, 2], [3, 4]]
+        result = repeat_cols_2x(grid)
+        self.assertEqual(result, [[1, 2, 1, 2], [3, 4, 3, 4]])
+
+    def test_stack_with_mirror_v(self):
+        grid = [[1, 2], [3, 4]]
+        result = stack_with_mirror_v(grid)
+        self.assertEqual(result, [[1, 2], [3, 4], [3, 4], [1, 2]])
+
+    def test_stack_with_mirror_h(self):
+        grid = [[1, 2, 3]]
+        result = stack_with_mirror_h(grid)
+        self.assertEqual(result, [[1, 2, 3, 3, 2, 1]])
+
+
+class TestNewToolkitSize(unittest.TestCase):
+    def test_toolkit_has_new_ops(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 140)
+        # Check new ops are registered
+        for name in ["complete_symmetry_h", "denoise_3x3", "xor_halves_v",
+                     "swap_most_least", "repeat_rows_2x", "stack_with_mirror_v",
+                     "recolor_smallest_to_1", "recolor_all_to_most_common_obj"]:
+            self.assertIn(name, tk.concepts, f"Missing: {name}")
 
 
 if __name__ == '__main__':

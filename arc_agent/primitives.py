@@ -567,6 +567,242 @@ def reverse_cols(grid: Grid) -> Grid:
 
 
 # ============================================================
+# SYMMETRY COMPLETION
+# ============================================================
+
+def complete_symmetry_h(grid: Grid) -> Grid:
+    """Enforce horizontal (left-right) symmetry in each row.
+
+    For each row, the half with more non-zero content is mirrored
+    onto the other half. If both halves have equal content, the
+    left half is mirrored onto the right.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0 or w < 2:
+        return _deep_copy_grid(grid)
+    result = _deep_copy_grid(grid)
+    mid = w // 2
+    for r in range(h):
+        left_nz = sum(1 for c in range(mid) if grid[r][c] != 0)
+        right_nz = sum(1 for c in range(mid, w) if grid[r][c] != 0)
+        if left_nz >= right_nz:
+            # Mirror left onto right
+            for c in range(w):
+                result[r][w - 1 - c] = result[r][c]
+        else:
+            # Mirror right onto left
+            for c in range(w):
+                result[r][c] = result[r][w - 1 - c]
+    return result
+
+
+def complete_symmetry_v(grid: Grid) -> Grid:
+    """Enforce vertical (top-bottom) symmetry.
+
+    The half (top or bottom) with more non-zero content is mirrored
+    onto the other half.
+    """
+    h, w = _grid_dims(grid)
+    if h < 2:
+        return _deep_copy_grid(grid)
+    result = _deep_copy_grid(grid)
+    mid = h // 2
+    top_nz = sum(1 for r in range(mid) for c in range(w) if grid[r][c] != 0)
+    bot_nz = sum(1 for r in range(mid, h) for c in range(w) if grid[r][c] != 0)
+    if top_nz >= bot_nz:
+        for r in range(h):
+            result[h - 1 - r] = result[r][:]
+    else:
+        for r in range(h):
+            result[r] = result[h - 1 - r][:]
+    return result
+
+
+def complete_symmetry_4(grid: Grid) -> Grid:
+    """Enforce 4-fold symmetry (horizontal + vertical)."""
+    return complete_symmetry_v(complete_symmetry_h(grid))
+
+
+# ============================================================
+# MAJORITY VOTING / DENOISE
+# ============================================================
+
+def _majority_vote(grid: Grid, radius: int) -> Grid:
+    """Replace each cell with the majority color in its neighborhood.
+
+    Only replaces a cell if it disagrees with the strict majority of
+    its (2*radius+1)×(2*radius+1) neighborhood. Ties preserve the
+    original value.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            counts: dict[int, int] = {}
+            for dr in range(-radius, radius + 1):
+                for dc in range(-radius, radius + 1):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w:
+                        v = grid[nr][nc]
+                        counts[v] = counts.get(v, 0) + 1
+            majority = max(counts, key=lambda k: counts[k])
+            # Only replace if majority is strict (> half of neighborhood)
+            total = sum(counts.values())
+            if counts[majority] > total // 2:
+                result[r][c] = majority
+    return result
+
+
+def denoise_3x3(grid: Grid) -> Grid:
+    """Replace each cell with 3×3 neighborhood majority."""
+    return _majority_vote(grid, 1)
+
+
+def denoise_5x5(grid: Grid) -> Grid:
+    """Replace each cell with 5×5 neighborhood majority."""
+    return _majority_vote(grid, 2)
+
+
+# ============================================================
+# GRID OVERLAY / BOOLEAN OPERATIONS
+# ============================================================
+
+def _combine_halves_v(grid: Grid, op: str) -> Grid:
+    """Combine top and bottom halves with a boolean operation.
+
+    op: 'xor', 'or', 'and'. Non-zero values are treated as True.
+    The result grid has the same width but half the height.
+    """
+    h, w = _grid_dims(grid)
+    if h < 2:
+        return _deep_copy_grid(grid)
+    mid = h // 2
+    result = [[0] * w for _ in range(mid)]
+    for r in range(mid):
+        for c in range(w):
+            a = grid[r][c]
+            b = grid[mid + r][c]
+            if op == "xor":
+                # XOR: keep whichever is non-zero, but zero if both non-zero
+                result[r][c] = (a if b == 0 else (b if a == 0 else 0))
+            elif op == "or":
+                result[r][c] = a if a != 0 else b
+            elif op == "and":
+                result[r][c] = a if (a != 0 and b != 0) else 0
+    return result
+
+
+def _combine_halves_h(grid: Grid, op: str) -> Grid:
+    """Combine left and right halves with a boolean operation.
+
+    Result grid has the same height but half the width.
+    """
+    h, w = _grid_dims(grid)
+    if w < 2:
+        return _deep_copy_grid(grid)
+    mid = w // 2
+    result = [[0] * mid for _ in range(h)]
+    for r in range(h):
+        for c in range(mid):
+            a = grid[r][c]
+            b = grid[r][mid + c]
+            if op == "xor":
+                result[r][c] = (a if b == 0 else (b if a == 0 else 0))
+            elif op == "or":
+                result[r][c] = a if a != 0 else b
+            elif op == "and":
+                result[r][c] = a if (a != 0 and b != 0) else 0
+    return result
+
+
+def xor_halves_v(grid: Grid) -> Grid:
+    """XOR top and bottom halves (half-height output)."""
+    return _combine_halves_v(grid, "xor")
+
+def or_halves_v(grid: Grid) -> Grid:
+    """OR top and bottom halves (half-height output)."""
+    return _combine_halves_v(grid, "or")
+
+def and_halves_v(grid: Grid) -> Grid:
+    """AND top and bottom halves (half-height output)."""
+    return _combine_halves_v(grid, "and")
+
+def xor_halves_h(grid: Grid) -> Grid:
+    """XOR left and right halves (half-width output)."""
+    return _combine_halves_h(grid, "xor")
+
+def or_halves_h(grid: Grid) -> Grid:
+    """OR left and right halves (half-width output)."""
+    return _combine_halves_h(grid, "or")
+
+def and_halves_h(grid: Grid) -> Grid:
+    """AND left and right halves (half-width output)."""
+    return _combine_halves_h(grid, "and")
+
+
+# ============================================================
+# COLOR MAPPING BY FREQUENCY
+# ============================================================
+
+def swap_most_least(grid: Grid) -> Grid:
+    """Swap the most-common and least-common non-zero colors."""
+    mc = most_common_color(grid)
+    lc = least_common_color(grid)
+    if mc == 0 or lc == 0 or mc == lc:
+        return _deep_copy_grid(grid)
+    return [
+        [lc if v == mc else (mc if v == lc else v) for v in row]
+        for row in grid
+    ]
+
+
+def recolor_least_common(grid: Grid) -> Grid:
+    """Replace least-common non-zero color with most-common."""
+    mc = most_common_color(grid)
+    lc = least_common_color(grid)
+    if mc == 0 or lc == 0 or mc == lc:
+        return _deep_copy_grid(grid)
+    return [
+        [mc if v == lc else v for v in row]
+        for row in grid
+    ]
+
+
+# ============================================================
+# PATTERN STACKING / REPETITION
+# ============================================================
+
+def repeat_rows_2x(grid: Grid) -> Grid:
+    """Repeat the row sequence vertically (double height)."""
+    return _deep_copy_grid(grid) + _deep_copy_grid(grid)
+
+
+def repeat_cols_2x(grid: Grid) -> Grid:
+    """Repeat the column sequence horizontally (double width)."""
+    return [row[:] + row[:] for row in grid]
+
+
+def stack_with_mirror_v(grid: Grid) -> Grid:
+    """Stack grid with its vertical mirror below (double height).
+
+    Original on top, vertically-mirrored copy below.
+    """
+    top = _deep_copy_grid(grid)
+    bottom = list(reversed(_deep_copy_grid(grid)))
+    return top + bottom
+
+
+def stack_with_mirror_h(grid: Grid) -> Grid:
+    """Stack grid with its horizontal mirror to the right (double width).
+
+    Original on left, horizontally-mirrored copy on right.
+    """
+    return [row[:] + row[::-1] for row in grid]
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -652,6 +888,28 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("sort_rows_by_color_count", sort_rows_by_color_count),
         ("reverse_rows", reverse_rows),
         ("reverse_cols", reverse_cols),
+        # Symmetry completion
+        ("complete_symmetry_h", complete_symmetry_h),
+        ("complete_symmetry_v", complete_symmetry_v),
+        ("complete_symmetry_4", complete_symmetry_4),
+        # Denoise / majority voting
+        ("denoise_3x3", denoise_3x3),
+        ("denoise_5x5", denoise_5x5),
+        # Grid overlay (boolean ops on halves)
+        ("xor_halves_v", xor_halves_v),
+        ("or_halves_v", or_halves_v),
+        ("and_halves_v", and_halves_v),
+        ("xor_halves_h", xor_halves_h),
+        ("or_halves_h", or_halves_h),
+        ("and_halves_h", and_halves_h),
+        # Color frequency ops
+        ("swap_most_least", swap_most_least),
+        ("recolor_least_common", recolor_least_common),
+        # Pattern stacking
+        ("repeat_rows_2x", repeat_rows_2x),
+        ("repeat_cols_2x", repeat_cols_2x),
+        ("stack_with_mirror_v", stack_with_mirror_v),
+        ("stack_with_mirror_h", stack_with_mirror_h),
     ]
 
     for name, impl in partitioning_ops:

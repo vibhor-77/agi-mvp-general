@@ -255,6 +255,38 @@ def recolor_largest_object(grid: Grid, new_color: int) -> Grid:
     return result
 
 
+def recolor_smallest_object(grid: Grid, new_color: int) -> Grid:
+    """Recolor the smallest object to a new color."""
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    smallest = min(objects, key=lambda o: o.size)
+    result = [row[:] for row in grid]
+    for r, c in smallest.pixels:
+        result[r][c] = new_color
+    return result
+
+
+def recolor_all_to_most_common(grid: Grid) -> Grid:
+    """Recolor all objects to the most frequent object color.
+
+    Finds the color that appears in the most objects (not most pixels),
+    then recolors every non-zero cell to that color.
+    """
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    # Count how many objects have each color
+    color_counts: dict[int, int] = {}
+    for obj in objects:
+        color_counts[obj.color] = color_counts.get(obj.color, 0) + 1
+    dominant = max(color_counts, key=lambda k: color_counts[k])
+    return [
+        [dominant if cell != 0 else 0 for cell in row]
+        for row in grid
+    ]
+
+
 def mirror_objects_horizontal(grid: Grid) -> Grid:
     """Mirror each object horizontally within its bounding box.
 
@@ -312,6 +344,13 @@ def _make_recolor_largest(color: int):
     return _recolor
 
 
+def _make_recolor_smallest(color: int):
+    """Factory: create a recolor_smallest_object function for a specific color."""
+    def _recolor(grid: Grid) -> Grid:
+        return recolor_smallest_object(grid, color)
+    return _recolor
+
+
 def add_object_concepts(toolkit: Toolkit) -> None:
     """Add object-level concepts to an existing toolkit.
 
@@ -332,6 +371,11 @@ def add_object_concepts(toolkit: Toolkit) -> None:
         implementation=mirror_objects_horizontal,
     ))
 
+    toolkit.add_concept(Concept(
+        kind="operator", name="recolor_all_to_most_common_obj",
+        implementation=recolor_all_to_most_common,
+    ))
+
     # Color-specific object operations
     for color in range(1, 10):
         toolkit.add_concept(Concept(
@@ -345,4 +389,8 @@ def add_object_concepts(toolkit: Toolkit) -> None:
         toolkit.add_concept(Concept(
             kind="operator", name=f"recolor_largest_to_{color}",
             implementation=_make_recolor_largest(color),
+        ))
+        toolkit.add_concept(Concept(
+            kind="operator", name=f"recolor_smallest_to_{color}",
+            implementation=_make_recolor_smallest(color),
         ))
