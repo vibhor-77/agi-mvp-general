@@ -26,30 +26,23 @@ Current AI systems "reset" with each training run — knowledge doesn't compound
 ## Quick Start
 
 ```bash
-# Clone the repository
+# Clone and install (NumPy is the only runtime dependency)
 git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
+pip install numpy           # or: conda install numpy
 
-# Install development dependencies (optional — agent has zero runtime deps)
-pip install -r requirements.txt
+# Run the test suite to verify everything works
+python -m unittest discover -s tests -p "*.py"
 
-# Run the evaluation
+# Run the sample tasks (10 built-in ARC tasks)
 python -m arc_agent.main
 
-# Save learned knowledge for later reuse
-python -m arc_agent.main --save-toolkit toolkit.json --save-archive archive.json
-
-# Resume from saved knowledge (cumulative culture across runs)
-python -m arc_agent.main --load-toolkit toolkit.json
-
-# Run tests with coverage
-python run_tests.py
-
-# Run a single task for debugging
-python -m arc_agent.main --task mirror_h
+# Full ARC-AGI benchmark (auto-detects performance cores)
+git clone https://github.com/fchollet/ARC-AGI.git
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
 ```
 
-**Requirements:** Python 3.9+. Zero runtime dependencies (stdlib only). `pytest` and `pytest-cov` are optional dev dependencies for enhanced testing.
+**Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup and all CLI options.
 
 ## Results
 
@@ -125,8 +118,9 @@ python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
 ```
 agi-mvp-general/
 ├── README.md                        # This file — project overview
-├── requirements.txt                 # Dev dependencies (pytest, pytest-cov)
-├── pyproject.toml                   # Python project configuration
+├── INSTALL.md                       # Setup instructions (conda/venv/pip)
+├── requirements.txt                 # Dependencies: numpy (runtime) + pytest (dev)
+├── pyproject.toml                   # Python project configuration (v0.5.0)
 ├── run_tests.py                     # Test runner with built-in coverage
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Detailed technical architecture guide
@@ -142,25 +136,26 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive save/load (JSON)
 │   ├── synthesizer.py               # Evolutionary synthesis with conditional support
 │   ├── solver.py                    # Main learning loop (all 4 pillars)
-│   ├── scorer.py                    # Feedback scoring engine (Pillar 1)
+│   ├── scorer.py                    # Feedback scoring engine (Pillar 1, NumPy)
 │   ├── explorer.py                  # Explore/exploit engine (Pillar 4)
-│   ├── dataset.py                   # ARC-AGI dataset loader
+│   ├── cpu_utils.py                 # CPU topology detection (performance vs efficiency cores)
+│   ├── dataset.py                   # ARC-AGI dataset loader + parallel evaluation
 │   ├── evaluate.py                  # Full benchmark evaluation CLI
 │   ├── sample_tasks.py              # 10 sample ARC-AGI tasks
 │   └── main.py                      # CLI entry point with persistence flags
-└── tests/                           # Test suite (231 tests)
-    ├── test_concepts.py             # Unit tests for concept system (21 tests)
-    ├── test_primitives.py           # Unit tests for DSL primitives (55 tests)
-    ├── test_objects.py              # Unit tests for object primitives (19 tests)
-    ├── test_scorer.py               # Unit tests for scoring engine (18 tests)
-    ├── test_synthesizer.py          # Unit tests for program synthesis (12 tests)
-    ├── test_explorer.py             # Unit tests for exploration engine (14 tests)
-    ├── test_persistence.py          # Unit tests for serialization (7 tests)
-    ├── test_dataset.py              # Unit tests for dataset loader (11 tests)
-    ├── test_conditionals.py         # Unit tests for conditional logic (16 tests)
-    ├── test_decompose.py            # Unit tests for task decomposition (21 tests)
-    ├── test_performance.py          # NumPy equivalence + parallel eval (15 tests)
-    └── test_integration.py          # Integration tests (full pipeline, 22 tests)
+└── tests/                           # Test suite (242 tests)
+    ├── test_concepts.py             # Concept system (21 tests)
+    ├── test_primitives.py           # DSL grid transforms (55 tests)
+    ├── test_objects.py              # Object-level primitives (19 tests)
+    ├── test_scorer.py               # Scoring engine (18 tests)
+    ├── test_synthesizer.py          # Program synthesis (12 tests)
+    ├── test_explorer.py             # Exploration engine (14 tests)
+    ├── test_persistence.py          # Serialization (7 tests)
+    ├── test_dataset.py              # Dataset loader (11 tests)
+    ├── test_conditionals.py         # Conditional logic (16 tests)
+    ├── test_decompose.py            # Task decomposition (21 tests)
+    ├── test_performance.py          # Scorer correctness + parallel eval (26 tests)
+    └── test_integration.py          # Full pipeline integration (22 tests)
 ```
 
 ## Architecture
@@ -196,7 +191,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 
 ## The Four Pillars in Code
 
-**Pillar 1: Feedback Loops** (`scorer.py`) — Every candidate program is tested against training examples. The scorer provides continuous feedback — not just "right or wrong" but *how close* — enabling gradient-free optimization. NumPy-accelerated with `np.bincount` for the ARC 10-color palette; ~10-20× faster than pure Python.
+**Pillar 1: Feedback Loops** (`scorer.py`) — Every candidate program is tested against training examples. The scorer provides continuous feedback — not just "right or wrong" but *how close* — enabling gradient-free optimization. Fully vectorized with NumPy: `np.bincount` for the ARC 10-color palette, no Python-level pixel loops.
 
 **Pillar 2: Approximability** (`synthesizer.py`) — Evolutionary search (mutation + crossover + selection) iteratively refines programs. Partial-credit scoring creates a smooth fitness landscape where better programs survive and reproduce.
 

@@ -1,30 +1,28 @@
 """
-ARC-AGI Dataset Loader and Evaluation Harness
+ARC-AGI Dataset Loader and Parallel Evaluation Harness
 
-Loads the official ARC-AGI dataset (JSON files) and runs the
-Four Pillars solver on them with full metrics tracking.
+Loads the official ARC-AGI dataset (JSON files) and runs the Four Pillars
+solver on them, collecting full metrics.
 
 Dataset structure (ARC-AGI-1):
-  data/training/   — 400 tasks for development
+  data/training/    — 400 tasks for development
   data/evaluation/  — 400 tasks for held-out evaluation
 
-Each task is a JSON file with:
-  {
-    "train": [{"input": [[int]], "output": [[int]]}],
-    "test":  [{"input": [[int]], "output": [[int]]}]
-  }
+Each task is a JSON file:
+  {"train": [{"input": [[int]], "output": [[int]]}],
+   "test":  [{"input": [[int]], "output": [[int]]}]}
 
-Grids are rectangular matrices of ints 0-9, sizes 1x1 to 30x30.
+Grids are rectangular matrices of ints 0-9, sizes 1×1 to 30×30.
 
-Performance:
-  Parallel evaluation is supported via --workers (default: cpu_count).
-  Each worker runs an independent solver on a chunk of tasks.
-  Results are merged at the end; learned concepts from all workers
-  are combined into the final toolkit.
+Parallel evaluation:
+  Tasks are split round-robin across worker processes. Each worker runs
+  an independent FourPillarsSolver so there is no shared mutable state.
+  Worker seeds are derived deterministically from the global seed, so
+  results are reproducible for any given (seed, workers) combination.
+  Results are merged and sorted by task_id for consistent output.
 
-Usage:
-    python -m arc_agent.evaluate --data-dir path/to/ARC-AGI/data/training
-    python -m arc_agent.evaluate --data-dir data/training --workers 10
+  Default worker count = performance core count (see cpu_utils.py).
+  On Apple Silicon M-series this is the P-core count, not the total.
 """
 from __future__ import annotations
 import json
@@ -32,24 +30,24 @@ import os
 import time
 import random
 import multiprocessing
-from typing import Optional
 from .solver import FourPillarsSolver
 from .scorer import validate_on_test
+from .cpu_utils import default_workers, describe_cpu
 
 
 def load_task(path: str) -> dict:
     """Load a single ARC-AGI task from a JSON file."""
-    with open(path, "r") as f:
+    with open(path) as f:
         return json.load(f)
 
 
 def load_dataset(directory: str) -> dict[str, dict]:
     """Load all ARC-AGI tasks from a directory.
 
-    Returns:
-        Dict mapping task_id → task dict, sorted by task_id.
+    Returns a dict mapping task_id → task, sorted alphabetically by task_id
+    so that --limit N always picks the same N tasks regardless of OS.
     """
-    tasks = {}
+    tasks: dict[str, dict] = {}
     if not os.path.isdir(directory):
         return tasks
 
@@ -57,11 +55,10 @@ def load_dataset(directory: str) -> dict[str, dict]:
         if not filename.endswith(".json"):
             continue
         task_id = filename[:-5]
-        task_path = os.path.join(directory, filename)
         try:
-            tasks[task_id] = load_task(task_path)
-        except (json.JSONDecodeError, IOError) as e:
-            print(f"  Warning: skipping {filename}: {e}")
+            tasks[task_id] = load_task(os.path.join(directory, filename))
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"  Warning: skipping {filename}: {exc}")
 
     return tasks
 
@@ -69,20 +66,25 @@ def load_dataset(directory: str) -> dict[str, dict]:
 def _solve_chunk(args: tuple) -> dict:
     """Worker function: solve a chunk of tasks with an independent solver.
 
-    Runs in a separate process. Each worker gets its own copy of the
-    solver (no shared state), enabling safe parallelism.
+    Designed to run in a subprocess via multiprocessing.Pool.  Each worker
+    creates its own FourPillarsSolver so there is zero shared mutable state
+    between workers.
+
+    The random seed is derived from (global_seed + worker_index * 1000) so
+    results are fully reproducible for any given (seed, workers) pair.
 
     Args:
         args: (task_chunk, population_size, max_generations, seed)
-              task_chunk: list of (task_id, task_dict) pairs
+              task_chunk: list of (task_id, task_dict) in sorted order
 
     Returns:
-        Dict with 'task_results' and 'toolkit_programs' (learned programs
-        as serialisable names, for cross-worker knowledge merge).
+        Dict:
+          task_results  — {task_id: result_dict} for each task in the chunk
+          learned_names — names of programs promoted into the toolkit
+          final_toolkit — toolkit size at end of this chunk
     """
     task_chunk, population_size, max_generations, seed = args
 
-    # Each worker seeds independently to avoid identical random streams
     random.seed(seed)
 
     solver = FourPillarsSolver(
@@ -91,37 +93,33 @@ def _solve_chunk(args: tuple) -> dict:
         verbose=False,
     )
 
-    task_results = {}
+    task_results: dict[str, dict] = {}
     for task_id, task in task_chunk:
         result = solver.solve_task(task, task_id)
-        # Validate on test examples
+
         test_passed = False
-        test_score = 0.0
+        test_score  = 0.0
         if result["solved"]:
             programs = solver.archive.task_solutions.get(task_id, [])
             if programs:
-                exact, ts = validate_on_test(programs[0], task)
-                test_score = ts
-                test_passed = exact
+                test_passed, test_score = validate_on_test(programs[0], task)
+
         task_results[task_id] = {
-            "solved":          result["solved"],
-            "score":           result["score"],
-            "test_passed":     test_passed,
-            "test_score":      test_score,
-            "program":         result["program"],
-            "program_length":  result["program_length"],
-            "method":          result["method"],
-            "time_seconds":    result["time_seconds"],
-            "toolkit_size":    result["toolkit_size"],
+            "solved":         result["solved"],
+            "score":          result["score"],
+            "test_passed":    test_passed,
+            "test_score":     test_score,
+            "program":        result["program"],
+            "program_length": result["program_length"],
+            "method":         result["method"],
+            "time_seconds":   result["time_seconds"],
+            "toolkit_size":   result["toolkit_size"],
         }
 
-    # Return learned program names so the main process can log growth
-    learned_names = [p.name for p in solver.toolkit.programs]
-
     return {
-        "task_results":   task_results,
-        "learned_names":  learned_names,
-        "final_toolkit":  solver.toolkit.size,
+        "task_results":  task_results,
+        "learned_names": [p.name for p in solver.toolkit.programs],
+        "final_toolkit": solver.toolkit.size,
     }
 
 
@@ -137,90 +135,86 @@ def evaluate_dataset(
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
 
-    When workers > 1, tasks are distributed across multiple processes.
-    Each worker runs an independent solver; results are merged afterward.
-    Knowledge compounding within each worker still operates sequentially
-    (tasks within a chunk benefit from each other), and the merged toolkit
-    reflects all learned concepts across workers.
-
     Args:
-        tasks: Dict mapping task_id → task dict.
-        population_size: Evolutionary population size per worker.
-        max_generations: Max generations per task.
-        max_program_length: Max program chain length.
-        verbose: Print progress.
-        output_path: If set, save results JSON to this path.
-        seed: Random seed for reproducibility.
-        workers: Number of parallel workers (0 = all CPUs).
+        tasks:              task_id → task dict (from load_dataset)
+        population_size:    evolutionary population size per worker
+        max_generations:    max generations per task
+        max_program_length: max program chain length (unused directly here,
+                            passed through for future use)
+        verbose:            print per-task and summary output
+        output_path:        if set, save results JSON to this path
+        seed:               global random seed — results are fully reproducible
+                            for any fixed (seed, workers) combination
+        workers:            number of parallel processes
+                            0  → default_workers() (performance cores only)
+                            1  → single-process, easiest to debug
+                            N  → exactly N processes
 
     Returns:
-        Dict with 'task_results' (per-task) and 'summary' (aggregate).
+        Dict with keys:
+          "task_results" — {task_id: per-task metrics}
+          "summary"      — aggregate benchmark metrics
     """
     random.seed(seed)
 
-    n_cpus = multiprocessing.cpu_count()
-    n_workers = workers if workers > 0 else n_cpus
+    n_workers = workers if workers > 0 else default_workers()
     n_workers = max(1, min(n_workers, len(tasks)))
 
     sorted_ids = sorted(tasks.keys())
-    n_tasks = len(sorted_ids)
+    n_tasks    = len(sorted_ids)
 
     if verbose:
-        print(f"Evaluating {n_tasks} tasks with {n_workers} worker(s)...")
-        # Show initial toolkit size from a fresh solver
-        _tmp_solver = FourPillarsSolver(verbose=False)
-        print(f"Initial toolkit: {_tmp_solver.toolkit.size} concepts")
-        del _tmp_solver
+        _tmp = FourPillarsSolver(verbose=False)
+        print(f"CPU: {describe_cpu()}")
+        print(f"Workers: {n_workers}  |  Tasks: {n_tasks}  |  "
+              f"Seed: {seed}  |  "
+              f"Initial toolkit: {_tmp.toolkit.size} concepts")
+        del _tmp
         print()
 
-    # Split tasks into chunks — one chunk per worker
-    chunks = [[] for _ in range(n_workers)]
+    # Distribute tasks round-robin so chunks are roughly equal size
+    chunks: list[list] = [[] for _ in range(n_workers)]
     for i, task_id in enumerate(sorted_ids):
         chunks[i % n_workers].append((task_id, tasks[task_id]))
 
-    # Assign different seeds per worker for diversity
-    worker_seeds = [seed + i * 1000 for i in range(n_workers)]
+    # Deterministic per-worker seeds: seed + worker_index * 1000
     worker_args = [
-        (chunk, population_size, max_generations, wseed)
-        for chunk, wseed in zip(chunks, worker_seeds)
+        (chunk, population_size, max_generations, seed + idx * 1000)
+        for idx, chunk in enumerate(chunks)
     ]
 
     start_time = time.time()
 
     if n_workers == 1:
-        # Single-worker path: run in-process (easier to debug)
+        # In-process path — useful for debugging and single-core machines
         worker_outputs = [_solve_chunk(worker_args[0])]
     else:
-        # Multi-worker path: true parallelism via multiprocessing
         with multiprocessing.Pool(processes=n_workers) as pool:
             worker_outputs = pool.map(_solve_chunk, worker_args)
 
     total_time = time.time() - start_time
 
-    # Merge results from all workers
+    # Merge: collect task_results in sorted order for deterministic output
     task_results: dict[str, dict] = {}
-    solved_count   = 0
-    partial_count  = 0
-    test_correct   = 0
-    test_total     = 0
-    all_learned_names: list[str] = []
-
     for output in worker_outputs:
         task_results.update(output["task_results"])
-        all_learned_names.extend(output["learned_names"])
 
-    # Re-order by sorted task ID for consistent output
+    solved_count  = 0
+    partial_count = 0
+    test_correct  = 0
+    all_learned:  list[str] = []
+
+    for output in worker_outputs:
+        all_learned.extend(output["learned_names"])
+
     for task_id in sorted_ids:
         r = task_results[task_id]
         if r["solved"]:
             solved_count += 1
-            test_total   += 1
             if r["test_passed"]:
                 test_correct += 1
-        else:
-            test_total += 1
-            if r["score"] > 0.8:
-                partial_count += 1
+        elif r["score"] > 0.8:
+            partial_count += 1
 
     if verbose:
         for i, task_id in enumerate(sorted_ids):
@@ -231,50 +225,45 @@ def evaluate_dataset(
                   f"score={r['score']:.3f} {test_str} "
                   f"({r['time_seconds']:.2f}s) tk={r['toolkit_size']}")
 
-    # Final toolkit size is the max across workers (each started at same base)
-    final_toolkit_size = max(
-        (o["final_toolkit"] for o in worker_outputs), default=0
-    )
+    final_toolkit = max((o["final_toolkit"] for o in worker_outputs), default=0)
 
     summary = {
-        "total_tasks":         n_tasks,
-        "solved_exact":        solved_count,
-        "solve_rate":          solved_count / max(n_tasks, 1),
-        "partial_solved":      partial_count,
-        "test_correct":        test_correct,
-        "test_total":          test_total,
-        "test_rate":           test_correct / max(test_total, 1),
-        "total_time_seconds":  total_time,
-        "avg_time_per_task":   total_time / max(n_tasks, 1),
-        "final_toolkit_size":  final_toolkit_size,
-        "concepts_learned":    len(all_learned_names),
-        "workers_used":        n_workers,
+        "total_tasks":        n_tasks,
+        "solved_exact":       solved_count,
+        "solve_rate":         solved_count / max(n_tasks, 1),
+        "partial_solved":     partial_count,
+        "test_correct":       test_correct,
+        "test_rate":          test_correct / max(n_tasks, 1),
+        "total_time_seconds": total_time,
+        "avg_time_per_task":  total_time / max(n_tasks, 1),
+        "final_toolkit_size": final_toolkit,
+        "concepts_learned":   len(all_learned),
+        "workers_used":       n_workers,
+        "seed":               seed,
     }
 
     if verbose:
         print(f"\n{'='*60}")
         print("BENCHMARK RESULTS")
         print(f"{'='*60}")
-        print(f"Tasks:          {n_tasks}")
-        print(f"Workers:        {n_workers}")
-        print(f"Solved (exact): {solved_count} ({100*summary['solve_rate']:.1f}%)")
-        print(f"Partial (>80%): {partial_count}")
-        print(f"Test correct:   {test_correct}/{test_total} "
+        print(f"Solved (exact): {solved_count}/{n_tasks} "
+              f"({100*summary['solve_rate']:.1f}%)")
+        print(f"Partial (>80%): {partial_count}/{n_tasks}")
+        print(f"Test correct:   {test_correct}/{n_tasks} "
               f"({100*summary['test_rate']:.1f}%)")
         print(f"Total time:     {total_time:.1f}s "
-              f"(avg {summary['avg_time_per_task']:.2f}s/task, "
-              f"wall {total_time:.1f}s)")
-        print(f"Final toolkit:  {final_toolkit_size} concepts "
-              f"({len(all_learned_names)} learned across workers)")
+              f"({summary['avg_time_per_task']:.2f}s/task avg)")
+        print(f"Workers:        {n_workers}")
+        print(f"Toolkit:        {final_toolkit} concepts "
+              f"({len(all_learned)} learned across workers)")
         print(f"{'='*60}")
 
-    output = {
-        "task_results": task_results,
-        "summary":      summary,
-    }
+    result = {"task_results": task_results, "summary": summary}
 
     if output_path:
         with open(output_path, "w") as f:
-            json.dump(output, f, indent=2)
+            json.dump(result, f, indent=2)
+        if verbose:
+            print(f"\nResults saved to: {output_path}")
 
-    return output
+    return result

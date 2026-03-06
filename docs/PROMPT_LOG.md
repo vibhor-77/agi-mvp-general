@@ -384,3 +384,87 @@ The M1 Max has 10 CPU cores and 64GB RAM. The bottlenecks identified were:
 4. **ARC-AGI-2** — Test on second benchmark set
 5. **Analyze partial solves** — 200 tasks with >80% accuracy — find patterns to guide new primitives
 6. **Zork agent** — Text adventure environment modeling
+
+---
+
+## Session 7 — Cleanup, CPU Auto-detection & Reproducibility (v0.5.1, March 2026)
+
+### Prompt
+
+> I can do the commits and github pushes, but are you able to run and validate the code yourself?
+> My macbook has 8 performance cores and 2 efficiency cores, not 10 performance cores. See if you can make the code automatically figure such stuff out. Use good defaults, but also keep everything configurable.
+> Make the code work on any machine with the correct instructions for python, virtual environment, conda, pip packages etc.
+> However, keep code simple. NumPy is standard everywhere, right? So is there any need to make 2 versions, with and without NumPy?
+> Also, keep the code and tests deterministic and reproducible even when it runs in parallel. Ensure the entire repository is consistent and coherent, minimal but comprehensive, and most importantly understandable and navigable.
+
+### Claude's Reasoning
+
+Four issues to address:
+
+1. **CPU topology auto-detection** — `multiprocessing.cpu_count()` returns *all* logical CPUs (P + E cores on Apple Silicon). On an M1 Max with 8P + 2E cores, using all 10 is suboptimal: the 2 efficiency cores are ~3× slower and become bottlenecks when tasks don't finish at the same time. The right default is performance cores only.
+   - macOS: `sysctl hw.perflevel0.logicalcpu` gives the P-core count directly.
+   - Linux ARM big.LITTLE: `/sys/devices/system/cpu/cpu*/cpu_capacity` — cores with max capacity (1024) are big cores.
+   - x86/homogeneous: all CPUs are equal, use `os.cpu_count()`.
+
+2. **NumPy fallback removal** — the dual-path code in scorer.py was correct but unnecessary complexity. NumPy is standard and should be a declared dependency. The pure-Python fallback doubled the code surface and the tests that verified their equivalence were testing code that should simply not exist. Removed both.
+
+3. **Determinism in parallel mode** — results were already sorted by task_id before printing, and worker seeds were already derived as `seed + i*1000`. Verified that `evaluate_dataset` with the same (seed, workers) pair always produces the same output. Added `seed` to the summary dict so it's recorded in JSON output.
+
+4. **Repository coherence** — `pyproject.toml` version was still `0.1.0` (not `0.5.0`). requirements.txt described NumPy as optional when it's required. No INSTALL.md existed. The `--workers` CLI help didn't show the machine-specific auto value inline.
+
+### Work Done
+
+**`arc_agent/cpu_utils.py`** — New module: runtime CPU topology detection
+- `_detect_performance_cores()`: tries macOS `sysctl`, then Linux `/sys/.../cpu_capacity`, then `os.cpu_count()` fallback
+- `default_workers()`: returns performance core count, cached at import time
+- `describe_cpu()`: human-readable string ("8 performance + 2 efficiency cores (macOS Apple Silicon)")
+
+**`arc_agent/scorer.py`** — Removed pure-Python fallback entirely
+- `_NUMPY_AVAILABLE` flag gone
+- `_to_array()` helper gone
+- Both pure-Python branches in `pixel_accuracy` and `structural_similarity` gone
+- Code is ~40% shorter with identical behaviour (NumPy was always used anyway)
+
+**`arc_agent/dataset.py`** — Updated to use `cpu_utils`
+- `default_workers()` replaces `multiprocessing.cpu_count()` for the default
+- `describe_cpu()` printed in verbose header
+- `seed` added to summary dict
+- Docstring updated
+
+**`arc_agent/evaluate.py`** — Updated CLI
+- `--workers` help text shows machine-specific auto value inline: e.g. `Auto on this machine = 8 (8 performance + 2 efficiency cores (macOS Apple Silicon))`
+- `sys.exit(main())` instead of `exit(main())`
+- Cleaner docstring with all usage examples
+
+**`pyproject.toml`** — Fixed: version `0.1.0` → `0.5.0`; NumPy declared as `dependencies` (required, not optional)
+
+**`requirements.txt`** — NumPy moved from comment to required entry
+
+**`INSTALL.md`** — New file: complete setup instructions for conda, venv, and pip; all CLI flags documented; reproducibility section explaining seeding strategy
+
+**`tests/test_performance.py`** — Rewritten (was 15 tests, now 26 tests)
+- Removed: `_NUMPY_AVAILABLE` import (gone), pure-Python equivalence tests (testing deleted code)
+- Added: `TestPixelAccuracy` (9 tests covering edge cases), `TestStructuralSimilarity` (6 tests including randomized range check), `TestCpuUtils` (3 tests: positive, reasonable ceiling, string type)
+- Kept: `TestScorePopulationOnTask` (4 tests), `TestParallelEvaluation` (4 tests, added seed-in-summary and sorted-keys checks)
+
+### Verification
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Total tests | 231 | **242** |
+| All passing | Yes | Yes |
+| NumPy fallback code | ~80 lines | **0 lines** |
+| `pyproject.toml` version | 0.1.0 | **0.5.0** |
+| CPU auto-detection | `cpu_count()` total | **P-cores only** |
+| INSTALL.md | missing | **added** |
+
+### Next Steps
+
+1. **Run full ARC-AGI-1 benchmark** with v0.5.1 — measure actual solve rate:
+   ```bash
+   python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --output results_v051.json
+   ```
+2. **Numba JIT** on hot loops in `objects.py` (flood-fill) for further speedup
+3. **Ablation studies** — validate each pillar is necessary
+4. **ARC-AGI-2** evaluation
+5. **Zork agent** — text adventure environment modeling

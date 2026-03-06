@@ -1,111 +1,114 @@
 #!/usr/bin/env python3
 """
-ARC-AGI Full Benchmark Evaluation Script
+ARC-AGI Full Benchmark Evaluation CLI
 
-Downloads (if needed) and evaluates the Four Pillars solver on the
-full ARC-AGI-1 dataset (400 training + 400 evaluation tasks).
+Runs the Four Pillars solver on the ARC-AGI dataset and reports metrics.
 
-Usage:
-    # Evaluate on ARC-AGI-1 training set
-    python -m arc_agent.evaluate --data-dir path/to/ARC-AGI/data/training
+Quick start:
+    git clone https://github.com/fchollet/ARC-AGI.git
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
 
-    # Evaluate on evaluation set
-    python -m arc_agent.evaluate --data-dir path/to/ARC-AGI/data/evaluation
+Usage examples:
+    # Full training set, auto-detect worker count (default)
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
 
-    # Save results to file
-    python -m arc_agent.evaluate --data-dir data/training --output results.json
+    # Held-out evaluation set
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation
 
-    # With persistence (save learned toolkit for later)
-    python -m arc_agent.evaluate --data-dir data/training --save-toolkit toolkit.json
+    # Limit to first 20 tasks for a quick sanity check
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --limit 20
 
-    # Run on first N tasks only (for quick testing)
-    python -m arc_agent.evaluate --data-dir data/training --limit 20
+    # Force single-process mode (easiest to debug)
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 1
 
-Setup:
-    1. Clone ARC-AGI dataset:
-       git clone https://github.com/fchollet/ARC-AGI.git
+    # Save results JSON
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --output results.json
 
-    2. Run evaluation:
-       python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
+    # Save learned toolkit for later
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-toolkit toolkit.json
+
+Reproducibility:
+    All runs are seeded. Use --seed to change the seed; the same (seed, workers)
+    pair always produces identical results.
 """
 import argparse
-import json
 import os
-import random
-import time
+import sys
 from .dataset import load_dataset, evaluate_dataset
-from .persistence import save_toolkit, save_archive
-from .solver import FourPillarsSolver
+from .cpu_utils import default_workers, describe_cpu
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Four Pillars AGI Agent — ARC-AGI Benchmark Evaluation"
+        description="Four Pillars AGI Agent — ARC-AGI Benchmark Evaluation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
     )
     parser.add_argument(
-        "--data-dir", type=str, required=True,
-        help="Path to directory with ARC-AGI task JSON files"
+        "--data-dir", required=True,
+        help="Path to directory containing ARC-AGI task JSON files",
     )
     parser.add_argument(
-        "--output", type=str, default="",
-        help="Save results to this JSON file"
+        "--output", default="",
+        help="Save full results to this JSON file",
     )
     parser.add_argument(
-        "--save-toolkit", type=str, default="",
-        help="Save learned toolkit to this JSON file after evaluation"
-    )
-    parser.add_argument(
-        "--save-archive", type=str, default="",
-        help="Save archive to this JSON file after evaluation"
+        "--save-toolkit", default="",
+        help="Save the learned toolkit to this JSON file after evaluation",
     )
     parser.add_argument(
         "--limit", type=int, default=0,
-        help="Evaluate only the first N tasks (0 = all)"
-    )
-    parser.add_argument(
-        "--population", type=int, default=60,
-        help="Evolutionary population size (default: 60)"
-    )
-    parser.add_argument(
-        "--generations", type=int, default=30,
-        help="Max generations per task (default: 30)"
-    )
-    parser.add_argument(
-        "--seed", type=int, default=42,
-        help="Random seed (default: 42)"
-    )
-    parser.add_argument(
-        "--quiet", action="store_true",
-        help="Suppress per-task output"
+        help="Evaluate only the first N tasks (0 = all; tasks are sorted by ID)",
     )
     parser.add_argument(
         "--workers", type=int, default=0,
-        help="Parallel worker processes (0 = use all CPU cores)"
+        help=(
+            "Number of parallel worker processes. "
+            "0 (default) = auto-detect performance cores. "
+            "1 = single-process mode (easiest to debug). "
+            f"Auto on this machine = {default_workers()} ({describe_cpu()})"
+        ),
+    )
+    parser.add_argument(
+        "--population", type=int, default=60,
+        help="Evolutionary population size per worker (default: 60)",
+    )
+    parser.add_argument(
+        "--generations", type=int, default=30,
+        help="Max evolutionary generations per task (default: 30)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42,
+        help=(
+            "Global random seed for reproducibility (default: 42). "
+            "Worker seeds are derived as seed + worker_index * 1000."
+        ),
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="Suppress per-task output; only print the final summary",
     )
     args = parser.parse_args()
 
     if not os.path.isdir(args.data_dir):
-        print(f"Error: {args.data_dir} is not a directory")
+        print(f"Error: {args.data_dir!r} is not a directory", file=sys.stderr)
         return 1
 
-    # Load dataset
     print(f"Loading tasks from: {args.data_dir}")
     tasks = load_dataset(args.data_dir)
     print(f"Found {len(tasks)} tasks")
 
-    if args.limit > 0:
-        # Take first N tasks (sorted by ID for reproducibility)
-        sorted_ids = sorted(tasks.keys())[:args.limit]
-        tasks = {tid: tasks[tid] for tid in sorted_ids}
-        print(f"Limited to first {args.limit} tasks")
-
     if not tasks:
-        print("No tasks found. Check the --data-dir path.")
+        print("No tasks found. Check the --data-dir path.", file=sys.stderr)
         return 1
 
-    # Run evaluation
+    if args.limit > 0:
+        sorted_ids = sorted(tasks.keys())[: args.limit]
+        tasks = {tid: tasks[tid] for tid in sorted_ids}
+        print(f"Limited to first {args.limit} tasks (sorted by ID)")
+
     print()
-    results = evaluate_dataset(
+    evaluate_dataset(
         tasks,
         population_size=args.population,
         max_generations=args.generations,
@@ -115,11 +118,8 @@ def main():
         workers=args.workers,
     )
 
-    if args.output:
-        print(f"\nResults saved to: {args.output}")
-
     return 0
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())

@@ -1,7 +1,6 @@
-# No runtime dependencies — the agent uses only Python stdlib.
-# This is deliberate: Vibhor's framework argues intelligence emerges
-# from principles, not from pre-trained models or heavy dependencies.
+# Runtime dependencies
+numpy>=1.24          # Vectorized scoring (pixel accuracy, color palette analysis)
 
-# Development & testing (optional — tests also run via unittest without these)
-pytest>=7.0
-pytest-cov>=4.0
+# Development & testing
+pytest>=7.0          # Optional: tests also run via `python -m unittest discover`
+pytest-cov>=4.0      # Optional: coverage reporting
