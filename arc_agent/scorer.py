@@ -98,22 +98,35 @@ def _structural_similarity_np(p: np.ndarray, e: np.ndarray,
 # Public API: list-of-lists interface (used for one-off calls)
 # ---------------------------------------------------------------------------
 
+def _safe_to_np(grid: Grid) -> "np.ndarray | None":
+    """Convert grid to numpy array, returning None for jagged/invalid grids."""
+    if not _is_valid_grid(grid):
+        return None
+    w = len(grid[0])
+    if any(len(row) != w for row in grid):
+        return None
+    try:
+        return np.array(grid, dtype=np.uint8)
+    except (ValueError, TypeError):
+        return None
+
+
 def pixel_accuracy(predicted: Grid, expected: Grid) -> float:
     """Fraction of pixels that match exactly.
 
     Returns float in [0, 1]. Dimension mismatch → small partial score.
     """
-    if not _is_valid_grid(predicted) or not _is_valid_grid(expected):
+    p = _safe_to_np(predicted)
+    e = _safe_to_np(expected)
+    if p is None or e is None:
         return 0.0
 
-    pred_h, pred_w = len(predicted), len(predicted[0])
-    exp_h,  exp_w  = len(expected),  len(expected[0])
+    pred_h, pred_w = p.shape
+    exp_h,  exp_w  = e.shape
 
     if pred_h != exp_h or pred_w != exp_w:
         return (0.1 if pred_h == exp_h else 0.0) + (0.1 if pred_w == exp_w else 0.0)
 
-    p = np.array(predicted, dtype=np.uint8)
-    e = np.array(expected,   dtype=np.uint8)
     return _pixel_accuracy_np(p, e)
 
 
@@ -128,14 +141,14 @@ def structural_similarity(predicted: Grid, expected: Grid) -> float:
 
     Converts inputs on every call. Use TaskCache for repeated scoring.
     """
-    if not _is_valid_grid(predicted) or not _is_valid_grid(expected):
+    p = _safe_to_np(predicted)
+    e = _safe_to_np(expected)
+    if p is None or e is None:
         return 0.0
 
-    pred_h, pred_w = len(predicted), len(predicted[0])
-    exp_h,  exp_w  = len(expected),  len(expected[0])
+    pred_h, pred_w = p.shape
+    exp_h,  exp_w  = e.shape
 
-    p = np.array(predicted, dtype=np.uint8)
-    e = np.array(expected,   dtype=np.uint8)
     return _structural_similarity_np(p, e, pred_h, pred_w, exp_h, exp_w)
 
 
@@ -183,13 +196,10 @@ class TaskCache:
         total = 0.0
         for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
             predicted = program.execute(inp)
-            if not _is_valid_grid(predicted):
+            p = _safe_to_np(predicted)
+            if p is None:
                 continue
-            pred_h = len(predicted)
-            if pred_h == 0:
-                continue
-            pred_w = len(predicted[0])
-            p = np.array(predicted, dtype=np.uint8)
+            pred_h, pred_w = p.shape
             total += _structural_similarity_np(p, e, pred_h, pred_w, exp_h, exp_w)
         return total / self.n_examples
 
@@ -207,13 +217,10 @@ class TaskCache:
             total = 0.0
             for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
                 predicted = program.execute(inp)
-                if not _is_valid_grid(predicted):
+                p = _safe_to_np(predicted)
+                if p is None:
                     continue
-                pred_h = len(predicted)
-                if pred_h == 0:
-                    continue
-                pred_w = len(predicted[0])
-                p = np.array(predicted, dtype=np.uint8)
+                pred_h, pred_w = p.shape
                 total += _structural_similarity_np(p, e, pred_h, pred_w, exp_h, exp_w)
             scores.append(total / self.n_examples)
 
@@ -227,13 +234,13 @@ class TaskCache:
         total_score = 0.0
         for inp, e in zip(self._test_inputs, self._test_expected):
             predicted = program.execute(inp)
-            if not _is_valid_grid(predicted):
+            p = _safe_to_np(predicted)
+            if p is None:
                 all_exact = False
                 continue
-            pred_h, pred_w = len(predicted), len(predicted[0])
+            pred_h, pred_w = p.shape
             exp_h,  exp_w  = e.shape
             if pred_h == exp_h and pred_w == exp_w:
-                p     = np.array(predicted, dtype=np.uint8)
                 score = _pixel_accuracy_np(p, e)
             else:
                 score = 0.0

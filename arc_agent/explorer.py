@@ -244,7 +244,26 @@ class ExplorationEngine:
                     self.toolkit.concepts[b_name],
                 ]))
 
-        # 4. Add novel explorations (EXPLORE new territory)
+        # 4. Three-step combo seeds for common multi-step patterns
+        triples = [
+            ("crop_nonzero", "get_top_half", "get_left_half"),
+            ("crop_nonzero", "get_bottom_half", "get_right_half"),
+            ("crop_nonzero", "mirror_h", "mirror_v"),
+            ("crop_nonzero", "rotate_90_cw", "mirror_h"),
+            ("keep_only_largest_color", "crop_nonzero", "scale_2x"),
+            ("keep_only_smallest_color", "crop_nonzero", "scale_2x"),
+            ("keep_only_largest_color", "crop_nonzero", "mirror_h"),
+            ("keep_only_smallest_color", "crop_nonzero", "mirror_h"),
+            ("fill_enclosed", "crop_nonzero", "mirror_h"),
+            ("invert_colors", "crop_nonzero", "mirror_h"),
+            ("remove_largest_obj", "crop_nonzero", "scale_2x"),
+            ("remove_smallest_obj", "crop_nonzero", "mirror_v"),
+        ]
+        for names in triples:
+            if all(n in self.toolkit.concepts for n in names):
+                seeds.append(Program([self.toolkit.concepts[n] for n in names]))
+
+        # 5. Add novel explorations (EXPLORE new territory)
         seeds.extend(self.generate_novel_programs(10))
 
         return seeds

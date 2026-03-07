@@ -234,17 +234,32 @@ class ProgramSynthesizer:
 
         return new_population[:self.population_size]
 
+    # Essential structural primitives that are always included in pair search.
+    # These are common "second steps" that score poorly alone but are critical
+    # in compositions (e.g. crop_nonzero after a color filter).
+    ESSENTIAL_PAIR_CONCEPTS = frozenset([
+        "identity", "crop_nonzero", "mirror_h", "mirror_v",
+        "rotate_90_cw", "rotate_90_ccw", "rotate_180", "transpose",
+        "fill_enclosed", "outline", "invert_colors",
+        "scale_2x", "scale_3x", "tile_2x2",
+        "get_top_half", "get_bottom_half", "get_left_half", "get_right_half",
+        "get_interior", "get_border",
+        "extract_largest", "extract_smallest",
+        "gravity_down", "gravity_up", "gravity_left", "gravity_right",
+    ])
+
     def try_all_pairs(
         self,
         task: dict,
         cache: "TaskCache | None" = None,
         top_k: int = 20,
     ) -> Optional[Program]:
-        """Exhaustively try all pairs of top-scoring single primitives.
+        """Exhaustively try all pairs of top-scoring + essential primitives.
 
         Many ARC tasks are solved by exactly two steps (e.g. crop→mirror,
-        fill→outline). This is far more efficient than hoping evolution
-        discovers the right pair among ~150² = 22500 possibilities.
+        fill→outline). Combines the top-k by individual score with a fixed
+        set of essential structural primitives that are common second steps
+        but may rank low individually.
 
         Args:
             task: ARC task dict
@@ -266,9 +281,15 @@ class ProgramSynthesizer:
             score = cache.score_program(prog)
             singles.append((score, concept))
 
-        # Keep top-k by score (these are most likely to be useful steps)
+        # Keep top-k by score
         singles.sort(key=lambda x: x[0], reverse=True)
         top_concepts = [c for _, c in singles[:top_k]]
+
+        # Add essential structural primitives that may not be in top-k
+        top_names = {c.name for c in top_concepts}
+        for name in self.ESSENTIAL_PAIR_CONCEPTS:
+            if name not in top_names and name in self.toolkit.concepts:
+                top_concepts.append(self.toolkit.concepts[name])
 
         best_prog = None
         best_score = 0.0
@@ -387,28 +408,12 @@ class ProgramSynthesizer:
                 break
 
         # Phase 3: Hill climbing refinement for near-misses
-        # Try hill climbing from the best program AND top elite programs
-        # (different starting points increase chances of escaping local optima)
-        if best_ever and 0.80 <= best_ever_score < 0.99:
-            # Collect diverse starting points: best_ever + top unique elite
-            hill_starts = [best_ever]
-            seen_names = {best_ever.name}
-            for p in population[:5]:
-                if p.name not in seen_names and p.fitness >= 0.70:
-                    hill_starts.append(p)
-                    seen_names.add(p.name)
-                    if len(hill_starts) >= 3:
-                        break
-
-            steps_per = 80 // len(hill_starts)
-            for start_prog in hill_starts:
-                refined = self.hill_climb(start_prog, cache, max_steps=steps_per)
-                if refined.fitness > best_ever_score:
-                    best_ever = refined
-                    best_ever_score = refined.fitness
-                    if verbose:
-                        print(f"  ↑ Hill climb improved to {best_ever_score:.3f}")
-                    if best_ever_score >= 0.99:
-                        break
+        if best_ever and 0.85 <= best_ever_score < 0.99:
+            refined = self.hill_climb(best_ever, cache, max_steps=60)
+            if refined.fitness > best_ever_score:
+                best_ever = refined
+                best_ever_score = refined.fitness
+                if verbose:
+                    print(f"  ↑ Hill climb improved to {best_ever_score:.3f}")
 
         return best_ever, history
