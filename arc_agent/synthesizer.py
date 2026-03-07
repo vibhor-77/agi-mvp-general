@@ -312,6 +312,50 @@ class ProgramSynthesizer:
 
         return best_prog
 
+    def try_best_triples(
+        self,
+        best_pair: Optional[Program],
+        cache: "TaskCache",
+        pair_score_threshold: float = 0.90,
+    ) -> Optional[Program]:
+        """Targeted triple search: extend a near-miss pair with a third step.
+
+        When pair exhaustion finds a pair that scores ≥ pair_score_threshold
+        but < 0.99, it means the program is close but missing one final
+        transformation. We try every concept in the toolkit as that third
+        step — O(N) scoring calls, only paid when concrete evidence exists.
+
+        Accepts the already-computed best_pair to avoid re-running pair search
+        (which would double the O(N²) cost on every task).
+
+        Args:
+            best_pair:            Best pair from try_all_pairs (may be None)
+            cache:                Pre-converted TaskCache
+            pair_score_threshold: Only extend pairs scoring at least this high
+
+        Returns:
+            Best 3-step program found, or None if pair too weak / no pair.
+        """
+        if best_pair is None or best_pair.fitness < pair_score_threshold:
+            return None
+
+        # Extend with every non-predicate concept as a third step (~171 calls)
+        best_triple = None
+        best_score  = 0.0
+        for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
+            prog  = Program(list(best_pair.steps) + [concept])
+            score = cache.score_program(prog)
+            if score > best_score:
+                best_score  = score
+                best_triple = prog
+                best_triple.fitness = score
+                if score >= 0.99:
+                    return best_triple
+
+        return best_triple
+
     def hill_climb(
         self,
         program: Program,

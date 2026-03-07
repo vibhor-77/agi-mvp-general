@@ -137,12 +137,26 @@ class FourPillarsSolver:
             return self._make_result(task_id, pair_result, pair_result.fitness,
                                       elapsed, "pair_exhaustion")
 
-        # Inject best pair and best culture program into seeds for evolution.
-        # Priority: culture_result first (it worked on a real training task),
-        # then the best pair candidate.
+        # Step 3.7: Near-miss triple search.
+        # When the best pair scores ≥ 0.90 but < 0.99 it means one more step
+        # might close the gap. Try every concept as a third step — O(N) cost,
+        # only paid when pair_result is a strong near-miss. We pass pair_result
+        # directly to avoid re-running the O(N²) pair search a second time.
+        triple_result = self.synthesizer.try_best_triples(
+            pair_result, cache, pair_score_threshold=0.90
+        )
+        if triple_result and triple_result.fitness >= 0.99:
+            elapsed = time.time() - start_time
+            self._record_success(task_id, triple_result, triple_result.fitness, elapsed)
+            return self._make_result(task_id, triple_result, triple_result.fitness,
+                                      elapsed, "triple_search")
+
+        # Inject best candidates into seeds for evolution, best first.
         seed_programs = list(seed_programs) if seed_programs else []
         if culture_result and culture_result.fitness > 0.5:
             seed_programs.insert(0, culture_result)
+        if triple_result and triple_result.fitness > 0.5:
+            seed_programs.insert(0, triple_result)
         if pair_result and pair_result.fitness > 0.5:
             seed_programs.insert(0, pair_result)
 
