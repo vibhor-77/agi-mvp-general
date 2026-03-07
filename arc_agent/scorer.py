@@ -106,8 +106,12 @@ def _safe_to_np(grid: Grid) -> "np.ndarray | None":
     if any(len(row) != w for row in grid):
         return None
     try:
-        return np.array(grid, dtype=np.uint8)
-    except (ValueError, TypeError):
+        arr = np.array(grid, dtype=np.int32)
+        # Clamp values to valid ARC range [0, 9]
+        if arr.max() > 9 or arr.min() < 0:
+            return None
+        return arr.astype(np.uint8)
+    except (ValueError, TypeError, OverflowError):
         return None
 
 

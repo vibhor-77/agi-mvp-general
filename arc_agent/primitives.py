@@ -1051,6 +1051,396 @@ def keep_only_smallest_color(grid: Grid) -> Grid:
 
 
 # ============================================================
+# TILE / REPEATING PATTERN EXTRACTION
+# ============================================================
+
+def extract_repeating_tile(grid: Grid) -> Grid:
+    """Find the smallest tile that, when repeated, reconstructs the grid.
+
+    Tries all (h_tile, w_tile) divisors of (H, W) from smallest to largest.
+    Returns the tile if tiling it reproduces the grid exactly, otherwise
+    returns the grid unchanged.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    for th in range(1, h + 1):
+        if h % th != 0:
+            continue
+        for tw in range(1, w + 1):
+            if w % tw != 0:
+                continue
+            if th == h and tw == w:
+                continue  # Skip the trivial "tile is the whole grid"
+            # Check if (th × tw) tile repeats to fill grid
+            match = True
+            for r in range(h):
+                if not match:
+                    break
+                for c in range(w):
+                    if grid[r][c] != grid[r % th][c % tw]:
+                        match = False
+                        break
+            if match:
+                return [grid[r][:tw] for r in range(th)]
+
+    return _deep_copy_grid(grid)
+
+
+def extract_top_left_block(grid: Grid) -> Grid:
+    """Extract the top-left block delimited by a separator line.
+
+    Looks for a full row or column of a single color that acts as
+    a separator, then returns the block above/left of it.
+    """
+    h, w = _grid_dims(grid)
+    if h < 2 or w < 2:
+        return _deep_copy_grid(grid)
+
+    # Find horizontal separator (row where all cells are the same non-zero color)
+    for r in range(1, h):
+        if len(set(grid[r])) == 1 and grid[r][0] != 0:
+            return _deep_copy_grid(grid[:r])
+
+    # Find vertical separator (column where all cells are the same non-zero color)
+    for c in range(1, w):
+        col_vals = set(grid[r][c] for r in range(h))
+        if len(col_vals) == 1 and grid[0][c] != 0:
+            return [row[:c] for row in grid]
+
+    return _deep_copy_grid(grid)
+
+
+def extract_bottom_right_block(grid: Grid) -> Grid:
+    """Extract the bottom-right block delimited by a separator line."""
+    h, w = _grid_dims(grid)
+    if h < 2 or w < 2:
+        return _deep_copy_grid(grid)
+
+    # Find last horizontal separator
+    for r in range(h - 1, 0, -1):
+        if len(set(grid[r])) == 1 and grid[r][0] != 0:
+            return _deep_copy_grid(grid[r + 1:]) if r + 1 < h else _deep_copy_grid(grid)
+
+    # Find last vertical separator
+    for c in range(w - 1, 0, -1):
+        col_vals = set(grid[r][c] for r in range(h))
+        if len(col_vals) == 1 and grid[0][c] != 0:
+            return [row[c + 1:] for row in grid] if c + 1 < w else _deep_copy_grid(grid)
+
+    return _deep_copy_grid(grid)
+
+
+def split_by_separator_and_overlay(grid: Grid) -> Grid:
+    """Split grid by separator line, overlay the sub-grids using OR logic.
+
+    Finds a row/column of uniform non-zero color, splits the grid,
+    and merges the pieces using OR (keep any non-zero cell).
+    """
+    h, w = _grid_dims(grid)
+    if h < 3:
+        return _deep_copy_grid(grid)
+
+    # Try horizontal split
+    for r in range(1, h - 1):
+        if len(set(grid[r])) == 1 and grid[r][0] != 0:
+            top = grid[:r]
+            bottom = grid[r + 1:]
+            th, bh = len(top), len(bottom)
+            if th == bh and th > 0:
+                result = [[0] * w for _ in range(th)]
+                for i in range(th):
+                    for j in range(w):
+                        result[i][j] = top[i][j] if top[i][j] != 0 else bottom[i][j]
+                return result
+
+    # Try vertical split
+    for c in range(1, w - 1):
+        col_vals = set(grid[r][c] for r in range(h))
+        if len(col_vals) == 1 and grid[0][c] != 0:
+            left = [row[:c] for row in grid]
+            right = [row[c + 1:] for row in grid]
+            lw, rw = len(left[0]), len(right[0]) if right else 0
+            if lw == rw and lw > 0:
+                result = [[0] * lw for _ in range(h)]
+                for i in range(h):
+                    for j in range(lw):
+                        result[i][j] = left[i][j] if left[i][j] != 0 else right[i][j]
+                return result
+
+    return _deep_copy_grid(grid)
+
+
+def split_by_separator_and_xor(grid: Grid) -> Grid:
+    """Split grid by separator line, XOR the sub-grids.
+
+    Returns cells that are non-zero in exactly one half.
+    """
+    h, w = _grid_dims(grid)
+    if h < 3:
+        return _deep_copy_grid(grid)
+
+    # Try horizontal split
+    for r in range(1, h - 1):
+        if len(set(grid[r])) == 1 and grid[r][0] != 0:
+            top = grid[:r]
+            bottom = grid[r + 1:]
+            th, bh = len(top), len(bottom)
+            if th == bh and th > 0:
+                result = [[0] * w for _ in range(th)]
+                for i in range(th):
+                    for j in range(w):
+                        a, b = top[i][j], bottom[i][j]
+                        result[i][j] = a if b == 0 else (b if a == 0 else 0)
+                return result
+
+    # Try vertical split
+    for c in range(1, w - 1):
+        col_vals = set(grid[r][c] for r in range(h))
+        if len(col_vals) == 1 and grid[0][c] != 0:
+            left = [row[:c] for row in grid]
+            right = [row[c + 1:] for row in grid]
+            lw, rw = len(left[0]), len(right[0]) if right else 0
+            if lw == rw and lw > 0:
+                result = [[0] * lw for _ in range(h)]
+                for i in range(h):
+                    for j in range(lw):
+                        a, b = left[i][j], right[i][j]
+                        result[i][j] = a if b == 0 else (b if a == 0 else 0)
+                return result
+
+    return _deep_copy_grid(grid)
+
+
+def compress_rows(grid: Grid) -> Grid:
+    """Compress grid by removing duplicate rows (keep first occurrence)."""
+    if not grid:
+        return []
+    seen = []
+    result = []
+    for row in grid:
+        t = tuple(row)
+        if t not in seen:
+            seen.append(t)
+            result.append(row[:])
+    return result
+
+
+def compress_cols(grid: Grid) -> Grid:
+    """Compress grid by removing duplicate columns (keep first occurrence)."""
+    if not grid or not grid[0]:
+        return _deep_copy_grid(grid)
+    t = transpose(grid)
+    compressed = compress_rows(t)
+    return transpose(compressed)
+
+
+def max_color_per_cell(grid: Grid) -> Grid:
+    """For each cell position, take the max color across NxN sub-blocks.
+
+    Treats the grid as being composed of identical-sized blocks separated
+    by single-color rows/columns. Overlays blocks with max-wins logic.
+    Falls back to identity if no separator found.
+    """
+    h, w = _grid_dims(grid)
+    if h < 3:
+        return _deep_copy_grid(grid)
+
+    # Find separator rows
+    sep_rows = []
+    for r in range(h):
+        vals = set(grid[r])
+        if len(vals) == 1 and grid[r][0] != 0:
+            sep_rows.append(r)
+
+    if not sep_rows:
+        return _deep_copy_grid(grid)
+
+    # Extract blocks between separators
+    boundaries = [-1] + sep_rows + [h]
+    blocks = []
+    for i in range(len(boundaries) - 1):
+        start = boundaries[i] + 1
+        end = boundaries[i + 1]
+        if start < end:
+            blocks.append([grid[r][:] for r in range(start, end)])
+
+    if len(blocks) < 2:
+        return _deep_copy_grid(grid)
+
+    # All blocks should be same dimensions
+    bh = len(blocks[0])
+    bw = len(blocks[0][0]) if blocks[0] else 0
+    if any(len(b) != bh for b in blocks) or any(len(b[0]) != bw for b in blocks if b):
+        return _deep_copy_grid(grid)
+
+    # Overlay with max
+    result = [[0] * bw for _ in range(bh)]
+    for block in blocks:
+        for r in range(bh):
+            for c in range(bw):
+                if block[r][c] != 0:
+                    result[r][c] = max(result[r][c], block[r][c])
+    return result
+
+
+def min_color_per_cell(grid: Grid) -> Grid:
+    """Like max_color_per_cell but keeps the minimum non-zero color.
+
+    For overlapping blocks separated by colored lines: keep the non-zero
+    color that is smallest at each position. Zero stays zero.
+    """
+    h, w = _grid_dims(grid)
+    if h < 3:
+        return _deep_copy_grid(grid)
+
+    sep_rows = []
+    for r in range(h):
+        vals = set(grid[r])
+        if len(vals) == 1 and grid[r][0] != 0:
+            sep_rows.append(r)
+
+    if not sep_rows:
+        return _deep_copy_grid(grid)
+
+    boundaries = [-1] + sep_rows + [h]
+    blocks = []
+    for i in range(len(boundaries) - 1):
+        start = boundaries[i] + 1
+        end = boundaries[i + 1]
+        if start < end:
+            blocks.append([grid[r][:] for r in range(start, end)])
+
+    if len(blocks) < 2:
+        return _deep_copy_grid(grid)
+
+    bh = len(blocks[0])
+    bw = len(blocks[0][0]) if blocks[0] else 0
+    if any(len(b) != bh for b in blocks) or any(len(b[0]) != bw for b in blocks if b):
+        return _deep_copy_grid(grid)
+
+    result = [[0] * bw for _ in range(bh)]
+    for block in blocks:
+        for r in range(bh):
+            for c in range(bw):
+                v = block[r][c]
+                if v != 0:
+                    if result[r][c] == 0:
+                        result[r][c] = v
+                    else:
+                        result[r][c] = min(result[r][c], v)
+    return result
+
+
+def extract_unique_block(grid: Grid) -> Grid:
+    """Find a sub-block that differs from the others.
+
+    Splits the grid into NxN blocks (using separator lines or equal
+    division) and returns the one that is unique. If all blocks are
+    identical or no separator found, returns the grid unchanged.
+    """
+    h, w = _grid_dims(grid)
+    if h < 2:
+        return _deep_copy_grid(grid)
+
+    # Try finding separator rows first
+    sep_rows = []
+    for r in range(h):
+        vals = set(grid[r])
+        if len(vals) == 1 and grid[r][0] != 0:
+            sep_rows.append(r)
+
+    if sep_rows:
+        boundaries = [-1] + sep_rows + [h]
+        blocks = []
+        for i in range(len(boundaries) - 1):
+            start = boundaries[i] + 1
+            end = boundaries[i + 1]
+            if start < end:
+                blocks.append(tuple(tuple(grid[r]) for r in range(start, end)))
+    else:
+        # Try equal division into 2, 3, or 4 blocks vertically
+        blocks = []
+        for n in [2, 3, 4]:
+            if h % n == 0:
+                bh = h // n
+                blocks = [tuple(tuple(grid[r]) for r in range(i*bh, (i+1)*bh)) for i in range(n)]
+                break
+        if not blocks:
+            return _deep_copy_grid(grid)
+
+    if len(blocks) < 2:
+        return _deep_copy_grid(grid)
+
+    # Find the unique block (one that differs from majority)
+    from collections import Counter
+    block_counts = Counter(blocks)
+    if len(block_counts) == 1:
+        return _deep_copy_grid(grid)  # All identical
+
+    # Return the least common block
+    least_common = block_counts.most_common()[-1][0]
+    return [list(row) for row in least_common]
+
+
+def flatten_to_row(grid: Grid) -> Grid:
+    """Flatten unique non-zero colors into a single row, sorted ascending."""
+    colors = sorted(set(c for row in grid for c in row if c != 0))
+    if not colors:
+        return [[0]]
+    return [colors]
+
+
+def flatten_to_column(grid: Grid) -> Grid:
+    """Flatten unique non-zero colors into a single column, sorted ascending."""
+    colors = sorted(set(c for row in grid for c in row if c != 0))
+    if not colors:
+        return [[0]]
+    return [[c] for c in colors]
+
+
+def count_objects_as_grid(grid: Grid) -> Grid:
+    """Return a 1×1 grid containing the number of connected objects."""
+    from .objects import find_objects
+    n = len(find_objects(grid))
+    return [[n]]
+
+
+def mode_color_per_row(grid: Grid) -> Grid:
+    """Replace each row with its most common non-zero color (or 0)."""
+    h, w = _grid_dims(grid)
+    result = [[0] * w for _ in range(h)]
+    for r in range(h):
+        counts: dict[int, int] = {}
+        for c in range(w):
+            v = grid[r][c]
+            if v != 0:
+                counts[v] = counts.get(v, 0) + 1
+        if counts:
+            dominant = max(counts, key=lambda k: counts[k])
+            result[r] = [dominant] * w
+    return result
+
+
+def mode_color_per_col(grid: Grid) -> Grid:
+    """Replace each column with its most common non-zero color (or 0)."""
+    h, w = _grid_dims(grid)
+    result = [[0] * w for _ in range(h)]
+    for c in range(w):
+        counts: dict[int, int] = {}
+        for r in range(h):
+            v = grid[r][c]
+            if v != 0:
+                counts[v] = counts.get(v, 0) + 1
+        if counts:
+            dominant = max(counts, key=lambda k: counts[k])
+            for r in range(h):
+                result[r][c] = dominant
+    return result
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -1175,6 +1565,22 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # Color mask
         ("keep_only_largest_color", keep_only_largest_color),
         ("keep_only_smallest_color", keep_only_smallest_color),
+        # Tile / pattern extraction
+        ("extract_repeating_tile", extract_repeating_tile),
+        ("extract_top_left_block", extract_top_left_block),
+        ("extract_bottom_right_block", extract_bottom_right_block),
+        ("split_sep_overlay", split_by_separator_and_overlay),
+        ("split_sep_xor", split_by_separator_and_xor),
+        ("compress_rows", compress_rows),
+        ("compress_cols", compress_cols),
+        ("max_color_per_cell", max_color_per_cell),
+        ("min_color_per_cell", min_color_per_cell),
+        ("extract_unique_block", extract_unique_block),
+        ("flatten_to_row", flatten_to_row),
+        ("flatten_to_column", flatten_to_column),
+        ("count_objects_grid", count_objects_as_grid),
+        ("mode_color_per_row", mode_color_per_row),
+        ("mode_color_per_col", mode_color_per_col),
     ]
 
     for name, impl in partitioning_ops:

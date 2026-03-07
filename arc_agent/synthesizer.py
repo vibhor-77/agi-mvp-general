@@ -246,6 +246,11 @@ class ProgramSynthesizer:
         "get_interior", "get_border",
         "extract_largest", "extract_smallest",
         "gravity_down", "gravity_up", "gravity_left", "gravity_right",
+        # Tile / pattern extraction (v0.9)
+        "extract_repeating_tile", "extract_unique_block",
+        "split_sep_overlay", "split_sep_xor",
+        "compress_rows", "compress_cols",
+        "max_color_per_cell", "min_color_per_cell",
     ])
 
     def try_all_pairs(

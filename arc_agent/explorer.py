@@ -182,10 +182,17 @@ class ExplorationEngine:
                     seeds.append(Program([self.toolkit.concepts[name]]))
 
         if task_features.get("shrinks"):
-            # Output smaller → cropping, partitioning, dedup
+            # Output smaller → cropping, partitioning, dedup, tile extraction
             for name in ["crop_nonzero", "get_top_half", "get_bottom_half",
                          "get_left_half", "get_right_half", "get_interior",
-                         "deduplicate_rows", "deduplicate_cols"]:
+                         "deduplicate_rows", "deduplicate_cols",
+                         "extract_repeating_tile", "extract_top_left_block",
+                         "extract_bottom_right_block", "extract_unique_block",
+                         "compress_rows", "compress_cols",
+                         "split_sep_overlay", "split_sep_xor",
+                         "max_color_per_cell", "min_color_per_cell",
+                         "flatten_to_row", "flatten_to_column",
+                         "count_objects_grid"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
 
@@ -236,6 +243,17 @@ class ExplorationEngine:
             ("erode", "spread_colors"),
             ("complete_symmetry_h", "fill_enclosed"),
             ("complete_symmetry_v", "fill_enclosed"),
+            # Tile extraction combos
+            ("extract_repeating_tile", "crop_nonzero"),
+            ("extract_unique_block", "crop_nonzero"),
+            ("split_sep_overlay", "crop_nonzero"),
+            ("split_sep_xor", "crop_nonzero"),
+            ("max_color_per_cell", "crop_nonzero"),
+            ("min_color_per_cell", "crop_nonzero"),
+            ("compress_rows", "compress_cols"),
+            ("compress_cols", "compress_rows"),
+            ("mode_color_per_row", "crop_nonzero"),
+            ("mode_color_per_col", "crop_nonzero"),
         ]
         for a_name, b_name in combos:
             if a_name in self.toolkit.concepts and b_name in self.toolkit.concepts:

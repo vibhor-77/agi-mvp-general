@@ -769,5 +769,165 @@ class TestSynthesizerPairExhaustion(unittest.TestCase):
         self.assertGreaterEqual(refined.fitness, start.fitness)
 
 
+class TestTileExtraction(unittest.TestCase):
+    """Tests for tile/pattern extraction primitives (v0.9)."""
+
+    def test_extract_repeating_tile(self):
+        from arc_agent.primitives import extract_repeating_tile
+        # 2x2 tile repeated in 4x4 grid
+        grid = [
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+        ]
+        result = extract_repeating_tile(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_extract_repeating_tile_no_tile(self):
+        from arc_agent.primitives import extract_repeating_tile
+        # No repeating tile
+        grid = [[1, 2], [3, 4]]
+        result = extract_repeating_tile(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_extract_top_left_block(self):
+        from arc_agent.primitives import extract_top_left_block
+        # Grid with horizontal separator (row of 5s)
+        grid = [
+            [1, 2, 3],
+            [4, 5, 6],
+            [5, 5, 5],
+            [7, 8, 9],
+        ]
+        result = extract_top_left_block(grid)
+        self.assertEqual(result, [[1, 2, 3], [4, 5, 6]])
+
+    def test_extract_bottom_right_block(self):
+        from arc_agent.primitives import extract_bottom_right_block
+        grid = [
+            [1, 2, 3],
+            [5, 5, 5],
+            [7, 8, 9],
+            [0, 1, 0],
+        ]
+        result = extract_bottom_right_block(grid)
+        self.assertEqual(result, [[7, 8, 9], [0, 1, 0]])
+
+    def test_split_separator_overlay(self):
+        from arc_agent.primitives import split_by_separator_and_overlay
+        # Top and bottom halves with separator
+        grid = [
+            [1, 0, 1],
+            [5, 5, 5],
+            [0, 2, 0],
+        ]
+        result = split_by_separator_and_overlay(grid)
+        self.assertEqual(result, [[1, 2, 1]])
+
+    def test_split_separator_xor(self):
+        from arc_agent.primitives import split_by_separator_and_xor
+        grid = [
+            [1, 0, 1],
+            [5, 5, 5],
+            [0, 2, 0],
+        ]
+        result = split_by_separator_and_xor(grid)
+        # Top: [1, 0, 1], Bottom: [0, 2, 0]
+        # XOR: keep non-zero from one but not both
+        self.assertEqual(result, [[1, 2, 1]])
+
+    def test_compress_rows(self):
+        from arc_agent.primitives import compress_rows
+        grid = [
+            [1, 2, 3],
+            [1, 2, 3],
+            [4, 5, 6],
+            [4, 5, 6],
+        ]
+        result = compress_rows(grid)
+        self.assertEqual(result, [[1, 2, 3], [4, 5, 6]])
+
+    def test_compress_cols(self):
+        from arc_agent.primitives import compress_cols
+        grid = [
+            [1, 1, 2, 2],
+            [3, 3, 4, 4],
+        ]
+        result = compress_cols(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_max_color_per_cell(self):
+        from arc_agent.primitives import max_color_per_cell
+        # Two blocks separated by row of 5s
+        grid = [
+            [1, 0, 3],
+            [5, 5, 5],
+            [0, 2, 0],
+        ]
+        result = max_color_per_cell(grid)
+        self.assertEqual(result, [[1, 2, 3]])
+
+    def test_extract_unique_block(self):
+        from arc_agent.primitives import extract_unique_block
+        # Three blocks, one unique
+        grid = [
+            [1, 2],
+            [5, 5],
+            [1, 2],
+            [5, 5],
+            [3, 4],
+        ]
+        result = extract_unique_block(grid)
+        self.assertEqual(result, [[3, 4]])
+
+    def test_flatten_to_row(self):
+        from arc_agent.primitives import flatten_to_row
+        grid = [[3, 0, 1], [0, 2, 0]]
+        result = flatten_to_row(grid)
+        self.assertEqual(result, [[1, 2, 3]])
+
+    def test_flatten_to_column(self):
+        from arc_agent.primitives import flatten_to_column
+        grid = [[3, 0, 1], [0, 2, 0]]
+        result = flatten_to_column(grid)
+        self.assertEqual(result, [[1], [2], [3]])
+
+    def test_mode_color_per_row(self):
+        from arc_agent.primitives import mode_color_per_row
+        grid = [[1, 1, 2], [3, 3, 3]]
+        result = mode_color_per_row(grid)
+        self.assertEqual(result, [[1, 1, 1], [3, 3, 3]])
+
+    def test_mode_color_per_col(self):
+        from arc_agent.primitives import mode_color_per_col
+        grid = [[1, 3], [1, 3], [2, 3]]
+        result = mode_color_per_col(grid)
+        self.assertEqual(result, [[1, 3], [1, 3], [1, 3]])
+
+
+class TestNewToolkitSizeV09(unittest.TestCase):
+    """Verify toolkit contains all v0.9 primitives."""
+
+    def test_toolkit_size(self):
+        tk = build_initial_toolkit()
+        # v0.8 had 156, v0.9 adds 15 new
+        self.assertGreaterEqual(tk.size, 170)
+
+    def test_new_v09_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "extract_repeating_tile", "extract_top_left_block",
+            "extract_bottom_right_block", "split_sep_overlay",
+            "split_sep_xor", "compress_rows", "compress_cols",
+            "max_color_per_cell", "min_color_per_cell",
+            "extract_unique_block", "flatten_to_row",
+            "flatten_to_column", "count_objects_grid",
+            "mode_color_per_row", "mode_color_per_col",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing concept: {name}")
+
+
 if __name__ == '__main__':
     unittest.main()
