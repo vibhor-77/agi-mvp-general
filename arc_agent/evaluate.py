@@ -24,6 +24,10 @@ Usage examples:
     # Save results JSON
     python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --output results.json
 
+    # Two-phase pipeline: learn from training, apply to evaluation
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-culture culture.json
+    python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --load-culture culture.json
+
     # Save learned toolkit for later
     python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-toolkit toolkit.json
 
@@ -85,6 +89,20 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--save-culture", default="",
+        help=(
+            "Save learned culture (concepts, programs) to this JSON file "
+            "after evaluation. Use with training set to build a culture file."
+        ),
+    )
+    parser.add_argument(
+        "--load-culture", default="",
+        help=(
+            "Load pre-trained culture from this JSON file before evaluation. "
+            "Use with evaluation set to apply knowledge learned from training."
+        ),
+    )
+    parser.add_argument(
         "--quiet", action="store_true",
         help="Suppress per-task output; only print the final summary",
     )
@@ -116,6 +134,8 @@ def main() -> int:
         output_path=args.output,
         seed=args.seed,
         workers=args.workers,
+        load_culture_path=args.load_culture,
+        save_culture_path=args.save_culture,
     )
 
     return 0

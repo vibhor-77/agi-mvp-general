@@ -40,6 +40,7 @@ import multiprocessing
 from .solver import FourPillarsSolver
 from .scorer import validate_on_test
 from .cpu_utils import default_workers, describe_cpu
+from .culture import save_culture, load_culture
 
 
 # ── Dataset loading ────────────────────────────────────────────────────────
@@ -83,15 +84,16 @@ def _solve_one(args: tuple) -> dict:
 
     Args:
         args: (task_id, task_dict, population_size, max_generations, seed,
-               solver_state_unused)
+               culture_path)
+              culture_path can be "" if no pre-trained culture to load.
               The solver is created fresh per worker call so there is no
               shared mutable state between workers.
 
     Returns:
         Dict with task_id and all per-task metrics, plus a worker_seed
-        for reproducibility bookkeeping.
+        for reproducibility bookkeeping and culture data for aggregation.
     """
-    task_id, task, population_size, max_generations, seed = args
+    task_id, task, population_size, max_generations, seed, culture_path = args
 
     random.seed(seed)
 
@@ -101,6 +103,13 @@ def _solve_one(args: tuple) -> dict:
         verbose=False,
     )
 
+    # Load pre-trained culture if provided
+    if culture_path:
+        try:
+            load_culture(solver.toolkit, culture_path, solver.archive)
+        except Exception:
+            pass  # Gracefully degrade — run without culture
+
     result = solver.solve_task(task, task_id)
 
     test_passed = False
@@ -109,6 +118,37 @@ def _solve_one(args: tuple) -> dict:
         programs = solver.archive.task_solutions.get(task_id, [])
         if programs:
             test_passed, test_score = validate_on_test(programs[0], task)
+
+    # Collect learned concepts and programs for culture saving
+    learned_concepts = []
+    for name, concept in solver.toolkit.concepts.items():
+        if name.startswith("learned_"):
+            from .culture import _extract_step_names
+            step_names = _extract_step_names(concept)
+            learned_concepts.append({
+                "name": name,
+                "steps": step_names,
+                "kind": concept.kind,
+                "usage_count": concept.usage_count,
+                "success_count": concept.success_count,
+            })
+
+    solved_programs = []
+    for tid, programs in solver.archive.task_solutions.items():
+        for prog in programs:
+            # Only save programs with reconstructable steps (base primitives)
+            # Skip DecompositionEngine closures (color_channel_decomp, etc.)
+            step_names = [s.name for s in prog.steps]
+            all_reconstructable = all(
+                sn in solver.toolkit.concepts for sn in step_names
+            )
+            if all_reconstructable and step_names:
+                solved_programs.append({
+                    "task_id": tid,
+                    "steps": step_names,
+                    "fitness": prog.fitness,
+                    "name": prog.name,
+                })
 
     return {
         "task_id":        task_id,
@@ -122,6 +162,10 @@ def _solve_one(args: tuple) -> dict:
         "time_seconds":   result["time_seconds"],
         "toolkit_size":   result["toolkit_size"],
         "worker_seed":    seed,
+        # Culture data for cross-worker aggregation
+        "_learned_concepts": learned_concepts,
+        "_solved_programs":  solved_programs,
+        "_task_features":    solver.archive.task_features,
     }
 
 
@@ -237,6 +281,68 @@ def _fmt_duration(seconds: float) -> str:
     return f"{s}s"
 
 
+# ── Culture aggregation ────────────────────────────────────────────────────
+
+def _aggregate_and_save_culture(
+    task_results: dict[str, dict],
+    save_path: str,
+    verbose: bool = True,
+) -> None:
+    """Aggregate learned culture from all workers and save to a JSON file.
+
+    Each worker independently discovers concepts and programs. This function
+    merges them all into a single culture file, deduplicating by name.
+    """
+    all_concepts: dict[str, dict] = {}
+    all_programs: list[dict] = []
+    all_features: dict[str, dict] = {}
+
+    for r in task_results.values():
+        # Merge learned concepts (deduplicate by name)
+        for concept in r.get("_learned_concepts", []):
+            name = concept["name"]
+            if name not in all_concepts:
+                all_concepts[name] = concept
+
+        # Collect all solved programs
+        all_programs.extend(r.get("_solved_programs", []))
+
+        # Merge task features
+        for tid, features in r.get("_task_features", {}).items():
+            if tid not in all_features:
+                # Only keep serializable values
+                serializable = {}
+                for k, v in features.items():
+                    if isinstance(v, (bool, int, float, str)):
+                        serializable[k] = v
+                all_features[tid] = serializable
+
+    # Deduplicate programs by (task_id, name) pair
+    seen_progs = set()
+    unique_programs = []
+    for prog in all_programs:
+        key = (prog.get("task_id", ""), prog.get("name", ""))
+        if key not in seen_progs:
+            seen_progs.add(key)
+            unique_programs.append(prog)
+
+    culture = {
+        "version": "0.9",
+        "learned_concepts": list(all_concepts.values()),
+        "successful_programs": unique_programs,
+        "task_features": all_features,
+    }
+
+    with open(save_path, "w") as f:
+        json.dump(culture, f, indent=2)
+
+    if verbose:
+        print(f"\nCulture saved to: {save_path}")
+        print(f"  Learned concepts: {len(all_concepts)}")
+        print(f"  Successful programs: {len(unique_programs)}")
+        print(f"  Task features: {len(all_features)}")
+
+
 # ── Main evaluation harness ────────────────────────────────────────────────
 
 def evaluate_dataset(
@@ -248,6 +354,8 @@ def evaluate_dataset(
     output_path: str = "",
     seed: int = 42,
     workers: int = 0,
+    load_culture_path: str = "",
+    save_culture_path: str = "",
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
 
@@ -265,6 +373,10 @@ def evaluate_dataset(
                             (seed, workers) pair)
         workers:            0 → auto (performance cores), 1 → single-process,
                             N → exactly N processes
+        load_culture_path:  if set, load pre-trained culture from this JSON file
+                            into each worker's solver before solving tasks
+        save_culture_path:  if set, aggregate learned culture from all workers
+                            and save to this JSON file after evaluation
 
     Returns:
         Dict with keys:
@@ -289,11 +401,14 @@ def evaluate_dataset(
               f"Initial toolkit: {init_tk} concepts")
         print()
 
+    if load_culture_path and verbose:
+        print(f"Loading culture from: {load_culture_path}")
+
     # Each task gets a deterministic seed derived from its position in the
     # sorted list, so (seed, workers) always gives identical results.
     worker_args = [
         (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000)
+         seed + i * 1000, load_culture_path)
         for i, task_id in enumerate(sorted_ids)
     ]
 
@@ -323,6 +438,10 @@ def evaluate_dataset(
         # Fall through to print whatever we have so far
 
     total_time = time.time() - start_time
+
+    # ── Aggregate and save culture from all workers ──────────────────────
+    if save_culture_path and task_results:
+        _aggregate_and_save_culture(task_results, save_culture_path, verbose)
 
     # ── Final summary ────────────────────────────────────────────────────
     solved_count  = sum(1 for r in task_results.values() if r["solved"])

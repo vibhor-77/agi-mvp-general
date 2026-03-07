@@ -143,7 +143,13 @@ class ExplorationEngine:
         """
         seeds = []
 
-        # 1. Get programs from similar tasks (EXPLOIT past learning)
+        # 1a. Seed with ALL loaded culture programs (cross-run transfer)
+        # toolkit.programs contains programs loaded from culture files — these
+        # worked on training tasks and may generalize to evaluation tasks.
+        if self.toolkit.programs:
+            seeds.extend(self.toolkit.programs[:50])
+
+        # 1b. Get programs from similar tasks (EXPLOIT past learning within run)
         similar_programs = self.archive.get_programs_for_similar_tasks(task_features)
         seeds.extend(similar_programs[:10])
 
