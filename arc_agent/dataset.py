@@ -177,67 +177,6 @@ def _solve_one(args: tuple) -> dict:
     return _collect_result(solver, result, task_id, task, seed)
 
 
-def _solve_sequential_compounding(
-    worker_args: list,
-    tracker: "_ProgressTracker",
-    population_size: int,
-    max_generations: int,
-    culture_path: str,
-    verbose: bool,
-) -> dict:
-    """Single-process evaluation with knowledge compounding across tasks.
-
-    Uses ONE shared solver instance so that concepts and programs discovered
-    on earlier tasks immediately benefit later tasks — the "cumulative culture"
-    principle operating within a single run.
-
-    Tasks are processed in sorted order (same as the worker_args list) for
-    full reproducibility. The global seed is set once at the start; each task
-    uses the same seed it would get in the parallel path (seed + i * 1000)
-    so that the evolution phase is deterministic and comparable to `--workers 1`
-    in isolation.
-
-    Args:
-        worker_args:      List of (task_id, task, pop_size, max_gen, seed, culture_path)
-        tracker:          Live progress printer
-        population_size:  Passed to FourPillarsSolver
-        max_generations:  Passed to FourPillarsSolver
-        culture_path:     Pre-trained culture JSON path (or "")
-        verbose:          Print per-task lines via tracker
-
-    Returns:
-        Dict of {task_id: result_dict} for all completed tasks.
-    """
-    # One solver shared across all tasks — knowledge compounds as we go.
-    solver = FourPillarsSolver(
-        population_size=population_size,
-        max_generations=max_generations,
-        verbose=False,
-    )
-
-    if culture_path:
-        try:
-            load_culture(solver.toolkit, culture_path, solver.archive)
-        except Exception:
-            pass
-
-    task_results: dict[str, dict] = {}
-
-    try:
-        for task_id, task, _pop, _gen, seed, _culture in worker_args:
-            # Per-task seed controls evolution randomness; matches parallel path.
-            random.seed(seed)
-            result = solver.solve_task(task, task_id)
-            r = _collect_result(solver, result, task_id, task, seed)
-            task_results[task_id] = r
-            if verbose:
-                tracker.update(r)
-    except KeyboardInterrupt:
-        print("\n\n  ⚠  Aborted by user — partial results below.\n")
-
-    return task_results
-
-
 # ── Progress display ────────────────────────────────────────────────────────
 
 class _ProgressTracker:
@@ -487,16 +426,13 @@ def evaluate_dataset(
 
     try:
         if n_workers == 1:
-            # Single-process path: share one solver so knowledge compounds
-            # across tasks in sorted order (cumulative culture within run).
-            # Note: KeyboardInterrupt inside this function propagates here and
-            # is caught by the outer except, preserving partial results via
-            # the tracker but not in task_results — that's acceptable.
-            task_results = _solve_sequential_compounding(
-                worker_args, tracker,
-                population_size, max_generations,
-                load_culture_path, verbose,
-            )
+            # In-process path — easier to debug/profile; same worker function
+            # as the parallel path so behaviour is identical.
+            for args in worker_args:
+                r = _solve_one(args)
+                task_results[r["task_id"]] = r
+                if verbose:
+                    tracker.update(r)
         else:
             # Parallel path — imap_unordered streams results as they arrive
             # so the progress display is live even with many workers.
