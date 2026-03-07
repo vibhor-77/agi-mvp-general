@@ -254,6 +254,11 @@ class ProgramSynthesizer:
         # Tile completion and lane spreading (v0.13) — useful as second steps
         "fill_by_symmetry", "fill_tile_pattern",
         "spread_in_lanes_h", "spread_in_lanes_v",
+        # V14: high-impact as second steps
+        "gravity_toward_color", "fill_holes_in_objects",
+        "connect_pixels_to_rect", "recolor_2nd_to_3rd",
+        "extend_nonzero_fill_row", "extend_nonzero_fill_col",
+        "complete_pattern_4way",
     ])
 
     def try_all_pairs(

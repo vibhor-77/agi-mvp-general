@@ -1149,3 +1149,229 @@ class TestV13ToolkitContents(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ============================================================
+# V14 PRIMITIVE TESTS
+# ============================================================
+
+from arc_agent.primitives import (
+    connect_pixels_to_rect, gravity_toward_color, fill_holes_in_objects,
+    recolor_2nd_to_3rd_color, recolor_least_to_second_least,
+    swap_most_and_second_color, swap_largest_and_smallest_obj_color,
+    swap_colors_12, swap_colors_34,
+    complete_pattern_4way, fill_bg_with_color_from_border,
+    keep_only_unique_rows, keep_only_unique_cols,
+    rotate_colors_up, rotate_colors_down,
+    extend_nonzero_to_fill_row, extend_nonzero_to_fill_col,
+)
+
+
+class TestGravityTowardColor(unittest.TestCase):
+    """gravity_toward_color: pack scattered dots adjacent to band."""
+
+    def test_dots_pack_to_band(self):
+        # Band at rows 2-3, dots above and below
+        grid = [
+            [2, 0, 0],  # dot
+            [0, 0, 0],
+            [5, 5, 5],  # band
+            [5, 5, 5],  # band
+            [0, 0, 0],
+            [0, 2, 0],  # dot
+        ]
+        result = gravity_toward_color(grid)
+        # Dot above should move to row 1 (adjacent to band at row 2)
+        self.assertEqual(result[1][0], 2)
+        # Dot below should move to row 4 (adjacent to band at row 3)
+        self.assertEqual(result[4][1], 2)
+        # Original dot positions clear
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[5][1], 0)
+
+    def test_no_band_returns_input(self):
+        grid = [[1, 0], [0, 2]]
+        result = gravity_toward_color(grid)
+        self.assertEqual(result, grid)
+
+    def test_single_band_row(self):
+        grid = [
+            [0, 3, 0],
+            [5, 5, 5],  # band
+            [0, 0, 0],
+        ]
+        result = gravity_toward_color(grid)
+        # dot above stays adjacent (already adjacent)
+        self.assertEqual(result[0][1], 3)
+
+
+class TestFillHolesInObjects(unittest.TestCase):
+    """fill_holes_in_objects: fill enclosed bg cells with surrounding color."""
+
+    def test_fills_hole_inside_ring(self):
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 0, 1, 0],  # hole at (2,2)
+            [0, 1, 1, 1, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_holes_in_objects(grid)
+        self.assertEqual(result[2][2], 1)
+
+    def test_does_not_fill_exterior(self):
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 0, 1, 0],
+            [0, 1, 1, 1, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_holes_in_objects(grid)
+        # Exterior 0s stay 0
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[4][4], 0)
+
+    def test_already_filled_unchanged(self):
+        grid = [[1, 1], [1, 1]]
+        result = fill_holes_in_objects(grid)
+        self.assertEqual(result, [[1, 1], [1, 1]])
+
+
+class TestRecolor2ndTo3rd(unittest.TestCase):
+    """recolor_2nd_to_3rd_color."""
+
+    def test_replaces_2nd_most_common(self):
+        # bg=0 (most), then 1 (most non-bg), then 2, then 3
+        grid = [
+            [0, 0, 0, 0],
+            [1, 1, 1, 0],
+            [2, 2, 0, 0],
+            [3, 0, 0, 0],
+        ]
+        result = recolor_2nd_to_3rd_color(grid)
+        # 1 is most common non-bg, 2 is 2nd, 3 is 3rd
+        # So 2→3
+        for row in result:
+            self.assertNotIn(2, row)
+
+    def test_fewer_than_3_colors_unchanged(self):
+        grid = [[1, 1], [0, 0]]
+        result = recolor_2nd_to_3rd_color(grid)
+        self.assertEqual(result, grid)
+
+
+class TestRecolorLeastTo2ndLeast(unittest.TestCase):
+    """recolor_least_to_second_least."""
+
+    def test_replaces_least_common(self):
+        grid = [
+            [1, 1, 1],
+            [2, 2, 0],
+            [3, 0, 0],
+        ]
+        # bg=0, counts: 1→3, 2→2, 3→1; least=3, 2nd_least=2 → 3→2
+        result = recolor_least_to_second_least(grid)
+        flat = [v for row in result for v in row]
+        self.assertNotIn(3, flat)
+
+
+class TestSwapColors12(unittest.TestCase):
+    def test_swaps_1_and_2(self):
+        grid = [[1, 2, 3], [2, 1, 0]]
+        result = swap_colors_12(grid)
+        self.assertEqual(result[0], [2, 1, 3])
+        self.assertEqual(result[1], [1, 2, 0])
+
+
+class TestCompletePattern4way(unittest.TestCase):
+    def test_fills_symmetric_positions(self):
+        grid = [
+            [1, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+        ]
+        result = complete_pattern_4way(grid)
+        # Top-left 1 should propagate to all corners
+        self.assertEqual(result[0][0], 1)
+        self.assertEqual(result[0][2], 1)
+        self.assertEqual(result[2][0], 1)
+        self.assertEqual(result[2][2], 1)
+
+
+class TestKeepUniqueRows(unittest.TestCase):
+    def test_removes_duplicate_rows(self):
+        grid = [[1, 2], [3, 4], [1, 2], [5, 6]]
+        result = keep_only_unique_rows(grid)
+        self.assertEqual(len(result), 3)
+        self.assertIn([1, 2], result)
+        self.assertIn([3, 4], result)
+        self.assertIn([5, 6], result)
+
+    def test_no_duplicates_unchanged(self):
+        grid = [[1, 2], [3, 4]]
+        result = keep_only_unique_rows(grid)
+        self.assertEqual(result, grid)
+
+
+class TestKeepUniqueCols(unittest.TestCase):
+    def test_removes_duplicate_cols(self):
+        grid = [[1, 3, 1], [2, 4, 2]]
+        result = keep_only_unique_cols(grid)
+        self.assertEqual(len(result[0]), 2)
+
+
+class TestRotateColors(unittest.TestCase):
+    def test_rotate_up_cycles(self):
+        # bg=0 is most common; non-bg values get cycled up
+        grid = [[0, 0, 0], [0, 1, 9], [0, 0, 0]]
+        result = rotate_colors_up(grid)
+        self.assertEqual(result[1][1], 2)   # 1 → 2
+        self.assertEqual(result[1][2], 1)   # 9 → (9%9)+1=1
+        self.assertEqual(result[0][0], 0)   # bg unchanged
+
+    def test_rotate_down_cycles(self):
+        # bg=0 is most common
+        grid = [[0, 0, 0], [0, 1, 2], [0, 0, 0]]
+        result = rotate_colors_down(grid)
+        self.assertEqual(result[1][1], 9)   # 1 → ((1-2)%9)+1 = 9
+        self.assertEqual(result[1][2], 1)   # 2 → ((2-2)%9)+1 = 1
+        self.assertEqual(result[0][0], 0)   # bg unchanged
+
+
+class TestExtendNonzeroFillRow(unittest.TestCase):
+    def test_single_color_row_fills(self):
+        grid = [[0, 3, 0, 3], [1, 2, 0, 0]]
+        result = extend_nonzero_to_fill_row(grid)
+        # row 0 has both 3s → fills all
+        self.assertEqual(result[0], [3, 3, 3, 3])
+        # row 1 has both 1 and 2 → unchanged
+        self.assertEqual(result[1], [1, 2, 0, 0])
+
+    def test_all_bg_row_unchanged(self):
+        grid = [[0, 0, 0]]
+        result = extend_nonzero_to_fill_row(grid)
+        self.assertEqual(result[0], [0, 0, 0])
+
+
+class TestV14ToolkitContents(unittest.TestCase):
+    """Verify v14 primitives are in the toolkit."""
+
+    def test_new_v14_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "connect_pixels_to_rect", "gravity_toward_color", "fill_holes_in_objects",
+            "recolor_2nd_to_3rd", "recolor_least_to_2nd_least",
+            "swap_most_and_2nd_color", "swap_largest_smallest_obj_color",
+            "swap_colors_12", "swap_colors_34",
+            "complete_pattern_4way", "fill_bg_from_border",
+            "keep_unique_rows", "keep_unique_cols",
+            "rotate_colors_up", "rotate_colors_down",
+            "extend_nonzero_fill_row", "extend_nonzero_fill_col",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing concept: {name}")
+
+    def test_toolkit_size_v14(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 205)

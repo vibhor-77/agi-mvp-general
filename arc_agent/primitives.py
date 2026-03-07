@@ -1805,6 +1805,640 @@ def spread_in_lanes_v(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V14 NEW PRIMITIVES
+# ============================================================
+
+def connect_pixels_to_rect(grid: Grid) -> Grid:
+    """Connect isolated single-pixel anomalies to the nearest rectangle border.
+
+    Finds isolated non-background pixels (surrounded entirely by background),
+    then draws a straight line (H or V) from that pixel to the nearest edge
+    of any rectangle object, filling with the isolated pixel's color.
+
+    This handles tasks like 2c608aff where a pixel "shoots" to a rectangle.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+
+    # Determine background (most common color)
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+
+    result = [row[:] for row in grid]
+
+    # Find connected components
+    visited = [[False] * w for _ in range(h)]
+    components = []
+
+    def bfs(sr, sc):
+        color = grid[sr][sc]
+        cells = []
+        queue = [(sr, sc)]
+        visited[sr][sc] = True
+        while queue:
+            r, c = queue.pop(0)
+            cells.append((r, c))
+            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nr, nc = r+dr, c+dc
+                if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] == color:
+                    visited[nr][nc] = True
+                    queue.append((nr, nc))
+        return color, cells
+
+    for r in range(h):
+        for c in range(w):
+            if not visited[r][c] and grid[r][c] != bg:
+                color, cells = bfs(r, c)
+                components.append((color, cells))
+
+    if len(components) < 2:
+        return grid
+
+    # Identify "large" rects vs isolated pixels
+    # Isolated = single cell surrounded by bg on all 4 sides
+    isolated = []
+    rects = []
+    for color, cells in components:
+        if len(cells) == 1:
+            r, c = cells[0]
+            neighbors = [grid[r+dr][c+dc] for dr,dc in [(-1,0),(1,0),(0,-1),(0,1)]
+                         if 0 <= r+dr < h and 0 <= c+dc < w]
+            if all(v == bg for v in neighbors):
+                isolated.append((color, r, c))
+            else:
+                rects.append((color, cells))
+        else:
+            rects.append((color, cells))
+
+    if not isolated or not rects:
+        return grid
+
+    # For each isolated pixel, find nearest rect cell and draw line
+    rect_cells_set = set()
+    for _, cells in rects:
+        for rc in cells:
+            rect_cells_set.add(rc)
+
+    for iso_color, ir, ic in isolated:
+        # Find nearest rect cell
+        best_dist = float('inf')
+        best_rc = None
+        for rr, rc in rect_cells_set:
+            # Only consider H or V alignment
+            if rr == ir or rc == ic:
+                d = abs(rr - ir) + abs(rc - ic)
+                if d < best_dist:
+                    best_dist = d
+                    best_rc = (rr, rc)
+
+        if best_rc is None:
+            # No aligned rect cell, find closest overall
+            for rr, rc in rect_cells_set:
+                d = abs(rr - ir) + abs(rc - ic)
+                if d < best_dist:
+                    best_dist = d
+                    best_rc = (rr, rc)
+
+        if best_rc is None:
+            continue
+
+        rr, rc = best_rc
+        # Draw line from isolated pixel toward rect
+        if rr == ir:
+            # Same row - draw horizontal
+            c_start, c_end = min(ic, rc), max(ic, rc)
+            for c in range(c_start, c_end + 1):
+                if result[ir][c] == bg:
+                    result[ir][c] = iso_color
+        elif rc == ic:
+            # Same col - draw vertical
+            r_start, r_end = min(ir, rr), max(ir, rr)
+            for r in range(r_start, r_end + 1):
+                if result[r][ic] == bg:
+                    result[r][ic] = iso_color
+        else:
+            # Not aligned - draw to closest edge (H then V, pick shorter)
+            dist_h = abs(ic - rc)
+            dist_v = abs(ir - rr)
+            if dist_h <= dist_v:
+                # Draw horizontal to align column, then stop
+                c_start, c_end = min(ic, rc), max(ic, rc)
+                for c in range(c_start, c_end + 1):
+                    if result[ir][c] == bg:
+                        result[ir][c] = iso_color
+            else:
+                r_start, r_end = min(ir, rr), max(ir, rr)
+                for r in range(r_start, r_end + 1):
+                    if result[r][ic] == bg:
+                        result[r][ic] = iso_color
+
+    return result
+
+
+def recolor_2nd_to_3rd_color(grid: Grid) -> Grid:
+    """Replace the 2nd most common (non-bg) color with the 3rd most common.
+
+    Useful for tasks where 'recolor_smallest' needs to be applied twice but
+    the object shrinks each step. Handles tasks like 32597951 / 36fdfd69.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    counts = Counter(flat)
+    bg = counts.most_common(1)[0][0]
+    non_bg = [(c, v) for v, c in counts.most_common() if v != bg]
+    if len(non_bg) < 3:
+        return grid
+    # 2nd most common non-bg → 3rd most common non-bg
+    src_color = non_bg[1][1]
+    dst_color = non_bg[2][1]
+    return [[dst_color if v == src_color else v for v in row] for row in grid]
+
+
+def recolor_least_to_second_least(grid: Grid) -> Grid:
+    """Replace the least common non-bg color with the 2nd least common.
+
+    Handles repeated recolor_smallest chains more efficiently.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    counts = Counter(flat)
+    bg = counts.most_common(1)[0][0]
+    non_bg_sorted = [(v, c) for v, c in sorted(counts.items(), key=lambda x: x[1])
+                     if v != bg]
+    if len(non_bg_sorted) < 2:
+        return grid
+    src_color = non_bg_sorted[0][0]   # least common
+    dst_color = non_bg_sorted[1][0]   # 2nd least common
+    return [[dst_color if v == src_color else v for v in row] for row in grid]
+
+
+def fill_holes_in_objects(grid: Grid) -> Grid:
+    """Fill enclosed zero-regions (holes) inside objects with the object color.
+
+    More aggressive than fill_enclosed - finds objects first, then fills
+    any bg cells fully surrounded by that object.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter, deque
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+
+    result = [row[:] for row in grid]
+
+    # Find all bg cells reachable from the border (not enclosed)
+    reachable = [[False]*w for _ in range(h)]
+    queue = deque()
+    for r in range(h):
+        for c in [0, w-1]:
+            if grid[r][c] == bg and not reachable[r][c]:
+                reachable[r][c] = True
+                queue.append((r, c))
+    for c in range(w):
+        for r in [0, h-1]:
+            if grid[r][c] == bg and not reachable[r][c]:
+                reachable[r][c] = True
+                queue.append((r, c))
+
+    while queue:
+        r, c = queue.popleft()
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0 <= nr < h and 0 <= nc < w and not reachable[nr][nc] and grid[nr][nc] == bg:
+                reachable[nr][nc] = True
+                queue.append((nr, nc))
+
+    # Enclosed bg cells get filled with the surrounding object color
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg and not reachable[r][c]:
+                # Find surrounding non-bg color (scan outward)
+                fill_color = bg
+                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    for dist in range(1, max(h,w)):
+                        nr, nc = r + dr*dist, c + dc*dist
+                        if not (0 <= nr < h and 0 <= nc < w):
+                            break
+                        if grid[nr][nc] != bg:
+                            fill_color = grid[nr][nc]
+                            break
+                    if fill_color != bg:
+                        break
+                result[r][c] = fill_color
+
+    return result
+
+
+def gravity_toward_color(grid: Grid) -> Grid:
+    """Pull all non-bg cells toward the row/col containing the most rare color.
+
+    Specialized: if there's a 'band' (full row/col of one color), move
+    scattered dots to be adjacent to that band. Handles task 4093f84a
+    where scattered 2s move to adjoin the 5-band.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    counts = Counter(flat)
+    bg = counts.most_common(1)[0][0]
+
+    # Find solid horizontal bands (rows where all cells are the same non-bg color)
+    band_rows = []
+    for r in range(h):
+        row_vals = set(grid[r])
+        if len(row_vals) == 1 and list(row_vals)[0] != bg:
+            band_rows.append((r, list(row_vals)[0]))
+
+    band_cols = []
+    for c in range(w):
+        col_vals = set(grid[r][c] for r in range(h))
+        if len(col_vals) == 1 and list(col_vals)[0] != bg:
+            band_cols.append((c, list(col_vals)[0]))
+
+    if not band_rows and not band_cols:
+        return grid
+
+    result = [row[:] for row in grid]
+
+    # Move scattered dots (non-bg, non-band) to adjacent to nearest band
+    band_row_set = {r for r, _ in band_rows}
+    band_col_set = {c for c, _ in band_cols}
+
+    if band_rows:
+        for c in range(w):
+            # Collect non-band non-bg values in this column
+            vals_above = []
+            vals_below = []
+            first_band = band_rows[0][0]
+            last_band = band_rows[-1][0]
+
+            for r in range(h):
+                if r in band_row_set:
+                    continue
+                if grid[r][c] != bg:
+                    if r < first_band:
+                        vals_above.append(grid[r][c])
+                    else:
+                        vals_below.append(grid[r][c])
+
+            # Clear the column (non-band cells)
+            for r in range(h):
+                if r not in band_row_set:
+                    result[r][c] = bg
+
+            # Pack above-band values adjacent to band (touching band)
+            for i, val in enumerate(reversed(vals_above)):
+                r = first_band - 1 - i
+                if 0 <= r < h and r not in band_row_set:
+                    result[r][c] = val
+
+            # Pack below-band values adjacent to band
+            for i, val in enumerate(vals_below):
+                r = last_band + 1 + i
+                if 0 <= r < h and r not in band_row_set:
+                    result[r][c] = val
+
+    if band_cols:
+        for r in range(h):
+            vals_left = []
+            vals_right = []
+            first_band = band_cols[0][0]
+            last_band = band_cols[-1][0]
+
+            for c in range(w):
+                if c in band_col_set:
+                    continue
+                if grid[r][c] != bg:
+                    if c < first_band:
+                        vals_left.append(grid[r][c])
+                    else:
+                        vals_right.append(grid[r][c])
+
+            for c in range(w):
+                if c not in band_col_set:
+                    result[r][c] = bg
+
+            for i, val in enumerate(reversed(vals_left)):
+                c = first_band - 1 - i
+                if 0 <= c < w and c not in band_col_set:
+                    result[r][c] = val
+
+            for i, val in enumerate(vals_right):
+                c = last_band + 1 + i
+                if 0 <= c < w and c not in band_col_set:
+                    result[r][c] = val
+
+    return result
+
+
+def swap_colors_12(grid: Grid) -> Grid:
+    """Swap color 1 and color 2."""
+    return [[2 if v == 1 else (1 if v == 2 else v) for v in row] for row in grid]
+
+def swap_colors_13(grid: Grid) -> Grid:
+    """Swap color 1 and color 3."""
+    return [[3 if v == 1 else (1 if v == 3 else v) for v in row] for row in grid]
+
+def swap_colors_14(grid: Grid) -> Grid:
+    """Swap color 1 and color 4."""
+    return [[4 if v == 1 else (1 if v == 4 else v) for v in row] for row in grid]
+
+def swap_colors_15(grid: Grid) -> Grid:
+    """Swap color 1 and color 5."""
+    return [[5 if v == 1 else (1 if v == 5 else v) for v in row] for row in grid]
+
+def swap_colors_23(grid: Grid) -> Grid:
+    """Swap color 2 and color 3."""
+    return [[3 if v == 2 else (2 if v == 3 else v) for v in row] for row in grid]
+
+def swap_colors_24(grid: Grid) -> Grid:
+    """Swap color 2 and color 4."""
+    return [[4 if v == 2 else (2 if v == 4 else v) for v in row] for row in grid]
+
+def swap_colors_25(grid: Grid) -> Grid:
+    """Swap color 2 and color 5."""
+    return [[5 if v == 2 else (2 if v == 5 else v) for v in row] for row in grid]
+
+def swap_colors_34(grid: Grid) -> Grid:
+    """Swap color 3 and color 4."""
+    return [[4 if v == 3 else (3 if v == 4 else v) for v in row] for row in grid]
+
+def swap_colors_35(grid: Grid) -> Grid:
+    """Swap color 3 and color 5."""
+    return [[5 if v == 3 else (3 if v == 5 else v) for v in row] for row in grid]
+
+def swap_colors_45(grid: Grid) -> Grid:
+    """Swap color 4 and color 5."""
+    return [[5 if v == 4 else (4 if v == 5 else v) for v in row] for row in grid]
+
+
+def swap_most_and_second_color(grid: Grid) -> Grid:
+    """Swap the most common and 2nd most common non-bg colors."""
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    counts = Counter(flat)
+    bg = counts.most_common(1)[0][0]
+    non_bg = [v for v, _ in counts.most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+    c1, c2 = non_bg[0], non_bg[1]
+    return [[c2 if v == c1 else (c1 if v == c2 else v) for v in row] for row in grid]
+
+
+def swap_largest_and_smallest_obj_color(grid: Grid) -> Grid:
+    """Swap the colors of the largest and smallest objects."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter, deque
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+
+    visited = [[False]*w for _ in range(h)]
+    components = []
+
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                color = grid[sr][sc]
+                cells = []
+                q = deque([(sr, sc)])
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.popleft()
+                    cells.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and not visited[nr][nc] and grid[nr][nc]==color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                components.append((len(cells), color, cells))
+
+    if len(components) < 2:
+        return grid
+
+    components.sort(key=lambda x: x[0])
+    _, small_color, small_cells = components[0]
+    _, large_color, large_cells = components[-1]
+
+    if small_color == large_color:
+        return grid
+
+    result = [row[:] for row in grid]
+    for r, c in small_cells:
+        result[r][c] = large_color
+    for r, c in large_cells:
+        result[r][c] = small_color
+    return result
+
+
+def color_by_row_position(grid: Grid) -> Grid:
+    """Replace each non-bg cell with a color matching its row index (mod 9) + 1.
+
+    Creates a row-striped coloring. Useful for tasks that map row position to color.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    h = len(grid)
+    result = [row[:] for row in grid]
+    for r in range(h):
+        c_val = (r % 9) + 1
+        for c in range(len(grid[r])):
+            if grid[r][c] != bg:
+                result[r][c] = c_val
+    return result
+
+
+def color_by_col_position(grid: Grid) -> Grid:
+    """Replace each non-bg cell with a color matching its col index (mod 9) + 1."""
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(len(grid)):
+        for c in range(len(grid[r])):
+            if grid[r][c] != bg:
+                result[r][c] = (c % 9) + 1
+    return result
+
+
+def complete_pattern_4way(grid: Grid) -> Grid:
+    """Complete a partial pattern by enforcing 4-way (D4) symmetry.
+
+    Takes the 'union' of 4-fold rotational and reflective symmetry:
+    if any of the 4 symmetric positions has a non-bg value, fill all 4.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+
+    result = [row[:] for row in grid]
+    # For each cell, check its 4-fold symmetric partners and take non-bg value
+    for r in range(h):
+        for c in range(w):
+            candidates = [
+                grid[r][c],
+                grid[h-1-r][c] if 0 <= h-1-r < h else bg,
+                grid[r][w-1-c] if 0 <= w-1-c < w else bg,
+                grid[h-1-r][w-1-c] if 0 <= h-1-r < h and 0 <= w-1-c < w else bg,
+            ]
+            non_bg_candidates = [v for v in candidates if v != bg]
+            if non_bg_candidates:
+                val = Counter(non_bg_candidates).most_common(1)[0][0]
+                result[r][c] = val
+                result[h-1-r][c] = val
+                result[r][w-1-c] = val
+                result[h-1-r][w-1-c] = val
+
+    return result
+
+
+def fill_bg_with_color_from_border(grid: Grid) -> Grid:
+    """Fill all background cells with the most common non-bg color on the border.
+
+    Useful when the border color defines the fill, like tasks with a ring pattern.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+
+    border_vals = []
+    for c in range(w):
+        border_vals += [grid[0][c], grid[h-1][c]]
+    for r in range(1, h-1):
+        border_vals += [grid[r][0], grid[r][w-1]]
+
+    non_bg_border = [v for v in border_vals if v != bg]
+    if not non_bg_border:
+        return grid
+    fill = Counter(non_bg_border).most_common(1)[0][0]
+
+    return [[fill if v == bg else v for v in row] for row in grid]
+
+
+def keep_only_unique_rows(grid: Grid) -> Grid:
+    """Remove duplicate rows, keeping only the first occurrence of each unique row."""
+    if not grid:
+        return grid
+    seen = []
+    result = []
+    for row in grid:
+        key = tuple(row)
+        if key not in seen:
+            seen.append(key)
+            result.append(row[:])
+    return result if result else grid
+
+
+def keep_only_unique_cols(grid: Grid) -> Grid:
+    """Remove duplicate columns, keeping only the first occurrence."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    seen = []
+    keep_cols = []
+    for c in range(w):
+        key = tuple(grid[r][c] for r in range(h))
+        if key not in seen:
+            seen.append(key)
+            keep_cols.append(c)
+    if not keep_cols:
+        return grid
+    return [[grid[r][c] for c in keep_cols] for r in range(h)]
+
+
+def rotate_colors_up(grid: Grid) -> Grid:
+    """Cycle all non-bg colors: each color → (color % 9) + 1.
+
+    E.g., 1→2, 2→3, ..., 9→1. Useful for color-rotation tasks.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    result = []
+    for row in grid:
+        new_row = []
+        for v in row:
+            if v == bg:
+                new_row.append(v)
+            else:
+                new_row.append((v % 9) + 1)
+        result.append(new_row)
+    return result
+
+
+def rotate_colors_down(grid: Grid) -> Grid:
+    """Cycle all non-bg colors downward: each color → ((color-2) % 9) + 1.
+
+    E.g., 1→9, 2→1, 3→2, ..., 9→8.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    result = []
+    for row in grid:
+        new_row = []
+        for v in row:
+            if v == bg:
+                new_row.append(v)
+            else:
+                new_row.append(((v - 2) % 9) + 1)
+        result.append(new_row)
+    return result
+
+
+def extend_nonzero_to_fill_row(grid: Grid) -> Grid:
+    """For each row, if it has exactly one non-bg color, fill the whole row with it.
+
+    Handles tasks where a partial row needs to be extended to full width.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    result = []
+    for row in grid:
+        non_bg = [v for v in row if v != bg]
+        if non_bg and len(set(non_bg)) == 1:
+            result.append([non_bg[0]] * len(row))
+        else:
+            result.append(row[:])
+    return result
+
+
+def extend_nonzero_to_fill_col(grid: Grid) -> Grid:
+    """For each col, if it has exactly one non-bg color, fill the whole col with it."""
+    return transpose(extend_nonzero_to_fill_row(transpose(grid)))
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -1954,6 +2588,41 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # Lane spreading (colors spread within separator-defined lanes)
         ("spread_in_lanes_h", spread_in_lanes_h),
         ("spread_in_lanes_v", spread_in_lanes_v),
+        # V14: Connect and project primitives
+        ("connect_pixels_to_rect", connect_pixels_to_rect),
+        ("gravity_toward_color", gravity_toward_color),
+        ("fill_holes_in_objects", fill_holes_in_objects),
+        # V14: Color reordering
+        ("recolor_2nd_to_3rd", recolor_2nd_to_3rd_color),
+        ("recolor_least_to_2nd_least", recolor_least_to_second_least),
+        ("swap_most_and_2nd_color", swap_most_and_second_color),
+        ("swap_largest_smallest_obj_color", swap_largest_and_smallest_obj_color),
+        # V14: Pairwise color swaps
+        ("swap_colors_12", swap_colors_12),
+        ("swap_colors_13", swap_colors_13),
+        ("swap_colors_14", swap_colors_14),
+        ("swap_colors_15", swap_colors_15),
+        ("swap_colors_23", swap_colors_23),
+        ("swap_colors_24", swap_colors_24),
+        ("swap_colors_25", swap_colors_25),
+        ("swap_colors_34", swap_colors_34),
+        ("swap_colors_35", swap_colors_35),
+        ("swap_colors_45", swap_colors_45),
+        # V14: Pattern completion
+        ("complete_pattern_4way", complete_pattern_4way),
+        ("fill_bg_from_border", fill_bg_with_color_from_border),
+        # V14: Row/col dedup
+        ("keep_unique_rows", keep_only_unique_rows),
+        ("keep_unique_cols", keep_only_unique_cols),
+        # V14: Color cycling
+        ("rotate_colors_up", rotate_colors_up),
+        ("rotate_colors_down", rotate_colors_down),
+        # V14: Row/col fill
+        ("extend_nonzero_fill_row", extend_nonzero_to_fill_row),
+        ("extend_nonzero_fill_col", extend_nonzero_to_fill_col),
+        # V14: Position-based coloring
+        ("color_by_row_position", color_by_row_position),
+        ("color_by_col_position", color_by_col_position),
     ]
 
     for name, impl in partitioning_ops:

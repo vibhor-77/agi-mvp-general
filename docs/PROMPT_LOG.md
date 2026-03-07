@@ -764,3 +764,44 @@ def spread_in_lanes_v(grid):
 | New pair-solves | — | 2204b7a8 (recolor_by_nearest_border), 3c9b0459 (rotate_180 → fill_tile_pattern) |
 
 The 7 new primitives added 2 deterministic pair-solves, improve the evolution seed quality for ~10 near-miss tasks, and maintain throughput.
+
+---
+
+## Session 12 — v0.14: 27 New Primitives from Near-Miss Analysis
+
+**Date:** 2026-03-07
+
+**Starting state:** v0.13 committed (178 concepts, 329 tests). Evaluation at ~16.5% on training set.
+
+**Analysis performed:**
+- Fixed near-miss analysis scripts (`.execute()` not `.apply()`)
+- Scanned first 200 tasks: found 87 near-misses (single-prim score 0.85-0.99)
+- Categorized residual errors: **54/87 need zeros→color fill**, 28 need recoloring, 5 need erasing
+- Ran pair-search on first 100 tasks: 8 solves previously → checking all pairs
+- Identified highest-ROI candidates by testing new functions against 400 tasks
+
+**New primitives added (27 total):**
+- `connect_pixels_to_rect`: BFS connect isolated pixels to nearest rectangle with a line segment (45 near-misses as single)
+- `gravity_toward_color`: Pack scattered dots adjacent to solid-color bands (61 near-misses, 9 pair-solves)
+- `fill_holes_in_objects`: Fill enclosed background regions with surrounding object color (50 near-misses, 8 pair-solves)
+- `recolor_2nd_to_3rd`: Replace 2nd most common color with 3rd most common (43 near-misses)
+- `recolor_least_to_2nd_least`: Collapse least-common into 2nd-least
+- `swap_most_and_2nd_color`, `swap_largest_smallest_obj_color`: Color swap ops
+- 10x pairwise color swaps: `swap_colors_12` through `swap_colors_45`
+- `complete_pattern_4way`: Enforce D4 symmetry (fill all 4 symmetric positions)
+- `fill_bg_from_border`: Fill bg with most common border color
+- `keep_unique_rows`, `keep_unique_cols`: Remove duplicate rows/cols
+- `rotate_colors_up`, `rotate_colors_down`: Cycle all non-bg colors
+- `extend_nonzero_fill_row`, `extend_nonzero_fill_col`: If row has exactly one non-bg color, fill whole row
+- `color_by_row_position`, `color_by_col_position`: Map position to color
+
+**ESSENTIAL_PAIR_CONCEPTS additions (v14):** `gravity_toward_color`, `fill_holes_in_objects`, `connect_pixels_to_rect`, `recolor_2nd_to_3rd`, `extend_nonzero_fill_row`, `extend_nonzero_fill_col`, `complete_pattern_4way`
+
+**Results:**
+- Tests: 349 passing (was 329)
+- Toolkit size: 205 concepts (was 178)
+- 80-task benchmark: **12/80 (15.0%)** exact solves (was 11/80 = 13.8%)
+- 200-task benchmark: **35/200 (17.5%)** exact solves
+- New solves confirmed: 22eb0ac0 (extend_nonzero_fill_row → x2), 4093f84a (gravity_toward_color)
+
+**Primitives dropped (scored 0 on all 400 tasks):** `rotate_colors_up`, `rotate_colors_down`, `color_by_row_position`, `color_by_col_position` (kept in code but removed from ESSENTIAL)
