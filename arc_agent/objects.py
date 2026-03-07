@@ -287,6 +287,56 @@ def recolor_all_to_most_common(grid: Grid) -> Grid:
     ]
 
 
+def remove_largest_object(grid: Grid) -> Grid:
+    """Remove the largest object from the grid (set its pixels to 0)."""
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    largest = max(objects, key=lambda o: o.size)
+    result = [row[:] for row in grid]
+    for r, c in largest.pixels:
+        result[r][c] = 0
+    return result
+
+
+def remove_smallest_object(grid: Grid) -> Grid:
+    """Remove the smallest object from the grid (set its pixels to 0)."""
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    smallest = min(objects, key=lambda o: o.size)
+    result = [row[:] for row in grid]
+    for r, c in smallest.pixels:
+        result[r][c] = 0
+    return result
+
+
+def keep_largest_object_only(grid: Grid) -> Grid:
+    """Keep only the largest object, zero everything else."""
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    largest = max(objects, key=lambda o: o.size)
+    h, w = len(grid), len(grid[0])
+    result = [[0] * w for _ in range(h)]
+    for r, c in largest.pixels:
+        result[r][c] = grid[r][c]
+    return result
+
+
+def keep_smallest_object_only(grid: Grid) -> Grid:
+    """Keep only the smallest object, zero everything else."""
+    objects = find_objects(grid)
+    if not objects:
+        return [row[:] for row in grid]
+    smallest = min(objects, key=lambda o: o.size)
+    h, w = len(grid), len(grid[0])
+    result = [[0] * w for _ in range(h)]
+    for r, c in smallest.pixels:
+        result[r][c] = grid[r][c]
+    return result
+
+
 def mirror_objects_horizontal(grid: Grid) -> Grid:
     """Mirror each object horizontally within its bounding box.
 
@@ -369,6 +419,22 @@ def add_object_concepts(toolkit: Toolkit) -> None:
     toolkit.add_concept(Concept(
         kind="operator", name="mirror_objects_h",
         implementation=mirror_objects_horizontal,
+    ))
+    toolkit.add_concept(Concept(
+        kind="operator", name="remove_largest_obj",
+        implementation=remove_largest_object,
+    ))
+    toolkit.add_concept(Concept(
+        kind="operator", name="remove_smallest_obj",
+        implementation=remove_smallest_object,
+    ))
+    toolkit.add_concept(Concept(
+        kind="operator", name="keep_largest_obj_only",
+        implementation=keep_largest_object_only,
+    ))
+    toolkit.add_concept(Concept(
+        kind="operator", name="keep_smallest_obj_only",
+        implementation=keep_smallest_object_only,
     ))
 
     toolkit.add_concept(Concept(

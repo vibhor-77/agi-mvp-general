@@ -535,12 +535,238 @@ class TestPatternStacking(unittest.TestCase):
 class TestNewToolkitSize(unittest.TestCase):
     def test_toolkit_has_new_ops(self):
         tk = build_initial_toolkit()
-        self.assertGreaterEqual(tk.size, 140)
+        self.assertGreaterEqual(tk.size, 155)
         # Check new ops are registered
         for name in ["complete_symmetry_h", "denoise_3x3", "xor_halves_v",
                      "swap_most_least", "repeat_rows_2x", "stack_with_mirror_v",
-                     "recolor_smallest_to_1", "recolor_all_to_most_common_obj"]:
+                     "recolor_smallest_to_1", "recolor_all_to_most_common_obj",
+                     # v0.7 additions
+                     "mirror_diagonal_main", "mirror_diagonal_anti",
+                     "fill_holes_per_color", "fill_rectangles",
+                     "sort_cols_by_color_count",
+                     "grid_difference", "grid_difference_h",
+                     "spread_colors", "erode",
+                     "keep_only_largest_color", "keep_only_smallest_color"]:
             self.assertIn(name, tk.concepts, f"Missing: {name}")
+
+
+class TestDiagonalOps(unittest.TestCase):
+    def test_mirror_diagonal_main_square(self):
+        from arc_agent.primitives import mirror_diagonal_main
+        grid = [[1, 2], [3, 4]]
+        result = mirror_diagonal_main(grid)
+        # Transpose: [[1,3],[2,4]]
+        self.assertEqual(result, [[1, 3], [2, 4]])
+
+    def test_mirror_diagonal_anti(self):
+        from arc_agent.primitives import mirror_diagonal_anti
+        grid = [[1, 2], [3, 4]]
+        result = mirror_diagonal_anti(grid)
+        self.assertEqual(result, [[4, 2], [3, 1]])
+
+
+class TestFillOps(unittest.TestCase):
+    def test_fill_holes_per_color(self):
+        from arc_agent.primitives import fill_holes_per_color
+        # Color 1 encloses a 0 cell
+        grid = [
+            [1, 1, 1],
+            [1, 0, 1],
+            [1, 1, 1],
+        ]
+        result = fill_holes_per_color(grid)
+        self.assertEqual(result[1][1], 1)
+
+    def test_fill_holes_per_color_border_not_filled(self):
+        from arc_agent.primitives import fill_holes_per_color
+        # Zero on border should NOT be filled
+        grid = [
+            [1, 0, 1],
+            [1, 1, 1],
+        ]
+        result = fill_holes_per_color(grid)
+        self.assertEqual(result[0][1], 0)
+
+    def test_fill_rectangles(self):
+        from arc_agent.primitives import fill_rectangles
+        # L-shaped object -> fill bounding box
+        grid = [
+            [1, 0],
+            [1, 1],
+        ]
+        result = fill_rectangles(grid)
+        self.assertEqual(result, [[1, 1], [1, 1]])
+
+
+class TestSortCols(unittest.TestCase):
+    def test_sort_cols_by_color_count(self):
+        from arc_agent.primitives import sort_cols_by_color_count
+        # Col 0 has 2 nonzero, col 1 has 1, col 2 has 0
+        grid = [
+            [1, 0, 0],
+            [1, 2, 0],
+        ]
+        result = sort_cols_by_color_count(grid)
+        # Sorted ascending: col2(0), col1(1), col0(2)
+        self.assertEqual(result, [[0, 0, 1], [0, 2, 1]])
+
+
+class TestGridArithmetic(unittest.TestCase):
+    def test_grid_difference(self):
+        from arc_agent.primitives import grid_difference
+        grid = [
+            [1, 2],
+            [3, 0],
+            [0, 2],  # bottom half
+            [3, 4],
+        ]
+        result = grid_difference(grid)
+        # Row 0: a=[1,2], b=[0,2] -> [1,0] (1 unique to top, 2 in both)
+        # Row 1: a=[3,0], b=[3,4] -> [0,0]
+        self.assertEqual(result, [[1, 0], [0, 0]])
+
+    def test_grid_difference_h(self):
+        from arc_agent.primitives import grid_difference_h
+        grid = [[1, 2, 0, 2]]
+        result = grid_difference_h(grid)
+        # left=[1,2], right=[0,2] -> [1,0]
+        self.assertEqual(result, [[1, 0]])
+
+
+class TestMorphological(unittest.TestCase):
+    def test_spread_colors(self):
+        from arc_agent.primitives import spread_colors
+        grid = [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+        ]
+        result = spread_colors(grid)
+        # Center stays 1, all 4-neighbors become 1
+        self.assertEqual(result[0][1], 1)
+        self.assertEqual(result[1][0], 1)
+        self.assertEqual(result[1][2], 1)
+        self.assertEqual(result[2][1], 1)
+        # Corners stay 0 (not 4-connected to 1)
+        self.assertEqual(result[0][0], 0)
+
+    def test_erode(self):
+        from arc_agent.primitives import erode
+        grid = [
+            [1, 1, 1],
+            [1, 1, 1],
+            [1, 1, 1],
+        ]
+        result = erode(grid)
+        # Only center survives (all border cells touch edge)
+        self.assertEqual(result[1][1], 1)
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[0][1], 0)
+
+
+class TestColorMask(unittest.TestCase):
+    def test_keep_only_largest_color(self):
+        from arc_agent.primitives import keep_only_largest_color
+        grid = [[1, 1, 1], [2, 0, 0]]
+        result = keep_only_largest_color(grid)
+        self.assertEqual(result, [[1, 1, 1], [0, 0, 0]])
+
+    def test_keep_only_smallest_color(self):
+        from arc_agent.primitives import keep_only_smallest_color
+        grid = [[1, 1, 1], [2, 0, 0]]
+        result = keep_only_smallest_color(grid)
+        self.assertEqual(result, [[0, 0, 0], [2, 0, 0]])
+
+
+class TestObjectOps(unittest.TestCase):
+    def test_remove_largest_object(self):
+        from arc_agent.objects import remove_largest_object
+        grid = [
+            [1, 1, 0],
+            [1, 1, 2],
+            [0, 0, 0],
+        ]
+        result = remove_largest_object(grid)
+        # Largest is the 4-cell block of 1s
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[0][1], 0)
+        self.assertEqual(result[1][2], 2)  # Small object preserved
+
+    def test_remove_smallest_object(self):
+        from arc_agent.objects import remove_smallest_object
+        grid = [
+            [1, 1, 0],
+            [1, 1, 2],
+            [0, 0, 0],
+        ]
+        result = remove_smallest_object(grid)
+        # Smallest is the single 2 cell
+        self.assertEqual(result[1][2], 0)
+        self.assertEqual(result[0][0], 1)  # Large object preserved
+
+    def test_keep_largest_object_only(self):
+        from arc_agent.objects import keep_largest_object_only
+        grid = [
+            [1, 1, 0],
+            [1, 1, 2],
+            [0, 0, 0],
+        ]
+        result = keep_largest_object_only(grid)
+        self.assertEqual(result[0][0], 1)
+        self.assertEqual(result[1][2], 0)  # Small object removed
+
+    def test_keep_smallest_object_only(self):
+        from arc_agent.objects import keep_smallest_object_only
+        grid = [
+            [1, 1, 0],
+            [1, 1, 2],
+            [0, 0, 0],
+        ]
+        result = keep_smallest_object_only(grid)
+        self.assertEqual(result[1][2], 2)
+        self.assertEqual(result[0][0], 0)  # Large object removed
+
+    def test_toolkit_has_new_object_ops(self):
+        tk = build_initial_toolkit()
+        for name in ["remove_largest_obj", "remove_smallest_obj",
+                     "keep_largest_obj_only", "keep_smallest_obj_only"]:
+            self.assertIn(name, tk.concepts, f"Missing: {name}")
+
+
+class TestSynthesizerPairExhaustion(unittest.TestCase):
+    def test_try_all_pairs_returns_program(self):
+        from arc_agent.synthesizer import ProgramSynthesizer
+        tk = build_initial_toolkit()
+        synth = ProgramSynthesizer(tk, population_size=10)
+
+        # Simple task: rotate 90 CW then mirror H
+        # (just test that it runs without error and returns a program)
+        grid_in = [[1, 2], [3, 4]]
+        grid_out = [[3, 1], [4, 2]]  # rotate_90_cw result
+        task = {"train": [{"input": grid_in, "output": grid_out}]}
+
+        result = synth.try_all_pairs(task, top_k=5)
+        self.assertIsNotNone(result)
+        self.assertGreater(result.fitness, 0.0)
+
+    def test_hill_climb_improves_or_maintains(self):
+        from arc_agent.synthesizer import ProgramSynthesizer
+        from arc_agent.scorer import TaskCache
+        from arc_agent.concepts import Program
+
+        tk = build_initial_toolkit()
+        synth = ProgramSynthesizer(tk, population_size=10)
+
+        task = {"train": [{"input": [[1, 0], [0, 1]], "output": [[0, 1], [1, 0]]}]}
+        cache = TaskCache(task)
+
+        # Start with identity (bad program)
+        start = Program([tk.concepts["identity"]])
+        start.fitness = cache.score_program(start)
+
+        refined = synth.hill_climb(start, cache, max_steps=20)
+        # Should be at least as good
+        self.assertGreaterEqual(refined.fitness, start.fitness)
 
 
 if __name__ == '__main__':

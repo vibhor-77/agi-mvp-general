@@ -151,12 +151,18 @@ class ExplorationEngine:
         if task_features.get("same_dims"):
             # Input/output same size → color or local transformation
             for name in ["identity", "invert_colors", "fill_enclosed", "outline",
-                         "recolor_to_most_common", "reverse_rows", "reverse_cols"]:
+                         "recolor_to_most_common", "reverse_rows", "reverse_cols",
+                         "denoise_3x3", "denoise_5x5", "fill_holes_per_color",
+                         "fill_rectangles", "spread_colors", "erode",
+                         "complete_symmetry_h", "complete_symmetry_v",
+                         "complete_symmetry_4", "swap_most_least",
+                         "recolor_least_common", "keep_only_largest_color",
+                         "keep_only_smallest_color"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
             # Try gravity ops (same dims, rearrange cells)
             for name in ["gravity_down", "gravity_up", "gravity_left", "gravity_right",
-                         "sort_rows_by_color_count"]:
+                         "sort_rows_by_color_count", "sort_cols_by_color_count"]:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
             # Try erase + fill combos for same-dims tasks
@@ -200,6 +206,13 @@ class ExplorationEngine:
                 if name in self.toolkit.concepts:
                     seeds.append(Program([self.toolkit.concepts[name]]))
 
+        if task_features.get("shrinks"):
+            for name in ["xor_halves_v", "or_halves_v", "and_halves_v",
+                         "xor_halves_h", "or_halves_h", "and_halves_h",
+                         "grid_difference", "grid_difference_h"]:
+                if name in self.toolkit.concepts:
+                    seeds.append(Program([self.toolkit.concepts[name]]))
+
         # 3. Two-step combo seeds for common patterns
         combos = [
             ("crop_nonzero", "mirror_h"),
@@ -210,6 +223,19 @@ class ExplorationEngine:
             ("outline", "fill_enclosed"),
             ("get_interior", "crop_nonzero"),
             ("invert_colors", "crop_nonzero"),
+            # New combos with v0.7 primitives
+            ("fill_holes_per_color", "crop_nonzero"),
+            ("fill_rectangles", "crop_nonzero"),
+            ("spread_colors", "crop_nonzero"),
+            ("erode", "crop_nonzero"),
+            ("keep_only_largest_color", "crop_nonzero"),
+            ("keep_only_smallest_color", "crop_nonzero"),
+            ("denoise_3x3", "crop_nonzero"),
+            ("fill_enclosed", "denoise_3x3"),
+            ("spread_colors", "erode"),
+            ("erode", "spread_colors"),
+            ("complete_symmetry_h", "fill_enclosed"),
+            ("complete_symmetry_v", "fill_enclosed"),
         ]
         for a_name, b_name in combos:
             if a_name in self.toolkit.concepts and b_name in self.toolkit.concepts:

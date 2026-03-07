@@ -803,6 +803,254 @@ def stack_with_mirror_h(grid: Grid) -> Grid:
 
 
 # ============================================================
+# DIAGONAL OPERATIONS
+# ============================================================
+
+def mirror_diagonal_main(grid: Grid) -> Grid:
+    """Mirror grid along the main diagonal (top-left to bottom-right).
+
+    Same as transpose for square grids. For non-square grids, pads with 0.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+    n = max(h, w)
+    result = [[0] * n for _ in range(n)]
+    for r in range(h):
+        for c in range(w):
+            result[c][r] = grid[r][c]
+    # Crop to content
+    return [row[:w] for row in result[:h]] if h == w else result
+
+
+def mirror_diagonal_anti(grid: Grid) -> Grid:
+    """Mirror grid along the anti-diagonal (top-right to bottom-left)."""
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+    n = max(h, w)
+    result = [[0] * n for _ in range(n)]
+    for r in range(h):
+        for c in range(w):
+            result[n - 1 - c][n - 1 - r] = grid[r][c]
+    return [row[:h] for row in result[:w]]
+
+
+# ============================================================
+# FILL OPERATIONS
+# ============================================================
+
+def fill_holes_per_color(grid: Grid) -> Grid:
+    """Fill enclosed zero-regions for each color independently.
+
+    For each non-zero color, find enclosed zero cells (surrounded by
+    that color) and fill them. More precise than fill_enclosed which
+    uses any adjacent color.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    result = _deep_copy_grid(grid)
+
+    # Get all colors
+    colors = set()
+    for row in grid:
+        for c in row:
+            if c != 0:
+                colors.add(c)
+
+    for color in colors:
+        # Create binary mask: 1 where color, 0 elsewhere
+        # Find zeros NOT reachable from border through zeros/other-colors
+        # (i.e., zeros enclosed by this color)
+        border_reachable = set()
+        stack = []
+
+        # Start from border cells that are 0 or not this color
+        for r in range(h):
+            for c in range(w):
+                if (r == 0 or r == h - 1 or c == 0 or c == w - 1):
+                    if grid[r][c] != color:
+                        stack.append((r, c))
+
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in border_reachable:
+                continue
+            if r < 0 or r >= h or c < 0 or c >= w:
+                continue
+            if grid[r][c] == color:
+                continue
+            border_reachable.add((r, c))
+            stack.extend([(r+1, c), (r-1, c), (r, c+1), (r, c-1)])
+
+        # Fill enclosed zeros with this color
+        for r in range(h):
+            for c in range(w):
+                if grid[r][c] == 0 and (r, c) not in border_reachable:
+                    result[r][c] = color
+
+    return result
+
+
+def fill_rectangles(grid: Grid) -> Grid:
+    """Complete partial rectangles by filling their bounding boxes.
+
+    For each connected component, fill its entire bounding box with
+    its color. Useful for tasks where partial shapes need completing.
+    """
+    from .objects import find_objects
+    objects = find_objects(grid)
+    if not objects:
+        return _deep_copy_grid(grid)
+
+    result = _deep_copy_grid(grid)
+    for obj in objects:
+        min_r, min_c, max_r, max_c = obj.bbox
+        for r in range(min_r, max_r + 1):
+            for c in range(min_c, max_c + 1):
+                if result[r][c] == 0:
+                    result[r][c] = obj.color
+    return result
+
+
+# ============================================================
+# SORT OPERATIONS
+# ============================================================
+
+def sort_cols_by_color_count(grid: Grid) -> Grid:
+    """Sort columns by number of non-zero cells (ascending)."""
+    h, w = _grid_dims(grid)
+    if h == 0 or w == 0:
+        return _deep_copy_grid(grid)
+
+    # Get column indices sorted by non-zero count
+    col_counts = []
+    for c in range(w):
+        count = sum(1 for r in range(h) if grid[r][c] != 0)
+        col_counts.append((count, c))
+    col_counts.sort()
+
+    # Build result with sorted columns
+    result = [[0] * w for _ in range(h)]
+    for new_c, (_, old_c) in enumerate(col_counts):
+        for r in range(h):
+            result[r][new_c] = grid[r][old_c]
+    return result
+
+
+# ============================================================
+# GRID ARITHMETIC
+# ============================================================
+
+def grid_difference(grid: Grid) -> Grid:
+    """Subtract bottom half from top half (keep non-zero in top but zero in bottom).
+
+    Useful for finding what's unique to the top half vs bottom half.
+    Result has half-height.
+    """
+    h, w = _grid_dims(grid)
+    if h < 2:
+        return _deep_copy_grid(grid)
+    mid = h // 2
+    result = [[0] * w for _ in range(mid)]
+    for r in range(mid):
+        for c in range(w):
+            a = grid[r][c]
+            b = grid[mid + r][c]
+            # Keep a only if b is zero (a is unique to top)
+            result[r][c] = a if (a != 0 and b == 0) else 0
+    return result
+
+
+def grid_difference_h(grid: Grid) -> Grid:
+    """Subtract right half from left half (keep unique-to-left cells).
+
+    Result has half-width.
+    """
+    h, w = _grid_dims(grid)
+    if w < 2:
+        return _deep_copy_grid(grid)
+    mid = w // 2
+    result = [[0] * mid for _ in range(h)]
+    for r in range(h):
+        for c in range(mid):
+            a = grid[r][c]
+            b = grid[r][mid + c]
+            result[r][c] = a if (a != 0 and b == 0) else 0
+    return result
+
+
+# ============================================================
+# PIXEL CONNECTIVITY / FLOOD FILL VARIANTS
+# ============================================================
+
+def spread_colors(grid: Grid) -> Grid:
+    """Spread each non-zero cell to fill its 4-connected zero neighbors.
+
+    One step of cellular automaton: each zero cell adjacent to a non-zero
+    cell takes that color. If multiple colors compete, the smallest
+    color value wins (deterministic).
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == 0:
+                candidates = []
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w and grid[nr][nc] != 0:
+                        candidates.append(grid[nr][nc])
+                if candidates:
+                    result[r][c] = min(candidates)
+    return result
+
+
+def erode(grid: Grid) -> Grid:
+    """Erode non-zero regions: remove cells that border any zero cell.
+
+    Opposite of spread_colors — shrinks objects by one pixel.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != 0:
+                for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                    nr, nc = r + dr, c + dc
+                    if nr < 0 or nr >= h or nc < 0 or nc >= w or grid[nr][nc] == 0:
+                        result[r][c] = 0
+                        break
+    return result
+
+
+# ============================================================
+# COLOR MASK OPERATIONS
+# ============================================================
+
+def keep_only_largest_color(grid: Grid) -> Grid:
+    """Keep only the most common non-zero color, zero everything else."""
+    mc = most_common_color(grid)
+    if mc == 0:
+        return _deep_copy_grid(grid)
+    return [[v if v == mc else 0 for v in row] for row in grid]
+
+
+def keep_only_smallest_color(grid: Grid) -> Grid:
+    """Keep only the least common non-zero color, zero everything else."""
+    lc = least_common_color(grid)
+    if lc == 0:
+        return _deep_copy_grid(grid)
+    return [[v if v == lc else 0 for v in row] for row in grid]
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -910,6 +1158,23 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("repeat_cols_2x", repeat_cols_2x),
         ("stack_with_mirror_v", stack_with_mirror_v),
         ("stack_with_mirror_h", stack_with_mirror_h),
+        # Diagonal operations
+        ("mirror_diagonal_main", mirror_diagonal_main),
+        ("mirror_diagonal_anti", mirror_diagonal_anti),
+        # Fill operations
+        ("fill_holes_per_color", fill_holes_per_color),
+        ("fill_rectangles", fill_rectangles),
+        # Sort operations
+        ("sort_cols_by_color_count", sort_cols_by_color_count),
+        # Grid arithmetic
+        ("grid_difference", grid_difference),
+        ("grid_difference_h", grid_difference_h),
+        # Spread / erode (morphological)
+        ("spread_colors", spread_colors),
+        ("erode", erode),
+        # Color mask
+        ("keep_only_largest_color", keep_only_largest_color),
+        ("keep_only_smallest_color", keep_only_smallest_color),
     ]
 
     for name, impl in partitioning_ops:

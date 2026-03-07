@@ -28,7 +28,7 @@ class ProgramSynthesizer:
         self,
         toolkit: Toolkit,
         population_size: int = 50,
-        max_program_length: int = 4,
+        max_program_length: int = 5,
         mutation_rate: float = 0.3,
         crossover_rate: float = 0.2,
         elite_fraction: float = 0.1,
@@ -234,6 +234,102 @@ class ProgramSynthesizer:
 
         return new_population[:self.population_size]
 
+    def try_all_pairs(
+        self,
+        task: dict,
+        cache: "TaskCache | None" = None,
+        top_k: int = 20,
+    ) -> Optional[Program]:
+        """Exhaustively try all pairs (and triples of top-8) of top-scoring primitives.
+
+        Many ARC tasks are solved by exactly two steps (e.g. crop→mirror,
+        fill→outline). This is far more efficient than hoping evolution
+        discovers the right pair among ~150² = 22500 possibilities.
+
+        Also tries all triples of the top-8 primitives (8³ = 512 combos),
+        catching 3-step solutions that pairs miss.
+
+        Args:
+            task: ARC task dict
+            cache: Pre-converted TaskCache
+            top_k: Number of top single primitives to consider for pairing
+
+        Returns:
+            Best program found (2 or 3 steps), or None if nothing scored well.
+        """
+        if cache is None:
+            cache = TaskCache(task)
+
+        # Score all single primitives
+        singles: list[tuple[float, Concept]] = []
+        for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
+            prog = Program([concept])
+            score = cache.score_program(prog)
+            singles.append((score, concept))
+
+        # Keep top-k by score (these are most likely to be useful steps)
+        singles.sort(key=lambda x: x[0], reverse=True)
+        top_concepts = [c for _, c in singles[:top_k]]
+
+        best_prog = None
+        best_score = 0.0
+
+        # Phase 1: All pairs of top-k (k² combos)
+        for a in top_concepts:
+            for b in top_concepts:
+                prog = Program([a, b])
+                score = cache.score_program(prog)
+                if score > best_score:
+                    best_score = score
+                    best_prog = prog
+                    best_prog.fitness = score
+                    if score >= 0.99:
+                        return best_prog
+
+        # Phase 2: All triples of top-8 (512 combos)
+        top_8 = top_concepts[:8]
+        for a in top_8:
+            for b in top_8:
+                for c in top_8:
+                    prog = Program([a, b, c])
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99:
+                            return best_prog
+
+        return best_prog
+
+    def hill_climb(
+        self,
+        program: Program,
+        cache: "TaskCache",
+        max_steps: int = 50,
+    ) -> Program:
+        """Stochastic hill climbing to refine a near-miss program.
+
+        Makes small mutations and keeps improvements. More focused than
+        full evolution — useful when we're close (>0.90) but not perfect.
+        """
+        current = program
+        current_score = cache.score_program(current)
+
+        for _ in range(max_steps):
+            candidate = self.mutate(current)
+            score = cache.score_program(candidate)
+            if score > current_score:
+                current = candidate
+                current.fitness = score
+                current_score = score
+                if score >= 0.99:
+                    break
+
+        return current
+
     def synthesize(
         self,
         task: dict,
@@ -307,5 +403,14 @@ class ProgramSynthesizer:
                 if verbose:
                     print(f"  ✓ Perfect solution found at generation {gen}!")
                 break
+
+        # Phase 3: Hill climbing refinement for near-misses
+        if best_ever and 0.85 <= best_ever_score < 0.99:
+            refined = self.hill_climb(best_ever, cache, max_steps=60)
+            if refined.fitness > best_ever_score:
+                best_ever = refined
+                best_ever_score = refined.fitness
+                if verbose:
+                    print(f"  ↑ Hill climb improved to {best_ever_score:.3f}")
 
         return best_ever, history
