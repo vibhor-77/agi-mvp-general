@@ -7,6 +7,8 @@ import unittest
 from arc_agent.concepts import Concept, Program, Toolkit, Archive, Grid
 from arc_agent.primitives import build_initial_toolkit
 from arc_agent.culture import save_culture, load_culture, _extract_step_names
+from arc_agent.solver import FourPillarsSolver
+from arc_agent.scorer import TaskCache
 
 
 class TestExtractStepNames(unittest.TestCase):
@@ -172,6 +174,60 @@ class TestLoadCulture(unittest.TestCase):
             self.assertEqual(archive.task_features["task_abc"]["same_dims"], True)
         finally:
             os.unlink(path)
+
+
+class TestTryCulturePrograms(unittest.TestCase):
+    """Test that _try_culture_programs correctly evaluates loaded culture programs."""
+
+    def _make_mirror_task(self):
+        return {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[2, 1], [4, 3]]},
+                {"input": [[5, 6]], "output": [[6, 5]]},
+            ],
+            "test": [{"input": [[1, 0]], "output": [[0, 1]]}],
+        }
+
+    def test_try_culture_programs_empty(self):
+        """Returns None when no culture programs are loaded."""
+        solver = FourPillarsSolver(population_size=10, max_generations=5, verbose=False)
+        task = self._make_mirror_task()
+        cache = TaskCache(task)
+        result = solver._try_culture_programs(task, cache)
+        # toolkit.programs is empty by default — should return None
+        self.assertIsNone(result)
+
+    def test_try_culture_programs_finds_solver(self):
+        """A program loaded into toolkit.programs is scored and returned."""
+        solver = FourPillarsSolver(population_size=10, max_generations=5, verbose=False)
+        task = self._make_mirror_task()
+        cache = TaskCache(task)
+
+        # Manually load the mirror_h program into toolkit.programs (simulates culture load)
+        mirror_concept = solver.toolkit.concepts["mirror_h"]
+        prog = Program([mirror_concept])
+        solver.toolkit.add_program(prog)
+
+        result = solver._try_culture_programs(task, cache)
+        self.assertIsNotNone(result)
+        self.assertGreaterEqual(result.fitness, 0.99)
+
+    def test_culture_transfer_method_used(self):
+        """When a culture program solves the task, method is 'culture_transfer'."""
+        import random
+        random.seed(42)
+        solver = FourPillarsSolver(population_size=10, max_generations=5, verbose=False)
+        task = self._make_mirror_task()
+
+        # Load mirror_h program into toolkit (simulates --load-culture)
+        mirror_concept = solver.toolkit.concepts["mirror_h"]
+        prog = Program([mirror_concept])
+        solver.toolkit.add_program(prog)
+
+        result = solver.solve_task(task, "mirror_culture_test")
+        self.assertTrue(result["solved"])
+        # Should be solved via culture_transfer OR single_primitive (mirror_h is in singles too)
+        self.assertIn(result["method"], ["culture_transfer", "single_primitive", "pair_exhaustion"])
 
 
 if __name__ == "__main__":

@@ -75,6 +75,69 @@ def load_dataset(directory: str) -> dict[str, dict]:
 
 # ── Worker ─────────────────────────────────────────────────────────────────
 
+def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
+                     task: dict, seed: int) -> dict:
+    """Package a per-task result with culture data for aggregation.
+
+    Shared by the single-process (shared-solver) path and the per-process
+    worker path. Both compute the same result dict so that _aggregate_and_save_culture
+    always sees the same format.
+    """
+    test_passed = False
+    test_score  = 0.0
+    if result["solved"]:
+        programs = solver.archive.task_solutions.get(task_id, [])
+        if programs:
+            test_passed, test_score = validate_on_test(programs[0], task)
+
+    # Collect learned concepts and programs for culture saving
+    learned_concepts = []
+    for name, concept in solver.toolkit.concepts.items():
+        if name.startswith("learned_"):
+            from .culture import _extract_step_names
+            step_names = _extract_step_names(concept)
+            learned_concepts.append({
+                "name": name,
+                "steps": step_names,
+                "kind": concept.kind,
+                "usage_count": concept.usage_count,
+                "success_count": concept.success_count,
+            })
+
+    solved_programs = []
+    for tid, programs in solver.archive.task_solutions.items():
+        for prog in programs:
+            step_names = [s.name for s in prog.steps]
+            all_reconstructable = all(
+                sn in solver.toolkit.concepts for sn in step_names
+            )
+            if all_reconstructable and step_names:
+                solved_programs.append({
+                    "task_id": tid,
+                    "steps": step_names,
+                    "fitness": prog.fitness,
+                    "name": prog.name,
+                })
+
+    return {
+        "task_id":        task_id,
+        "solved":         result["solved"],
+        "score":          result["score"],
+        "test_passed":    test_passed,
+        "test_score":     test_score,
+        "program":        result["program"],
+        "program_length": result["program_length"],
+        "method":         result["method"],
+        "time_seconds":   result["time_seconds"],
+        "toolkit_size":   result["toolkit_size"],
+        "worker_seed":    seed,
+        # Culture data for cross-worker aggregation
+        "_learned_concepts": learned_concepts,
+        "_solved_programs":  solved_programs,
+        "_task_features":    solver.archive.task_features,
+    }
+
+
 def _solve_one(args: tuple) -> dict:
     """Worker function: solve a single task in a subprocess.
 
@@ -111,62 +174,68 @@ def _solve_one(args: tuple) -> dict:
             pass  # Gracefully degrade — run without culture
 
     result = solver.solve_task(task, task_id)
+    return _collect_result(solver, result, task_id, task, seed)
 
-    test_passed = False
-    test_score  = 0.0
-    if result["solved"]:
-        programs = solver.archive.task_solutions.get(task_id, [])
-        if programs:
-            test_passed, test_score = validate_on_test(programs[0], task)
 
-    # Collect learned concepts and programs for culture saving
-    learned_concepts = []
-    for name, concept in solver.toolkit.concepts.items():
-        if name.startswith("learned_"):
-            from .culture import _extract_step_names
-            step_names = _extract_step_names(concept)
-            learned_concepts.append({
-                "name": name,
-                "steps": step_names,
-                "kind": concept.kind,
-                "usage_count": concept.usage_count,
-                "success_count": concept.success_count,
-            })
+def _solve_sequential_compounding(
+    worker_args: list,
+    tracker: "_ProgressTracker",
+    population_size: int,
+    max_generations: int,
+    culture_path: str,
+    verbose: bool,
+) -> dict:
+    """Single-process evaluation with knowledge compounding across tasks.
 
-    solved_programs = []
-    for tid, programs in solver.archive.task_solutions.items():
-        for prog in programs:
-            # Only save programs with reconstructable steps (base primitives)
-            # Skip DecompositionEngine closures (color_channel_decomp, etc.)
-            step_names = [s.name for s in prog.steps]
-            all_reconstructable = all(
-                sn in solver.toolkit.concepts for sn in step_names
-            )
-            if all_reconstructable and step_names:
-                solved_programs.append({
-                    "task_id": tid,
-                    "steps": step_names,
-                    "fitness": prog.fitness,
-                    "name": prog.name,
-                })
+    Uses ONE shared solver instance so that concepts and programs discovered
+    on earlier tasks immediately benefit later tasks — the "cumulative culture"
+    principle operating within a single run.
 
-    return {
-        "task_id":        task_id,
-        "solved":         result["solved"],
-        "score":          result["score"],
-        "test_passed":    test_passed,
-        "test_score":     test_score,
-        "program":        result["program"],
-        "program_length": result["program_length"],
-        "method":         result["method"],
-        "time_seconds":   result["time_seconds"],
-        "toolkit_size":   result["toolkit_size"],
-        "worker_seed":    seed,
-        # Culture data for cross-worker aggregation
-        "_learned_concepts": learned_concepts,
-        "_solved_programs":  solved_programs,
-        "_task_features":    solver.archive.task_features,
-    }
+    Tasks are processed in sorted order (same as the worker_args list) for
+    full reproducibility. The global seed is set once at the start; each task
+    uses the same seed it would get in the parallel path (seed + i * 1000)
+    so that the evolution phase is deterministic and comparable to `--workers 1`
+    in isolation.
+
+    Args:
+        worker_args:      List of (task_id, task, pop_size, max_gen, seed, culture_path)
+        tracker:          Live progress printer
+        population_size:  Passed to FourPillarsSolver
+        max_generations:  Passed to FourPillarsSolver
+        culture_path:     Pre-trained culture JSON path (or "")
+        verbose:          Print per-task lines via tracker
+
+    Returns:
+        Dict of {task_id: result_dict} for all completed tasks.
+    """
+    # One solver shared across all tasks — knowledge compounds as we go.
+    solver = FourPillarsSolver(
+        population_size=population_size,
+        max_generations=max_generations,
+        verbose=False,
+    )
+
+    if culture_path:
+        try:
+            load_culture(solver.toolkit, culture_path, solver.archive)
+        except Exception:
+            pass
+
+    task_results: dict[str, dict] = {}
+
+    try:
+        for task_id, task, _pop, _gen, seed, _culture in worker_args:
+            # Per-task seed controls evolution randomness; matches parallel path.
+            random.seed(seed)
+            result = solver.solve_task(task, task_id)
+            r = _collect_result(solver, result, task_id, task, seed)
+            task_results[task_id] = r
+            if verbose:
+                tracker.update(r)
+    except KeyboardInterrupt:
+        print("\n\n  ⚠  Aborted by user — partial results below.\n")
+
+    return task_results
 
 
 # ── Progress display ────────────────────────────────────────────────────────
@@ -418,12 +487,16 @@ def evaluate_dataset(
 
     try:
         if n_workers == 1:
-            # In-process path — same results, easier to debug/profile
-            for args in worker_args:
-                r = _solve_one(args)
-                task_results[r["task_id"]] = r
-                if verbose:
-                    tracker.update(r)
+            # Single-process path: share one solver so knowledge compounds
+            # across tasks in sorted order (cumulative culture within run).
+            # Note: KeyboardInterrupt inside this function propagates here and
+            # is caught by the outer except, preserving partial results via
+            # the tracker but not in task_results — that's acceptable.
+            task_results = _solve_sequential_compounding(
+                worker_args, tracker,
+                population_size, max_generations,
+                load_culture_path, verbose,
+            )
         else:
             # Parallel path — imap_unordered streams results as they arrive
             # so the progress display is live even with many workers.

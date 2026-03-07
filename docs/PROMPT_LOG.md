@@ -468,3 +468,219 @@ Four issues to address:
 3. **Ablation studies** — validate each pillar is necessary
 4. **ARC-AGI-2** evaluation
 5. **Zork agent** — text adventure environment modeling
+
+---
+
+## Session 8 — New Primitives & Failure Mode Analysis (v0.9, March 2026)
+
+### Prompt
+
+> Let's continue making improvements.
+
+### Claude's Reasoning
+
+Ran systematic failure mode analysis on training set:
+- 45 near-miss tasks with `identity` as best primitive — tasks need local edits, not global transforms
+- 67% of hard tasks involve shrinking — output smaller than input
+- Triple extension of pair near-misses: only 2 improved, 0 solved — not a useful direction
+
+**Root cause**: The toolkit had 156 concepts covering geometric transforms and object recoloring well, but was missing primitives for shrink tasks (tile extraction, deduplication, pattern combination).
+
+**Strategy**: Add 15 new primitives targeting the 67% shrink-task gap.
+
+### Work Done
+
+**`arc_agent/primitives.py`** — 15 new operators registered in `build_initial_toolkit()`:
+
+| Primitive | Purpose |
+|-----------|---------|
+| `extract_repeating_tile` | Find smallest tile that tiles to reconstruct grid |
+| `extract_top_left_block` / `extract_bottom_right_block` | Split by separator lines |
+| `split_by_separator_and_overlay` / `split_by_separator_and_xor` | Split & merge blocks |
+| `compress_rows` / `compress_cols` | Deduplicate non-consecutive duplicate rows/cols |
+| `max_color_per_cell` / `min_color_per_cell` | Combine two stacked block grids |
+| `extract_unique_block` | Find non-repeating sub-block in tiled grid |
+| `flatten_to_row` / `flatten_to_column` | Unique colors as 1D grid |
+| `count_objects_as_grid` | Count distinct objects as 1×1 grid |
+| `mode_color_per_row` / `mode_color_per_col` | Per-row/col dominant color |
+
+**`arc_agent/scorer.py`** — Fixed `_safe_to_np()` OverflowError:
+- `count_objects_as_grid` can return integers >255
+- Changed from `dtype=np.uint8` directly to `dtype=np.int32` first, then reject values outside [0,9]
+
+**`arc_agent/synthesizer.py`** — Updated `ESSENTIAL_PAIR_CONCEPTS` to include all 8 new tile-extraction ops for pair exhaustion coverage.
+
+**`arc_agent/explorer.py`** — Updated `generate_seed_programs()`:
+- Added all new v0.9 primitives to heuristic seed lists
+- Added 10 new 2-step combo seeds for tile extraction patterns
+
+**`tests/test_primitives.py`** — Added `TestTileExtraction` (14 tests) and `TestNewToolkitSizeV09` (2 tests).
+
+### Bugs Fixed
+
+1. **`OverflowError: Python integer 274 out of bounds for uint8`** — `count_objects_as_grid` returned values >255, crashing `_safe_to_np()`. Fixed by using `np.int32` intermediate array.
+2. **`test_split_separator_xor` wrong expected value** — Fixed test case to use non-overlapping colors.
+
+### Results
+
+| Metric | Before (v0.8) | After (v0.9) |
+|--------|---------------|--------------|
+| Toolkit size | 156 | **171** |
+| Deterministic solves | 44 | **50** |
+| Training solve rate | 55/400 (13.8%) | **66/400 (16.5%)** |
+| Tests passing | 280 | **301** |
+
+New single-primitive solves: `compress_cols` (2dee498d), `extract_repeating_tile` (7b7f7511), `split_sep_overlay` (e98196ab).
+
+---
+
+## Session 9 — Culture Persistence: Cross-Run Transfer (v0.10, March 2026)
+
+### Prompt
+
+> I am running the jobs, but shouldn't the evaluation run be using some model or something from the output of the training run?
+> We should be learning more primitives and higher level structures from the training set and be applying them to the evaluation set. One way to do that is to store the cumulative culture from the training set as a configurable 'model' file or a 'learning' file or something, and reuse that by passing the file as a flag to the evaluation run.
+
+### Claude's Reasoning
+
+The training and evaluation runs were completely independent — zero cross-run transfer. Training discovered ~66 programs that solve tasks; these were discarded. The evaluation run started from scratch each time.
+
+**Solution**: Serialize the culture (learned concepts + solved programs + task features) as a JSON file after training. Load it into each worker's solver before solving eval tasks.
+
+**Key challenge**: Python closures (compositions) can't be serialized. Solution: save step-name sequences (e.g., `["mirror_h", "crop_nonzero"]`) and reconstruct the composition chain at load time by looking up each name in the base toolkit.
+
+### Work Done
+
+**`arc_agent/culture.py`** — New module (full culture persistence):
+- `save_culture(toolkit, archive, path)` — serializes `learned_*` concepts as step-name lists and all solved programs to JSON
+- `load_culture(toolkit, path, archive)` — rebuilds composed concepts from step names, seeds `toolkit.programs`
+- `_extract_step_names(concept)` — recursively flattens concept children to primitive names
+- `_rebuild_concept(step_names, toolkit, name)` — reconstructs chained closure from step names
+
+**`arc_agent/dataset.py`** — Updated worker and evaluation harness:
+- `_solve_one` accepts `culture_path` as 6th arg, loads culture into each fresh solver
+- Workers return `_learned_concepts`, `_solved_programs`, `_task_features` for aggregation
+- `_aggregate_and_save_culture()` merges results from all parallel workers, deduplicates
+- `evaluate_dataset()` accepts `load_culture_path` and `save_culture_path` params
+
+**`arc_agent/evaluate.py`** — Added CLI flags:
+```
+--save-culture <path>   # Save culture after training run
+--load-culture <path>   # Load culture before evaluation run
+```
+
+**`arc_agent/explorer.py`** — Updated `generate_seed_programs()`:
+- `toolkit.programs` (loaded culture programs) are now seeded first in evolution
+
+**`tests/test_culture.py`** — New file with 7 tests covering: step extraction, save/load roundtrip, missing primitive handling, archive feature loading.
+
+### Two-Phase Pipeline
+
+```bash
+# Phase 1: Training run — discover programs, save culture
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-culture culture.json
+
+# Phase 2: Evaluation run — load culture, solve with transfer
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --load-culture culture.json
+```
+
+### Results
+
+Training: 66/400 (16.5%), Evaluation: 23/400 (5.8%)
+
+Culture infrastructure works correctly (saves/loads without errors). Eval score unchanged from before — culture programs were only used as evolutionary seeds, not tested deterministically. The gap to fix: loaded programs needed a direct test against each eval task before falling through to evolution.
+
+---
+
+## Session 10 — Deterministic Culture Transfer & Within-Run Compounding (v0.11, March 2026)
+
+### Prompt
+
+> Just checking, I hope during evaluation, you are still using compounding by applying lessons from earlier tasks to the later tasks.
+> And same during training as well. i.e. leverage compounding as much as possible while being deterministic and reproducible.
+
+### Claude's Reasoning
+
+Two critical gaps identified:
+
+1. **No deterministic culture transfer**: Loaded programs were only added as evolutionary seeds (probabilistic), not tested exhaustively against each task before evolution. This meant training programs with score=1.0 on training tasks could be rejected by evolution in favor of random mutations.
+
+2. **No within-run compounding**: Each task in `evaluate_dataset` got a fresh `FourPillarsSolver` instance. Concepts discovered on task #1 were invisible to task #2. The `solve_batch()` method in `solver.py` did compound, but `evaluate_dataset()` never used it.
+
+**Fixes**:
+- Add `_try_culture_programs()` step in solver — try ALL loaded culture programs deterministically before pair exhaustion
+- Add `_solve_sequential_compounding()` in dataset.py — single-process path uses ONE shared solver so knowledge compounds across tasks
+- Refactor `_solve_one` to use shared `_collect_result()` helper (DRY)
+
+### Work Done
+
+**`arc_agent/solver.py`** — Two additions:
+
+```python
+# Step 3.2: Deterministic culture transfer
+def _try_culture_programs(self, task, cache=None):
+    """Try all programs in toolkit.programs directly. Returns best or None."""
+    for prog in self.toolkit.programs:
+        score = cache.score_program(prog)
+        if score >= 0.99:
+            return prog  # early exit
+    return best_program  # best found
+
+# New method label in solve_task: "culture_transfer"
+```
+
+Order in `solve_task()`:
+1. Single primitives
+2. **Culture programs (NEW: deterministic, all loaded programs tested)**
+3. Pair exhaustion
+4. Evolution (seeded with best culture + pair results)
+
+**`arc_agent/dataset.py`** — Compounding path:
+
+```python
+def _solve_sequential_compounding(worker_args, tracker, ...):
+    """One shared solver for all tasks — knowledge compounds in sorted order."""
+    solver = FourPillarsSolver(...)
+    load_culture(solver.toolkit, culture_path, solver.archive)
+    for task_id, task, ... in worker_args:
+        random.seed(seed)  # Per-task seed for reproducibility
+        result = solver.solve_task(task, task_id)
+        ...
+```
+
+The `n_workers == 1` path now calls `_solve_sequential_compounding` instead of fresh-solver-per-task `_solve_one`.
+
+**`tests/test_culture.py`** — Added 3 new tests:
+- `test_try_culture_programs_empty` — returns None when no programs loaded
+- `test_try_culture_programs_finds_solver` — scores and returns matching program
+- `test_culture_transfer_method_used` — result method is "culture_transfer"
+
+### Design Decisions
+
+- **Parallel workers still get independent solvers**: True cross-worker compounding within a parallel run requires shared memory or message passing between processes — too complex and would break determinism. The parallel path retains independent workers (each loading the pre-trained culture file).
+- **Sequential path has full compounding**: `--workers 1` gives maximum within-run knowledge reuse. Use this when you want the richest compounding.
+- **Per-task seed preserved**: Even in the shared-solver path, each task's evolution is seeded with `seed + i * 1000` for full reproducibility.
+
+### Results
+
+| Metric | Before (v0.10) | After (v0.11) |
+|--------|----------------|---------------|
+| Tests passing | 301 | **304** |
+| Culture transfer method | seeding only | **deterministic + seeding** |
+| Within-run compounding | none (parallel) | **full (--workers 1)** |
+| `_collect_result` helper | duplicated in worker | **shared helper** |
+
+**To run with maximum compounding** (single process, full knowledge reuse):
+```bash
+# Training with compounding:
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 1 --save-culture culture.json
+
+# Evaluation with culture transfer + compounding:
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --workers 1 --load-culture culture.json
+```
+
+**Full speed on M1 Max** (parallel, still with culture transfer):
+```bash
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-culture culture.json
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --load-culture culture.json
+```

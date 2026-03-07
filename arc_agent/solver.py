@@ -114,6 +114,21 @@ class FourPillarsSolver:
             return self._make_result(task_id, best_single, best_single.fitness,
                                       elapsed, "single_primitive")
 
+        # Step 3.2: Try all culture programs directly (cross-run transfer).
+        # Programs loaded from a prior training run are tested exhaustively here —
+        # this is the deterministic counterpart to evolutionary seeding and gives
+        # culture programs the best possible chance of solving eval tasks.
+        culture_result: Optional[Program] = None
+        if self.toolkit.programs:
+            culture_result = self._try_culture_programs(task, cache)
+            if culture_result and culture_result.fitness >= 0.99:
+                elapsed = time.time() - start_time
+                self._record_success(task_id, culture_result, culture_result.fitness,
+                                     elapsed)
+                return self._make_result(task_id, culture_result,
+                                         culture_result.fitness, elapsed,
+                                         "culture_transfer")
+
         # Step 3.5: Try all pairs of top primitives (fast, high-yield)
         pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=20)
         if pair_result and pair_result.fitness >= 0.99:
@@ -122,9 +137,13 @@ class FourPillarsSolver:
             return self._make_result(task_id, pair_result, pair_result.fitness,
                                       elapsed, "pair_exhaustion")
 
-        # Inject best pair into seed programs for evolution
+        # Inject best pair and best culture program into seeds for evolution.
+        # Priority: culture_result first (it worked on a real training task),
+        # then the best pair candidate.
+        seed_programs = list(seed_programs) if seed_programs else []
+        if culture_result and culture_result.fitness > 0.5:
+            seed_programs.insert(0, culture_result)
         if pair_result and pair_result.fitness > 0.5:
-            seed_programs = list(seed_programs) if seed_programs else []
             seed_programs.insert(0, pair_result)
 
         # Step 4: Evolutionary synthesis (FEEDBACK + APPROXIMABILITY + EXPLORATION)
@@ -194,6 +213,33 @@ class FourPillarsSolver:
             method = "single_primitive"
 
         return self._make_result(task_id, best_program, best_score, elapsed, method)
+
+    def _try_culture_programs(self, task: dict,
+                               cache: "TaskCache | None" = None) -> Optional[Program]:
+        """Try all programs stored in the toolkit (loaded from a culture file).
+
+        This is the deterministic culture-transfer step — every program that
+        solved a training task gets a direct shot at each eval task before we
+        fall through to pair exhaustion and evolution.
+
+        Returns the best-scoring program found (or None if toolkit is empty).
+        """
+        if cache is None:
+            cache = TaskCache(task)
+
+        best_program = None
+        best_score   = 0.0
+
+        for prog in self.toolkit.programs:
+            score = cache.score_program(prog)
+            if score > best_score:
+                best_score   = score
+                best_program = prog
+                best_program.fitness = score
+                if score >= 0.99:
+                    return best_program
+
+        return best_program
 
     def _try_single_primitives(self, task: dict,
                                 cache: "TaskCache | None" = None) -> Optional[Program]:
