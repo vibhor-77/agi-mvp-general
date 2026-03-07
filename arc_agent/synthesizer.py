@@ -240,14 +240,11 @@ class ProgramSynthesizer:
         cache: "TaskCache | None" = None,
         top_k: int = 20,
     ) -> Optional[Program]:
-        """Exhaustively try all pairs (and triples of top-8) of top-scoring primitives.
+        """Exhaustively try all pairs of top-scoring single primitives.
 
         Many ARC tasks are solved by exactly two steps (e.g. crop→mirror,
         fill→outline). This is far more efficient than hoping evolution
         discovers the right pair among ~150² = 22500 possibilities.
-
-        Also tries all triples of the top-8 primitives (8³ = 512 combos),
-        catching 3-step solutions that pairs miss.
 
         Args:
             task: ARC task dict
@@ -255,7 +252,7 @@ class ProgramSynthesizer:
             top_k: Number of top single primitives to consider for pairing
 
         Returns:
-            Best program found (2 or 3 steps), or None if nothing scored well.
+            Best 2-step program found, or None if nothing scored well.
         """
         if cache is None:
             cache = TaskCache(task)
@@ -276,7 +273,6 @@ class ProgramSynthesizer:
         best_prog = None
         best_score = 0.0
 
-        # Phase 1: All pairs of top-k (k² combos)
         for a in top_concepts:
             for b in top_concepts:
                 prog = Program([a, b])
@@ -287,20 +283,6 @@ class ProgramSynthesizer:
                     best_prog.fitness = score
                     if score >= 0.99:
                         return best_prog
-
-        # Phase 2: All triples of top-8 (512 combos)
-        top_8 = top_concepts[:8]
-        for a in top_8:
-            for b in top_8:
-                for c in top_8:
-                    prog = Program([a, b, c])
-                    score = cache.score_program(prog)
-                    if score > best_score:
-                        best_score = score
-                        best_prog = prog
-                        best_prog.fitness = score
-                        if score >= 0.99:
-                            return best_prog
 
         return best_prog
 
@@ -405,12 +387,28 @@ class ProgramSynthesizer:
                 break
 
         # Phase 3: Hill climbing refinement for near-misses
-        if best_ever and 0.85 <= best_ever_score < 0.99:
-            refined = self.hill_climb(best_ever, cache, max_steps=60)
-            if refined.fitness > best_ever_score:
-                best_ever = refined
-                best_ever_score = refined.fitness
-                if verbose:
-                    print(f"  ↑ Hill climb improved to {best_ever_score:.3f}")
+        # Try hill climbing from the best program AND top elite programs
+        # (different starting points increase chances of escaping local optima)
+        if best_ever and 0.80 <= best_ever_score < 0.99:
+            # Collect diverse starting points: best_ever + top unique elite
+            hill_starts = [best_ever]
+            seen_names = {best_ever.name}
+            for p in population[:5]:
+                if p.name not in seen_names and p.fitness >= 0.70:
+                    hill_starts.append(p)
+                    seen_names.add(p.name)
+                    if len(hill_starts) >= 3:
+                        break
+
+            steps_per = 80 // len(hill_starts)
+            for start_prog in hill_starts:
+                refined = self.hill_climb(start_prog, cache, max_steps=steps_per)
+                if refined.fitness > best_ever_score:
+                    best_ever = refined
+                    best_ever_score = refined.fitness
+                    if verbose:
+                        print(f"  ↑ Hill climb improved to {best_ever_score:.3f}")
+                    if best_ever_score >= 0.99:
+                        break
 
         return best_ever, history

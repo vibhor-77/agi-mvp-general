@@ -115,7 +115,7 @@ class FourPillarsSolver:
                                       elapsed, "single_primitive")
 
         # Step 3.5: Try all pairs of top primitives (fast, high-yield)
-        pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=15)
+        pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=20)
         if pair_result and pair_result.fitness >= 0.99:
             elapsed = time.time() - start_time
             self._record_success(task_id, pair_result, pair_result.fitness, elapsed)
