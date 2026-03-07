@@ -251,6 +251,9 @@ class ProgramSynthesizer:
         "split_sep_overlay", "split_sep_xor",
         "compress_rows", "compress_cols",
         "max_color_per_cell", "min_color_per_cell",
+        # Tile completion and lane spreading (v0.13) — useful as second steps
+        "fill_by_symmetry", "fill_tile_pattern",
+        "spread_in_lanes_h", "spread_in_lanes_v",
     ])
 
     def try_all_pairs(

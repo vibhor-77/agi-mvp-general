@@ -16,6 +16,9 @@ from arc_agent.primitives import (
     swap_most_least, recolor_least_common,
     repeat_rows_2x, repeat_cols_2x,
     stack_with_mirror_v, stack_with_mirror_h,
+    fill_tile_pattern, fill_by_symmetry, recolor_by_nearest_border,
+    extend_to_border_h, extend_to_border_v,
+    spread_in_lanes_h, spread_in_lanes_v,
 )
 
 
@@ -911,8 +914,8 @@ class TestNewToolkitSizeV09(unittest.TestCase):
 
     def test_toolkit_size(self):
         tk = build_initial_toolkit()
-        # v0.8 had 156, v0.9 adds 15 new
-        self.assertGreaterEqual(tk.size, 170)
+        # v0.8 had 156, v0.9 adds 15 new, v0.13 adds 7 more
+        self.assertGreaterEqual(tk.size, 175)
 
     def test_new_v09_primitives_exist(self):
         tk = build_initial_toolkit()
@@ -927,6 +930,221 @@ class TestNewToolkitSizeV09(unittest.TestCase):
         ]
         for name in new_names:
             self.assertIn(name, tk.concepts, f"Missing concept: {name}")
+
+
+class TestFillTilePattern(unittest.TestCase):
+    """Tests for fill_tile_pattern — infer repeating tile from partial grid."""
+
+    def test_simple_2x2_tile(self):
+        """Grid with a 2x2 repeating tile, some cells zeroed out."""
+        # Tile [[1, 2], [3, 4]] repeated 2x2
+        grid = [
+            [1, 2, 1, 2],
+            [3, 0, 3, 4],  # one cell zeroed
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+        ]
+        result = fill_tile_pattern(grid)
+        # Should recover the zero at [1][1] = 4
+        self.assertEqual(result[1][1], 4)
+
+    def test_identity_on_no_tile(self):
+        """If no tile pattern detected, returns copy of input."""
+        grid = [[1, 2, 3], [4, 5, 6]]
+        result = fill_tile_pattern(grid)
+        # Either returns original or finds a degenerate tile — at least no crash
+        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result[0]), 3)
+
+    def test_empty_grid(self):
+        result = fill_tile_pattern([])
+        self.assertEqual(result, [])
+
+    def test_returns_full_grid_size(self):
+        """Output grid must be same dimensions as input."""
+        grid = [[1, 2, 1, 2], [3, 4, 3, 0], [1, 2, 1, 2], [3, 4, 3, 4]]
+        result = fill_tile_pattern(grid)
+        self.assertEqual(len(result), len(grid))
+        self.assertEqual(len(result[0]), len(grid[0]))
+
+
+class TestFillBySymmetry(unittest.TestCase):
+    """Tests for fill_by_symmetry — recover masked cells from symmetry."""
+
+    def test_180_symmetry_recovery(self):
+        """Masked rectangle recovered via 180° rotational symmetry."""
+        # A 4x4 grid with 180° symmetry, top-right covered by 9s
+        grid = [
+            [1, 2, 9, 9],
+            [3, 4, 9, 9],
+            [5, 6, 4, 3],
+            [7, 8, 2, 1],
+        ]
+        result = fill_by_symmetry(grid)
+        # The 9s at [0][2],[0][3],[1][2],[1][3] should be recovered
+        # 180° of [0][2] is [3][1] = 8, etc.
+        # At minimum, the result should be different from input
+        self.assertNotEqual(result[0][2], 9)  # should be filled in
+        self.assertNotEqual(result[0][3], 9)
+
+    def test_no_mask_returns_identity(self):
+        """Grid with no rectangular same-color block returns copy."""
+        grid = [[1, 2], [3, 4]]
+        result = fill_by_symmetry(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_empty_grid(self):
+        result = fill_by_symmetry([])
+        self.assertEqual(result, [])
+
+
+class TestRecolorByNearestBorder(unittest.TestCase):
+    """Tests for recolor_by_nearest_border — assign isolated pixels to border colors."""
+
+    def test_single_border_row_assignment(self):
+        """Noise pixels near a border stripe get that border's color."""
+        # Top row all 1s (border), noise pixel (color 3) is in row 1
+        # Bottom row all 2s (border), noise pixel (color 3) near row 4
+        grid = [
+            [1, 1, 1, 1, 1],
+            [0, 0, 3, 0, 0],  # close to top border (1)
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [2, 2, 2, 2, 2],
+        ]
+        result = recolor_by_nearest_border(grid)
+        # The 3 in row 1 is nearest to row 0 (border of 1s), so gets color 1
+        self.assertEqual(result[1][2], 1)
+
+    def test_no_border_returns_identity(self):
+        """Grid with no separator rows/cols returns unchanged copy."""
+        grid = [[1, 2], [3, 4]]
+        result = recolor_by_nearest_border(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_preserves_border_cells(self):
+        """Border stripe cells are not modified."""
+        grid = [
+            [5, 5, 5],
+            [0, 3, 0],
+            [0, 0, 0],
+        ]
+        result = recolor_by_nearest_border(grid)
+        # Top border must remain unchanged
+        self.assertEqual(result[0], [5, 5, 5])
+
+
+class TestExtendToBorder(unittest.TestCase):
+    """Tests for extend_to_border_h and extend_to_border_v."""
+
+    def test_extend_h_single_color_row(self):
+        """A row with one color fills the entire row."""
+        grid = [
+            [0, 0, 0, 0],
+            [0, 3, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        result = extend_to_border_h(grid)
+        # Row 1 has only color 3 — should fill entire row
+        self.assertEqual(result[1], [3, 3, 3, 3])
+        # Rows 0 and 2 stay all zeros
+        self.assertEqual(result[0], [0, 0, 0, 0])
+        self.assertEqual(result[2], [0, 0, 0, 0])
+
+    def test_extend_v_single_color_col(self):
+        """A column with one color fills the entire column."""
+        grid = [
+            [0, 0, 0],
+            [0, 5, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+        ]
+        result = extend_to_border_v(grid)
+        # Col 1 has only color 5 — should fill entire column
+        for r in range(4):
+            self.assertEqual(result[r][1], 5)
+        # Col 0 and 2 unchanged
+        for r in range(4):
+            self.assertEqual(result[r][0], 0)
+            self.assertEqual(result[r][2], 0)
+
+    def test_extend_h_empty_grid(self):
+        result = extend_to_border_h([])
+        self.assertEqual(result, [])
+
+    def test_extend_h_preserves_dims(self):
+        grid = [[1, 0, 0], [0, 2, 0]]
+        result = extend_to_border_h(grid)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result[0]), 3)
+
+
+class TestSpreadInLanes(unittest.TestCase):
+    """Tests for spread_in_lanes_h and spread_in_lanes_v."""
+
+    def test_spread_h_fills_lane_rows(self):
+        """Colored cell spreads across its entire row within separator grid."""
+        # Separators at rows 0 and 2 (all 8s), colored cell at [1][1]
+        grid = [
+            [8, 8, 8, 8],
+            [0, 3, 0, 0],  # has color 3 — should spread
+            [8, 8, 8, 8],
+            [0, 0, 0, 0],  # no color — stays empty
+        ]
+        result = spread_in_lanes_h(grid)
+        # Row 1 should be filled with 3 in non-separator cells
+        self.assertEqual(result[1][0], 3)
+        self.assertEqual(result[1][2], 3)
+        self.assertEqual(result[1][3], 3)
+        # Separator rows unchanged
+        self.assertEqual(result[0], [8, 8, 8, 8])
+        self.assertEqual(result[2], [8, 8, 8, 8])
+
+    def test_spread_v_fills_lane_cols(self):
+        """Vertical transpose of spread_h — colored cell spreads down column."""
+        grid = [
+            [8, 0, 8],
+            [8, 4, 8],  # color 4 in col 1
+            [8, 0, 8],
+        ]
+        result = spread_in_lanes_v(grid)
+        # All rows in col 1 should have color 4
+        self.assertEqual(result[0][1], 4)
+        self.assertEqual(result[2][1], 4)
+
+    def test_spread_h_empty_row_unchanged(self):
+        """Rows with no non-separator color remain empty."""
+        grid = [
+            [8, 8, 8],
+            [0, 0, 0],  # no color
+            [8, 8, 8],
+        ]
+        result = spread_in_lanes_h(grid)
+        self.assertEqual(result[1], [0, 0, 0])
+
+    def test_spread_h_no_separator_returns_identity(self):
+        """If no separator rows found, returns copy of input."""
+        grid = [[1, 2], [3, 4]]
+        result = spread_in_lanes_h(grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+
+class TestV13ToolkitContents(unittest.TestCase):
+    """Verify v0.13 primitives are in the toolkit."""
+
+    def test_new_v13_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "fill_tile_pattern", "fill_by_symmetry", "recolor_by_nearest_border",
+            "extend_to_border_h", "extend_to_border_v",
+            "spread_in_lanes_h", "spread_in_lanes_v",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing concept: {name}")
+
+    def test_toolkit_size_v13(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 178)
 
 
 if __name__ == '__main__':

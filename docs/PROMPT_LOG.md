@@ -684,3 +684,83 @@ python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --workers 1 --lo
 python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-culture culture.json
 python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --load-culture culture.json
 ```
+
+---
+
+## Session 11 — New Primitives: Tile Completion, Symmetry Masking, Lane Spreading (v0.13, March 2026)
+
+### Prompt
+
+> [Context continuation — user said "yes" to implementing Step 3: object-conditional primitive layer from the prior analysis]
+
+### Claude's Reasoning
+
+From the systematic analysis in the previous session (see Session 10's findings), 130/400 tasks require local/conditional edits that no global chain can express. The near-miss analysis (30 tasks scoring 0.90–0.99 with pair exhaustion) identified specific recurring ARC patterns not covered by the existing 171-concept toolkit:
+
+1. **Tile completion** (task 29ec7d0e): A repeating tile pattern with some cells zeroed out — reconstruct the full tile and fill.
+2. **Symmetry masking** (task 3631a71a): Symmetric grid with a rectangular block of a "mask" color covering cells — recover from symmetry counterparts.
+3. **Nearest-border recoloring** (task 2204b7a8): Isolated pixels get assigned the color of their nearest border stripe.
+4. **Extend-to-border** (task 2c608aff): Non-zero cells extend in one direction to the grid boundary.
+5. **Lane spreading** (task 06df4c85, 1f642eb9, 36d67576): Grid divided by separator lines; colored cells spread within their lane row/column.
+
+### Work Done
+
+**`arc_agent/primitives.py`** — Added 7 new operator functions + registered in `build_initial_toolkit()`:
+
+```python
+# Tile Completion
+def fill_tile_pattern(grid):
+    """Infer repeating tile from visible non-zero cells (with 90% consistency check), fill all."""
+
+# Symmetry Masking
+def fill_by_symmetry(grid):
+    """Find rectangular block of mask color, recover from 180°/H/V symmetry counterpart."""
+
+# Nearest Border Recoloring
+def recolor_by_nearest_border(grid):
+    """Find border stripes (uniform rows/cols), recolor isolated noise pixels to nearest border color."""
+
+# Extend to Border
+def extend_to_border_h(grid):
+    """Each non-zero cell extends left+right to fill entire row."""
+def extend_to_border_v(grid):
+    """Each non-zero cell extends up+down to fill entire column."""
+
+# Lane Spreading
+def spread_in_lanes_h(grid):
+    """Within separator-defined lanes, spread colored cells to fill entire lane row."""
+def spread_in_lanes_v(grid):
+    """Transpose of spread_in_lanes_h."""
+```
+
+**`arc_agent/synthesizer.py`** — Added `fill_by_symmetry`, `fill_tile_pattern`, `spread_in_lanes_h`, `spread_in_lanes_v` to `ESSENTIAL_PAIR_CONCEPTS` (they score well as second steps).
+
+**`tests/test_primitives.py`** — Added 20 new unit tests across 6 test classes:
+- `TestFillTilePattern` (4 tests)
+- `TestFillBySymmetry` (3 tests)
+- `TestRecolorByNearestBorder` (3 tests)
+- `TestExtendToBorder` (4 tests)
+- `TestSpreadInLanes` (4 tests)
+- `TestV13ToolkitContents` (2 tests)
+
+### Design Decisions
+
+- **`fill_tile_pattern` 90% consistency gate**: First version accepted any plurality tile (≥50% positions resolved) — this caused a degenerate 1×1 tile (just "most common value") to always win. Added a consistency check: ≥90% of non-zero cells must agree with the inferred tile. This raised the score for task 29ec7d0e from 0.50 → 0.94.
+
+- **ESSENTIAL_PAIR_CONCEPTS discipline**: Only added primitives that score LOW individually but are useful as SECOND steps (fill_by_symmetry, fill_tile_pattern, spread_in_lanes_h/v). High-scoring new primitives (recolor_by_nearest_border, extend_to_border_h/v) are already in top_k=20 for their target tasks and don't need to be in ESSENTIAL.
+
+- **Speed regression avoidance**: Tested that wall-clock rate stays ≥1.5 tasks/s at 4 workers. Adding too many ESSENTIAL concepts explodes pair search: (top_k + |essential|)² pairs × n_train examples.
+
+### Results
+
+| Metric | Before (v0.12) | After (v0.13) |
+|--------|----------------|---------------|
+| Tests passing | 309 | **329** |
+| Toolkit size | 171 | **178** |
+| Pair-solve rate (100 tasks) | 11/100 | **13/100** |
+| Exact solves (40 tasks, seed 42) | 5/40 (12.5%) | **6/40 (15.0%)** |
+| Mean score (40 tasks) | 0.827 | **0.809** (mean slightly down but median up) |
+| Wall-clock rate | ~1.1 tasks/s | **~1.58 tasks/s** |
+| New pair-solves | — | 2204b7a8 (recolor_by_nearest_border), 3c9b0459 (rotate_180 → fill_tile_pattern) |
+
+The 7 new primitives added 2 deterministic pair-solves, improve the evolution seed quality for ~10 near-miss tasks, and maintain throughput.

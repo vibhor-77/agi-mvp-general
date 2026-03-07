@@ -1441,6 +1441,370 @@ def mode_color_per_col(grid: Grid) -> Grid:
 
 
 # ============================================================
+# TILE COMPLETION
+# ============================================================
+
+def fill_tile_pattern(grid: Grid) -> Grid:
+    """Infer a repeating tile from visible cells and fill zeros with it.
+
+    For grids where some cells have been zeroed out but the underlying
+    pattern is a repeating tile: find the tile period and restore all
+    zero cells from the corresponding tile position.
+
+    Strategy: try all tile sizes (th × tw) that divide (H, W). For
+    each candidate, compute the tile by taking the most-common non-zero
+    value at each position across all repetitions. Accept the smallest
+    tile where at least 50% of positions have an unambiguous value.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    from collections import Counter
+
+    for th in range(1, h + 1):
+        if h % th != 0:
+            continue
+        for tw in range(1, w + 1):
+            if w % tw != 0:
+                continue
+            if th == h and tw == w:
+                continue  # Skip trivial whole-grid tile
+
+            # Collect votes for each tile position
+            votes: list[list[Counter]] = [
+                [Counter() for _ in range(tw)] for _ in range(th)
+            ]
+            for r in range(h):
+                for c in range(w):
+                    v = grid[r][c]
+                    if v != 0:
+                        votes[r % th][c % tw][v] += 1
+
+            # Build tile: each position gets the plurality non-zero value
+            tile: list[list[int]] = [[0] * tw for _ in range(th)]
+            n_resolved = 0
+            for tr in range(th):
+                for tc in range(tw):
+                    if votes[tr][tc]:
+                        tile[tr][tc] = votes[tr][tc].most_common(1)[0][0]
+                        n_resolved += 1
+
+            # Require >= 50% of tile positions have data
+            if n_resolved < th * tw * 0.5:
+                continue
+
+            # Consistency check: >= 90% of non-zero cells must agree with tile
+            n_agree = 0
+            n_nonzero = 0
+            for r in range(h):
+                for c in range(w):
+                    v = grid[r][c]
+                    if v != 0:
+                        n_nonzero += 1
+                        if tile[r % th][c % tw] == v:
+                            n_agree += 1
+            if n_nonzero > 0 and n_agree / n_nonzero < 0.90:
+                continue
+
+            # Fill grid using tile
+            result = [[0] * w for _ in range(h)]
+            for r in range(h):
+                for c in range(w):
+                    result[r][c] = tile[r % th][c % tw]
+            return result
+
+    return _deep_copy_grid(grid)
+
+
+def fill_by_symmetry(grid: Grid) -> Grid:
+    """Fill a rectangular masked region using the grid's symmetry.
+
+    When a rectangular block of identical cells (the "mask color") covers
+    part of the grid, and the unmasked region is rotationally or reflectionally
+    symmetric, recover the masked cells from their symmetric counterparts.
+
+    Handles: 180° rotational symmetry (most common in ARC) and H/V mirror.
+    Falls back to identity if no symmetric counterpart available.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    from collections import Counter
+
+    # Find the most common color in rows/cols that have many repeated cells
+    # (that's the mask color)
+    flat = [v for row in grid for v in row]
+    color_counts = Counter(flat)
+
+    # Mask color candidates: colors that appear in rectangular patches
+    # Heuristic: a color that appears in a contiguous rectangle
+    def find_mask_rect(mask_c):
+        """Find bounding box of mask_c cells. Return (r0,c0,r1,c1) or None."""
+        cells = [(r, c) for r in range(h) for c in range(w)
+                 if grid[r][c] == mask_c]
+        if not cells:
+            return None
+        rs = [r for r, _ in cells]
+        cs = [c for _, c in cells]
+        r0, r1, c0, c1 = min(rs), max(rs), min(cs), max(cs)
+        # Check that ALL cells in the bounding box are the mask color
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                if grid[r][c] != mask_c:
+                    return None
+        return r0, c0, r1, c1
+
+    result = _deep_copy_grid(grid)
+
+    # Try each non-zero color as a potential mask
+    for mask_c in range(1, 10):
+        if color_counts.get(mask_c, 0) < 2:
+            continue
+        rect = find_mask_rect(mask_c)
+        if rect is None:
+            continue
+        r0, c0, r1, c1 = rect
+
+        # Try 180° rotational symmetry
+        filled = True
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                sym_r = h - 1 - r
+                sym_c = w - 1 - c
+                if grid[sym_r][sym_c] != mask_c:
+                    result[r][c] = grid[sym_r][sym_c]
+                else:
+                    filled = False
+        if filled:
+            return result
+
+        # Try horizontal mirror symmetry
+        result = _deep_copy_grid(grid)
+        filled = True
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                sym_r = h - 1 - r
+                sym_c = c
+                if grid[sym_r][sym_c] != mask_c:
+                    result[r][c] = grid[sym_r][sym_c]
+                else:
+                    filled = False
+        if filled:
+            return result
+
+        # Try vertical mirror symmetry
+        result = _deep_copy_grid(grid)
+        filled = True
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                sym_r = r
+                sym_c = w - 1 - c
+                if grid[sym_r][sym_c] != mask_c:
+                    result[r][c] = grid[sym_r][sym_c]
+                else:
+                    filled = False
+        if filled:
+            return result
+
+        # Restore to original before trying next color
+        result = _deep_copy_grid(grid)
+
+    return result
+
+
+def recolor_by_nearest_border(grid: Grid) -> Grid:
+    """Recolor isolated pixels using the nearest border stripe color.
+
+    For grids with colored border stripes (rows or columns fully filled
+    with a single non-zero color) and isolated "noise" pixels of a
+    different color in the interior: replace each noise pixel with
+    the color of the nearest border stripe.
+
+    This handles patterns like:
+      - Vertical border cols at left/right, horizontal border rows at top/bottom
+      - Interior pixels get assigned the color of their closest border
+    """
+    h, w = _grid_dims(grid)
+    if h == 0 or w < 2:
+        return _deep_copy_grid(grid)
+
+    from collections import Counter
+
+    # Find border stripes: rows or columns uniformly filled with one non-zero color
+    border_rows: dict[int, int] = {}  # row_idx -> color
+    border_cols: dict[int, int] = {}  # col_idx -> color
+
+    for r in range(h):
+        vals = set(grid[r])
+        if len(vals) == 1 and grid[r][0] != 0:
+            border_rows[r] = grid[r][0]
+
+    for c in range(w):
+        vals = set(grid[r][c] for r in range(h))
+        if len(vals) == 1 and grid[0][c] != 0:
+            border_cols[c] = grid[0][c]
+
+    if not border_rows and not border_cols:
+        return _deep_copy_grid(grid)
+
+    # Find the "noise" color: the least common non-zero non-border color
+    border_colors = set(border_rows.values()) | set(border_cols.values())
+    interior_colors = Counter()
+    for r in range(h):
+        for c in range(w):
+            v = grid[r][c]
+            if v != 0 and v not in border_colors:
+                interior_colors[v] += 1
+
+    if not interior_colors:
+        return _deep_copy_grid(grid)
+
+    noise_color = min(interior_colors, key=lambda k: interior_colors[k])
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == noise_color:
+                # Find nearest border (by Manhattan distance to stripe)
+                best_dist = h + w
+                best_color = noise_color
+
+                for br, bc in border_rows.items():
+                    d = abs(r - br)
+                    if d < best_dist:
+                        best_dist = d
+                        best_color = bc
+
+                for bc_idx, bc_color in border_cols.items():
+                    d = abs(c - bc_idx)
+                    if d < best_dist:
+                        best_dist = d
+                        best_color = bc_color
+
+                result[r][c] = best_color
+
+    return result
+
+
+def extend_to_border_h(grid: Grid) -> Grid:
+    """Extend each non-zero cell horizontally to fill its entire row.
+
+    Every non-zero value propagates left and right within its row,
+    stopping at the row boundary. If a row has multiple colors,
+    each cell keeps its own color (no overwrite).
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    result = [[0] * w for _ in range(h)]
+    for r in range(h):
+        # Collect non-zero values in row
+        nz = [(c, grid[r][c]) for c in range(w) if grid[r][c] != 0]
+        if not nz:
+            continue
+        if len(set(v for _, v in nz)) == 1:
+            # Single color in row — fill entire row
+            color = nz[0][1]
+            result[r] = [color] * w
+        else:
+            # Multiple colors: copy as-is, extend to nearest neighbor
+            # Fill left-to-right, then right-to-left (nearest wins)
+            row = [0] * w
+            last = 0
+            for c in range(w):
+                if grid[r][c] != 0:
+                    last = grid[r][c]
+                row[c] = last
+            # Right-to-left pass to fill zeros at start
+            last = 0
+            for c in range(w - 1, -1, -1):
+                if row[c] == 0:
+                    if last != 0:
+                        row[c] = last
+                elif grid[r][c] != 0:
+                    last = row[c]
+            result[r] = row
+
+    return result
+
+
+def extend_to_border_v(grid: Grid) -> Grid:
+    """Extend each non-zero cell vertically to fill its entire column."""
+    return transpose(extend_to_border_h(transpose(grid)))
+
+
+def spread_in_lanes_h(grid: Grid) -> Grid:
+    """Spread non-separator colors horizontally within their row lanes.
+
+    Identifies separator rows (rows where all cells are the same non-zero
+    value). Divides grid into horizontal lanes between separators. Within
+    each lane, if any row-cell has a non-bg, non-separator color, that color
+    fills ALL the non-separator cells in that full row of the lane.
+
+    Handles the common ARC pattern: grid divided by separator lines, and
+    colored cells must propagate along their row.
+    """
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return _deep_copy_grid(grid)
+
+    from collections import Counter
+
+    # Identify separator rows (all same non-zero value)
+    sep_color_counts: Counter = Counter()
+    sep_rows: set[int] = set()
+    for r in range(h):
+        vals = set(grid[r])
+        if len(vals) == 1 and grid[r][0] != 0:
+            sep_rows.add(r)
+            sep_color_counts[grid[r][0]] += 1
+
+    # Separator columns
+    sep_cols: set[int] = set()
+    for c in range(w):
+        vals = set(grid[r][c] for r in range(h))
+        if len(vals) == 1 and grid[0][c] != 0:
+            sep_cols.add(c)
+            sep_color_counts[grid[0][c]] += 1
+
+    # The separator color is the most common across sep rows/cols
+    if not sep_color_counts:
+        return _deep_copy_grid(grid)
+    sep_color = sep_color_counts.most_common(1)[0][0]
+
+    result = _deep_copy_grid(grid)
+
+    # For each non-separator row, find its non-separator, non-bg color
+    for r in range(h):
+        if r in sep_rows:
+            continue
+        # Collect colors in this row (excluding sep cells and zero)
+        row_colors = [grid[r][c] for c in range(w)
+                      if c not in sep_cols and grid[r][c] != 0 and grid[r][c] != sep_color]
+        if not row_colors:
+            continue
+        # Dominant color in the lane row
+        fill_color = Counter(row_colors).most_common(1)[0][0]
+        # Fill all non-separator cells in this row
+        for c in range(w):
+            if c not in sep_cols and grid[r][c] != sep_color:
+                result[r][c] = fill_color
+
+    return result
+
+
+def spread_in_lanes_v(grid: Grid) -> Grid:
+    """Spread non-separator colors vertically within their column lanes.
+
+    Mirror of spread_in_lanes_h but operates on columns.
+    """
+    return transpose(spread_in_lanes_h(transpose(grid)))
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -1581,6 +1945,15 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("count_objects_grid", count_objects_as_grid),
         ("mode_color_per_row", mode_color_per_row),
         ("mode_color_per_col", mode_color_per_col),
+        # Tile completion and masking
+        ("fill_tile_pattern", fill_tile_pattern),
+        ("fill_by_symmetry", fill_by_symmetry),
+        ("recolor_by_nearest_border", recolor_by_nearest_border),
+        ("extend_to_border_h", extend_to_border_h),
+        ("extend_to_border_v", extend_to_border_v),
+        # Lane spreading (colors spread within separator-defined lanes)
+        ("spread_in_lanes_h", spread_in_lanes_h),
+        ("spread_in_lanes_v", spread_in_lanes_v),
     ]
 
     for name, impl in partitioning_ops:
