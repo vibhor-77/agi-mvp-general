@@ -1961,3 +1961,176 @@ class TestV18ToolkitContents(unittest.TestCase):
     def test_toolkit_size_v18(self):
         tk = build_initial_toolkit()
         self.assertGreaterEqual(tk.size, 267)
+
+
+class TestRecolorNonzeroInsideBbox(unittest.TestCase):
+    def test_recolor_nonzero_inside_8_bbox_to_3(self):
+        from arc_agent.primitives import recolor_nonzero_inside_8_bbox_to_3
+        # bg=0, 8s form a cross, 1s inside bbox should become 3
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 8, 8, 8, 0],
+            [0, 1, 8, 1, 0],
+            [0, 8, 8, 8, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = recolor_nonzero_inside_8_bbox_to_3(grid)
+        # 1s at (2,1) and (2,3) are inside bbox of 8s -> 3
+        self.assertEqual(result[2][1], 3)
+        self.assertEqual(result[2][3], 3)
+        # 8s unchanged
+        self.assertEqual(result[1][1], 8)
+        # outside bbox unchanged
+        self.assertEqual(result[0][0], 0)
+
+    def test_recolor_nonzero_inside_2_bbox_to_4(self):
+        from arc_agent.primitives import recolor_nonzero_inside_2_bbox_to_4
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 2, 0, 2, 0],
+            [0, 0, 1, 0, 0],
+            [0, 2, 0, 2, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = recolor_nonzero_inside_2_bbox_to_4(grid)
+        # 1 at (2,2) is inside bbox of 2s -> 4
+        self.assertEqual(result[2][2], 4)
+        # 2s unchanged
+        self.assertEqual(result[1][1], 2)
+        # outside unchanged
+        self.assertEqual(result[0][0], 0)
+
+
+class TestFillRectInterior(unittest.TestCase):
+    def test_fill_rect_interior_with_2(self):
+        from arc_agent.primitives import fill_rect_interior_with_2
+        # 5x5 grid with a 3x3 frame of 5s enclosing a 1x1 bg hole
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 0],
+            [0, 5, 0, 5, 0],
+            [0, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_rect_interior_with_2(grid)
+        # Interior at (2,2) should become 2
+        self.assertEqual(result[2][2], 2)
+        # Frame unchanged
+        self.assertEqual(result[1][1], 5)
+        # Outer bg unchanged
+        self.assertEqual(result[0][0], 0)
+
+    def test_fill_rect_interior_no_enclosed(self):
+        from arc_agent.primitives import fill_rect_interior_with_2
+        # Grid where bg is at the border - outer bg unreachable only if enclosed
+        # A simple open grid: all bg cells connect to border
+        grid = [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
+        result = fill_rect_interior_with_2(grid)
+        # All bg cells touch the border - no enclosed region
+        self.assertEqual(result[0][0], 0)
+        self.assertEqual(result[1][0], 0)
+
+
+class TestExtendLinesToContact(unittest.TestCase):
+    def test_extend_horizontal_gap(self):
+        from arc_agent.primitives import extend_lines_to_contact
+        # Row with same-color cells and gap between
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 3, 0, 3, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = extend_lines_to_contact(grid)
+        # Gap at (1,2) between two 3s should be filled
+        self.assertEqual(result[1][2], 3)
+        # Outer cells unchanged
+        self.assertEqual(result[0][0], 0)
+
+    def test_extend_vertical_gap(self):
+        from arc_agent.primitives import extend_lines_to_contact
+        grid = [
+            [0, 5, 0],
+            [0, 0, 0],
+            [0, 5, 0],
+        ]
+        result = extend_lines_to_contact(grid)
+        # Gap at (1,1) between two 5s should be filled
+        self.assertEqual(result[1][1], 5)
+
+
+class TestMarkRowColIntersections(unittest.TestCase):
+    def test_mark_with_2(self):
+        from arc_agent.primitives import mark_row_col_intersections_with_2
+        # bg=0, dominant=1 (most common non-bg)
+        # rows 0,2 contain 1; cols 0,2 contain 1
+        # intersections at (0,0),(0,2),(2,0),(2,2) already have 1
+        # but bg cells at accent row/col intersections
+        grid = [
+            [0, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1],
+            [0, 0, 0, 0, 0],
+        ]
+        result = mark_row_col_intersections_with_2(grid)
+        # Row 1 has 1 at col 0, row 2 has 1 at col 4
+        # Col 0 has 1 at row 1, col 4 has 1 at row 2
+        # Intersection (2,0): bg -> 2
+        self.assertEqual(result[2][0], 2)
+        # Intersection (1,4): bg -> 2
+        self.assertEqual(result[1][4], 2)
+        # Original 1s unchanged
+        self.assertEqual(result[1][0], 1)
+
+
+class TestFillBgAdjacent(unittest.TestCase):
+    def test_fill_bg_adjacent_to_dominant_with_8(self):
+        from arc_agent.primitives import fill_bg_adjacent_to_dominant_with_8
+        # bg=0 (most common), dominant=5 (most common non-bg)
+        grid = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 0, 5, 5, 0, 0],
+            [0, 0, 5, 5, 0, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_bg_adjacent_to_dominant_with_8(grid)
+        # bg cells adjacent to 5s should become 8
+        self.assertEqual(result[0][2], 8)  # above 5
+        self.assertEqual(result[1][1], 8)  # left of 5
+        self.assertEqual(result[1][4], 8)  # right of 5
+        # non-adjacent bg unchanged
+        self.assertEqual(result[0][0], 0)
+
+
+class TestV19ToolkitContents(unittest.TestCase):
+    def test_new_v19_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "recolor_nonzero_inside_8_bbox_to_3",
+            "recolor_nonzero_inside_8_bbox_to_4",
+            "recolor_nonzero_inside_8_bbox_to_2",
+            "recolor_nonzero_inside_2_bbox_to_4",
+            "recolor_nonzero_inside_2_bbox_to_8",
+            "recolor_nonzero_inside_2_bbox_to_3",
+            "recolor_nonzero_inside_3_bbox_to_4",
+            "recolor_nonzero_inside_3_bbox_to_8",
+            "recolor_nonzero_inside_6_bbox_to_4",
+            "recolor_nonzero_inside_6_bbox_to_8",
+            "fill_rect_interior_with_2",
+            "fill_rect_interior_with_4",
+            "fill_rect_interior_with_1",
+            "fill_rect_interior_with_3",
+            "mark_row_col_intersections_with_2",
+            "mark_row_col_intersections_with_3",
+            "mark_row_col_intersections_with_4",
+            "extend_lines_to_contact",
+            "fill_bg_adjacent_to_accent_with_3",
+            "fill_bg_adjacent_to_accent_with_8",
+            "fill_bg_adjacent_to_dominant_with_3",
+            "fill_bg_adjacent_to_dominant_with_8",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing v0.19 primitive: {name}")
+
+    def test_toolkit_size_v19(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 289)

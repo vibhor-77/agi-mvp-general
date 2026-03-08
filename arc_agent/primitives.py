@@ -3283,6 +3283,315 @@ def recolor_by_row_parity(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V19 NEW PRIMITIVES
+# ============================================================
+
+def _make_recolor_nonzero_inside_accent_bbox(accent_color: int, new_color: int):
+    """Factory: recolor non-zero, non-accent cells inside bounding box of accent_color → new_color.
+
+    Finds the tight axis-aligned bounding box of all accent_color cells, then
+    recolors every cell inside that box that is non-zero and not the accent_color.
+    Useful for: marking cells that fall within the 'reach' of an accent object.
+    """
+    def _fn(grid):
+        h, w = _grid_dims(grid)
+        accent_cells = [(r, c) for r in range(h) for c in range(w) if grid[r][c] == accent_color]
+        if not accent_cells:
+            return grid
+        min_r = min(r for r, c in accent_cells)
+        max_r = max(r for r, c in accent_cells)
+        min_c = min(c for r, c in accent_cells)
+        max_c = max(c for r, c in accent_cells)
+        result = _deep_copy_grid(grid)
+        for r in range(min_r, max_r + 1):
+            for c in range(min_c, max_c + 1):
+                v = grid[r][c]
+                if v != 0 and v != accent_color:
+                    result[r][c] = new_color
+        return result
+    return _fn
+
+
+# Common accent/new-color pairs for pair-search coverage
+recolor_nonzero_inside_8_bbox_to_3 = _make_recolor_nonzero_inside_accent_bbox(8, 3)
+recolor_nonzero_inside_8_bbox_to_4 = _make_recolor_nonzero_inside_accent_bbox(8, 4)
+recolor_nonzero_inside_8_bbox_to_2 = _make_recolor_nonzero_inside_accent_bbox(8, 2)
+recolor_nonzero_inside_2_bbox_to_4 = _make_recolor_nonzero_inside_accent_bbox(2, 4)
+recolor_nonzero_inside_2_bbox_to_8 = _make_recolor_nonzero_inside_accent_bbox(2, 8)
+recolor_nonzero_inside_2_bbox_to_3 = _make_recolor_nonzero_inside_accent_bbox(2, 3)
+recolor_nonzero_inside_3_bbox_to_4 = _make_recolor_nonzero_inside_accent_bbox(3, 4)
+recolor_nonzero_inside_3_bbox_to_8 = _make_recolor_nonzero_inside_accent_bbox(3, 8)
+recolor_nonzero_inside_6_bbox_to_4 = _make_recolor_nonzero_inside_accent_bbox(6, 4)
+recolor_nonzero_inside_6_bbox_to_8 = _make_recolor_nonzero_inside_accent_bbox(6, 8)
+
+
+def _fill_rect_interiors(grid, fill_color: int):
+    """Fill the interior of all complete rectangular frames with fill_color.
+
+    A 'complete rectangular frame' is a region where the border cells form
+    a full closed rectangle of a single non-bg color, and the interior cells
+    are all bg.  Uses an efficient O(h·w) flood-fill approach:
+    1. flood-fill bg from borders
+    2. any bg cell NOT reachable from border that is surrounded by non-bg = interior
+    But we also require the interior to be a proper rectangular hole.
+    Useful for: marking/counting enclosed areas in frame patterns.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # BFS from border to find bg cells reachable from outside
+    reachable = set()
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r == 0 or r == h - 1 or c == 0 or c == w - 1) and grid[r][c] == bg:
+                if (r, c) not in reachable:
+                    reachable.add((r, c))
+                    queue.append((r, c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in reachable and grid[nr][nc] == bg:
+                reachable.add((nr, nc))
+                queue.append((nr, nc))
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg and (r, c) not in reachable:
+                result[r][c] = fill_color
+    return result
+
+
+def fill_rect_interior_with_2(grid):
+    """Fill interior of rectangular frames with color 2.
+
+    Finds complete rectangular outlines (border all one color, interior all bg)
+    and fills their interior with 2.
+    Useful for: marking/counting enclosed areas in frame patterns.
+    """
+    return _fill_rect_interiors(grid, 2)
+
+
+def fill_rect_interior_with_4(grid):
+    """Fill interior of rectangular frames with color 4."""
+    return _fill_rect_interiors(grid, 4)
+
+
+def fill_rect_interior_with_1(grid):
+    """Fill interior of rectangular frames with color 1."""
+    return _fill_rect_interiors(grid, 1)
+
+
+def fill_rect_interior_with_3(grid):
+    """Fill interior of rectangular frames with color 3."""
+    return _fill_rect_interiors(grid, 3)
+
+
+def _recolor_cells_at_color_intersections(grid, accent_color: int, new_color: int):
+    """Recolor bg cells at row/col intersections of rows and cols containing accent_color.
+
+    For every row that contains at least one accent_color cell, and every column
+    that contains at least one accent_color cell, mark the bg cell at their intersection.
+    Useful for: grid/cross-marking patterns.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    accent_rows = {r for r in range(h) if any(grid[r][c] == accent_color for c in range(w))}
+    accent_cols = {c for c in range(w) if any(grid[r][c] == accent_color for r in range(h))}
+
+    result = _deep_copy_grid(grid)
+    for r in accent_rows:
+        for c in accent_cols:
+            if grid[r][c] == bg:
+                result[r][c] = new_color
+    return result
+
+
+def mark_row_col_intersections_with_2(grid):
+    """Mark bg cells at row+col intersections of the accent (2nd most common non-bg) color → 2.
+
+    Finds which rows and columns contain any non-bg accent color cells, then
+    marks the bg cell at each (accent_row, accent_col) intersection with 2.
+    Useful for: cross/grid patterns where intersections need highlighting.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if not non_bg:
+        return grid
+    accent = non_bg[0][0]
+    return _recolor_cells_at_color_intersections(grid, accent, 2)
+
+
+def mark_row_col_intersections_with_3(grid):
+    """Mark bg cells at row+col intersections of the accent color → 3."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if not non_bg:
+        return grid
+    accent = non_bg[0][0]
+    return _recolor_cells_at_color_intersections(grid, accent, 3)
+
+
+def mark_row_col_intersections_with_4(grid):
+    """Mark bg cells at row+col intersections of the accent color → 4."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if not non_bg:
+        return grid
+    accent = non_bg[0][0]
+    return _recolor_cells_at_color_intersections(grid, accent, 4)
+
+
+def _extend_nonbg_lines_to_contact(grid):
+    """Extend each non-bg colored line segment until it meets another non-bg cell or boundary.
+
+    For each non-bg cell that appears to be the end of a line, extends it
+    in the same direction until it reaches another colored cell or the border.
+    Useful for: completing grid lines, extending arrows, connecting segments.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    result = _deep_copy_grid(grid)
+    # For each row, extend all runs of non-bg cells to fill gaps
+    for r in range(h):
+        non_bg_cols = [(c, grid[r][c]) for c in range(w) if grid[r][c] != bg]
+        if len(non_bg_cols) >= 2:
+            min_c = non_bg_cols[0][0]
+            max_c = non_bg_cols[-1][0]
+            # Fill between first and last non-bg in this row
+            fill_color = non_bg_cols[0][1]
+            if all(grid[r][c] in (bg, fill_color) for c in range(min_c, max_c + 1)):
+                for c in range(min_c, max_c + 1):
+                    if result[r][c] == bg:
+                        result[r][c] = fill_color
+
+    # For each col, extend all runs of non-bg cells to fill gaps
+    for c in range(w):
+        non_bg_rows = [(r, grid[r][c]) for r in range(h) if grid[r][c] != bg]
+        if len(non_bg_rows) >= 2:
+            min_r = non_bg_rows[0][0]
+            max_r = non_bg_rows[-1][0]
+            fill_color = non_bg_rows[0][1]
+            if all(grid[r][c] in (bg, fill_color) for r in range(min_r, max_r + 1)):
+                for r in range(min_r, max_r + 1):
+                    if result[r][c] == bg:
+                        result[r][c] = fill_color
+    return result
+
+
+def extend_lines_to_contact(grid):
+    """Extend non-bg colored segments to fill gaps within their row or column.
+
+    For each row (col) containing at least 2 non-bg cells of the same color,
+    fills the bg cells between them with that color — but only if the entire
+    span between them is either bg or the same color.
+    Useful for: connecting line segments, completing stripe patterns.
+    """
+    return _extend_nonbg_lines_to_contact(grid)
+
+
+def _recolor_adjacent_to_accent_to_new(grid, accent_color: int, new_color: int):
+    """Recolor bg cells adjacent (4-way) to accent_color cells → new_color."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != bg:
+                continue
+            if any(0 <= r + dr < h and 0 <= c + dc < w and grid[r + dr][c + dc] == accent_color
+                   for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]):
+                result[r][c] = new_color
+    return result
+
+
+def fill_bg_adjacent_to_accent_with_3(grid):
+    """Fill bg cells adjacent to accent (2nd most common non-bg) color → 3.
+
+    Finds the 2nd most common non-bg color (accent), then fills all bg cells
+    that are 4-way adjacent to it with color 3.
+    Useful for: expanding/growing a color by one layer.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+    accent = non_bg[1][0]
+    return _recolor_adjacent_to_accent_to_new(grid, accent, 3)
+
+
+def fill_bg_adjacent_to_accent_with_8(grid):
+    """Fill bg cells adjacent to accent color → 8."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+    accent = non_bg[1][0]
+    return _recolor_adjacent_to_accent_to_new(grid, accent, 8)
+
+
+def fill_bg_adjacent_to_dominant_with_3(grid):
+    """Fill bg cells adjacent to the dominant (most common non-bg) color → 3."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if not non_bg:
+        return grid
+    dominant = non_bg[0][0]
+    return _recolor_adjacent_to_accent_to_new(grid, dominant, 3)
+
+
+def fill_bg_adjacent_to_dominant_with_8(grid):
+    """Fill bg cells adjacent to the dominant color → 8."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    cnt = Counter(all_vals)
+    bg = cnt.most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in cnt.most_common() if v != bg]
+    if not non_bg:
+        return grid
+    dominant = non_bg[0][0]
+    return _recolor_adjacent_to_accent_to_new(grid, dominant, 8)
+
+
+# ============================================================
 # V18 NEW PRIMITIVES
 # ============================================================
 
@@ -4274,6 +4583,33 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # V16: Extend color to fill column/row within object bounds
         ("extend_color_within_col_bounds", extend_color_within_col_bounds),
         ("extend_color_within_row_bounds", extend_color_within_row_bounds),
+        # V19: recolor non-zero inside bbox of accent color
+        ("recolor_nonzero_inside_8_bbox_to_3", recolor_nonzero_inside_8_bbox_to_3),
+        ("recolor_nonzero_inside_8_bbox_to_4", recolor_nonzero_inside_8_bbox_to_4),
+        ("recolor_nonzero_inside_8_bbox_to_2", recolor_nonzero_inside_8_bbox_to_2),
+        ("recolor_nonzero_inside_2_bbox_to_4", recolor_nonzero_inside_2_bbox_to_4),
+        ("recolor_nonzero_inside_2_bbox_to_8", recolor_nonzero_inside_2_bbox_to_8),
+        ("recolor_nonzero_inside_2_bbox_to_3", recolor_nonzero_inside_2_bbox_to_3),
+        ("recolor_nonzero_inside_3_bbox_to_4", recolor_nonzero_inside_3_bbox_to_4),
+        ("recolor_nonzero_inside_3_bbox_to_8", recolor_nonzero_inside_3_bbox_to_8),
+        ("recolor_nonzero_inside_6_bbox_to_4", recolor_nonzero_inside_6_bbox_to_4),
+        ("recolor_nonzero_inside_6_bbox_to_8", recolor_nonzero_inside_6_bbox_to_8),
+        # V19: fill rectangular frame interiors
+        ("fill_rect_interior_with_2", fill_rect_interior_with_2),
+        ("fill_rect_interior_with_4", fill_rect_interior_with_4),
+        ("fill_rect_interior_with_1", fill_rect_interior_with_1),
+        ("fill_rect_interior_with_3", fill_rect_interior_with_3),
+        # V19: row/col intersection marking
+        ("mark_row_col_intersections_with_2", mark_row_col_intersections_with_2),
+        ("mark_row_col_intersections_with_3", mark_row_col_intersections_with_3),
+        ("mark_row_col_intersections_with_4", mark_row_col_intersections_with_4),
+        # V19: extend lines to fill gaps
+        ("extend_lines_to_contact", extend_lines_to_contact),
+        # V19: fill bg adjacent to accent/dominant
+        ("fill_bg_adjacent_to_accent_with_3", fill_bg_adjacent_to_accent_with_3),
+        ("fill_bg_adjacent_to_accent_with_8", fill_bg_adjacent_to_accent_with_8),
+        ("fill_bg_adjacent_to_dominant_with_3", fill_bg_adjacent_to_dominant_with_3),
+        ("fill_bg_adjacent_to_dominant_with_8", fill_bg_adjacent_to_dominant_with_8),
         # V18: dominant-touching-accent recoloring (factory variants)
         ("recolor_dominant_touching_accent_to_4", recolor_dominant_touching_accent_to_4),
         ("recolor_dominant_touching_accent_to_6", recolor_dominant_touching_accent_to_6),

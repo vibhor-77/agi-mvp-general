@@ -281,6 +281,9 @@ class ProgramSynthesizer:
         "snap_isolated_to_rect_boundary",   # d89b689b solved
         # V17: only add to ESSENTIAL after confirmed pair-solve value
         # (keeping slim — evolution phase will find these when needed)
+        # V19: confirmed solves (22eb0ac0, ded97339, 32597951 all test-confirmed)
+        "extend_lines_to_contact",              # 22eb0ac0, ded97339 solved; 40853293 improved
+        "recolor_nonzero_inside_8_bbox_to_3",   # 32597951 solved
     ])
 
     def try_all_pairs(
