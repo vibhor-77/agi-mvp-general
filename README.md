@@ -42,7 +42,11 @@ git clone https://github.com/fchollet/ARC-AGI.git
 python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
     --culture-file culture.json --output results_train.json
 
-# Step 2: Evaluate with culture from training
+# Step 2: Infer — generate candidates (never peeks at test output)
+python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output predictions_eval.json
+
+# Step 3: Eval — score against expected test output
 python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
     --culture-file culture.json --output results_eval.json
 ```
@@ -71,13 +75,16 @@ Solved (exact) = pixel-perfect on train AND test (our golden metric).
 # 1. Clone the official ARC-AGI dataset
 git clone https://github.com/fchollet/ARC-AGI.git
 
-# 2. RECOMMENDED: Two-phase pipeline with culture transfer
-#    Train on training set, save learned programs/concepts:
+# 2. RECOMMENDED: Three-phase pipeline with culture transfer
+#    Phase 1 — Train: learn culture from training set
 python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
     --culture-file culture.json --output results_train.json
 
-#    Evaluate with culture loaded (programs learned from training
-#    are tried on each eval task before pair/evolution search):
+#    Phase 2 — Infer: generate candidates (clean, no test peeking)
+python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output predictions_eval.json
+
+#    Phase 3 — Eval: score predictions against answers
 python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
     --culture-file culture.json --output results_eval.json
 
@@ -114,6 +121,7 @@ agi-mvp-general/
 │   ├── decompose.py                 # Task decomposition engine (3 strategies)
 │   ├── persistence.py               # Toolkit/Archive save/load (JSON)
 │   ├── synthesizer.py               # Evolutionary synthesis with conditional support
+│   ├── scene.py                     # Object-centric reasoning (perceive→infer→apply)
 │   ├── solver.py                    # Main learning loop (all 4 pillars)
 │   ├── scorer.py                    # Feedback scoring engine (Pillar 1, NumPy)
 │   ├── explorer.py                  # Explore/exploit engine (Pillar 4)
