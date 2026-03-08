@@ -1442,3 +1442,58 @@ Scanned all 400 training tasks:
 - Per-object transforms with learned parameters: apply substitute_color per-object with colors learned from examples
 - Multi-object matching: learn different transforms for objects of different sizes/colors
 - Investigate resize tasks: when output dimensions differ, the per-object subgrids may need scaling
+
+---
+
+## Session 20b — Conditional Per-Object Recolor (March 2026)
+
+### Prompt
+
+Continue from Session 20. User confirmed pytest/numpy/scipy/matplotlib/numba installed via conda. Proceeding with the hybrid approach: combining object decomposition with parameterized primitives.
+
+### Analysis
+
+Scanned all 400 training tasks for near-miss patterns. Key findings:
+
+- 136 near-miss tasks (score ≥0.90, unsolved), 120 of which are same-dims with ≥2 objects
+- Deep per-object transform analysis identified clear categories:
+  1. **Consistent recolor** (same mapping across all examples): 67385a82, 6c434453, 810b9b61, aedd82e4
+  2. **Conditional recolor by property** (different mapping per object class): 776ffc46, ddf7fa4f, e509e548
+  3. **Resize transforms** (objects change shape): many tasks
+- Root cause for scene.py failures: background detection uses "most frequent color" which is wrong when foreground occupies >50% of cells (e.g., 67385a82 has bg=0 but color 3 is most frequent)
+
+### Implementation
+
+Added to `object_decompose.py`:
+
+- `_try_conditional_recolor()`: Learns property→color rules from training examples
+- `_match_objects_by_position()`: Matches input/output objects by pixel overlap
+- `_learn_recolor_by_size()`: Learns size→color mapping (e.g., "objects of size 3 become color 8")
+- `_learn_recolor_by_singleton()`: Learns singleton-vs-multi rule (e.g., "singletons stay, multi-pixel recolor")
+- `_make_conditional_recolor_fn()`: Builds the Grid→Grid transform from learned rules
+
+### Results
+
+| Task | Baseline | Object Decomp | Test | Status |
+|------|----------|---------------|------|--------|
+| 67385a82 | 0.961 | 1.000 (by_size) | PASS (1.000) | **NEW SOLVE** |
+| aedd82e4 | 0.974 | 1.000 (by_size) | PASS (1.000) | **NEW SOLVE** |
+| 810b9b61 | 0.970 | 1.000 (by_size) | FAIL (0.903) | Train-only |
+| 60b61512 | 0.959 | 1.000 (fill_bg_7) | FAIL (0.951) | Train-only |
+
+**Net result: +2 new test-confirmed solves.** Projected total: 89 training solves.
+
+### Tests Added
+
+3 new tests in `test_object_decompose.py`:
+- `test_recolor_by_size`: Multi-pixel objects recolored, singletons kept
+- `test_recolor_by_size_consistent`: Size-2 objects → color 1, size-1 → stays
+- `test_no_recolor_when_inconsistent`: Same-size objects with different output colors → no rule
+
+Total: 19 tests (16 perception + 3 conditional recolor)
+
+### Next Steps
+- Expand conditional recolor to more properties: shape signature, position, relative size
+- Handle tasks where different source colors map to the same target (a5f85a15: {2,9,3}→4)
+- Investigate 810b9b61 test failure — the rule works on train but test has unseen sizes
+- Address scene.py background detection bug for tasks where foreground > 50%
