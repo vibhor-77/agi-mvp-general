@@ -2041,3 +2041,178 @@ class TestV19ToolkitContents(unittest.TestCase):
     def test_toolkit_size_v19(self):
         tk = build_initial_toolkit()
         self.assertGreaterEqual(tk.size, 278)
+
+
+# ============================================================
+# V20 Tests: shift, fill_enclosed, border/interior objects
+# ============================================================
+
+class TestShiftOperations(unittest.TestCase):
+    def test_shift_down_1(self):
+        from arc_agent.primitives import shift_down_1
+        grid = [[1, 2], [3, 4], [5, 6]]
+        result = shift_down_1(grid)
+        self.assertEqual(result, [[5, 6], [1, 2], [3, 4]])
+
+    def test_shift_up_1(self):
+        from arc_agent.primitives import shift_up_1
+        grid = [[1, 2], [3, 4], [5, 6]]
+        result = shift_up_1(grid)
+        self.assertEqual(result, [[3, 4], [5, 6], [1, 2]])
+
+    def test_shift_left_1(self):
+        from arc_agent.primitives import shift_left_1
+        grid = [[1, 2, 3], [4, 5, 6]]
+        result = shift_left_1(grid)
+        self.assertEqual(result, [[2, 3, 1], [5, 6, 4]])
+
+    def test_shift_right_1(self):
+        from arc_agent.primitives import shift_right_1
+        grid = [[1, 2, 3], [4, 5, 6]]
+        result = shift_right_1(grid)
+        self.assertEqual(result, [[3, 1, 2], [6, 4, 5]])
+
+    def test_shift_down_solves_25ff71a9(self):
+        """shift_down_1 confirmed to solve training task 25ff71a9."""
+        from arc_agent.primitives import shift_down_1
+        inp = [[0, 0, 0], [1, 0, 0], [0, 2, 0]]
+        result = shift_down_1(inp)
+        self.assertEqual(result, [[0, 2, 0], [0, 0, 0], [1, 0, 0]])
+
+
+class TestFillEnclosedWallColor(unittest.TestCase):
+    def test_simple_enclosed(self):
+        from arc_agent.primitives import fill_enclosed_wall_color
+        # 5x5 grid with bg=0, a frame of 5s enclosing a bg cell
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 0],
+            [0, 5, 0, 5, 0],
+            [0, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_enclosed_wall_color(grid)
+        self.assertEqual(result[2][2], 5)  # center filled with wall color
+
+    def test_no_enclosed(self):
+        from arc_agent.primitives import fill_enclosed_wall_color
+        # All bg reachable from border
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 0, 5, 0, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_enclosed_wall_color(grid)
+        self.assertEqual(result, grid)  # Nothing enclosed
+
+    def test_multiple_enclosed_regions(self):
+        from arc_agent.primitives import fill_enclosed_wall_color
+        # Two separate enclosed regions
+        grid = [
+            [0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 3, 3, 3, 0, 5, 5, 5, 0],
+            [0, 3, 0, 3, 0, 5, 0, 5, 0],
+            [0, 3, 3, 3, 0, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_enclosed_wall_color(grid)
+        self.assertEqual(result[2][2], 3)  # filled with 3 (wall)
+        self.assertEqual(result[2][6], 5)  # filled with 5 (wall)
+
+
+class TestBorderInteriorObjects(unittest.TestCase):
+    def test_remove_border_objects(self):
+        from arc_agent.primitives import remove_border_objects
+        # Object at corner touches border, object in center doesn't
+        grid = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 3, 3, 0, 0, 0],
+            [0, 0, 3, 3, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 5],
+            [0, 0, 0, 0, 0, 5, 5],
+        ]
+        result = remove_border_objects(grid)
+        # Border object (5s) removed
+        self.assertEqual(result[5][6], 0)
+        self.assertEqual(result[6][5], 0)
+        # Interior object (3s) preserved
+        self.assertEqual(result[2][2], 3)
+
+    def test_keep_interior_objects(self):
+        from arc_agent.primitives import keep_interior_objects
+        grid = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 3, 3, 0, 0, 0],
+            [0, 0, 3, 3, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 5],
+            [0, 0, 0, 0, 0, 5, 5],
+        ]
+        result = keep_interior_objects(grid)
+        # Interior object (3s) kept
+        self.assertEqual(result[2][2], 3)
+        # Border object (5s) removed
+        self.assertEqual(result[5][6], 0)
+
+    def test_hollow_objects(self):
+        from arc_agent.primitives import hollow_objects
+        grid = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+        result = hollow_objects(grid)
+        # Border cells of object remain
+        self.assertEqual(result[1][1], 5)
+        self.assertEqual(result[1][4], 5)
+        # Interior cells erased
+        self.assertEqual(result[2][2], 0)
+        self.assertEqual(result[3][3], 0)
+
+    def test_fill_object_bboxes(self):
+        from arc_agent.primitives import fill_object_bboxes
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 3, 0, 3, 0],
+            [0, 0, 0, 0, 0],
+            [0, 3, 0, 3, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        # All 3s are separate 1-cell objects, so bbox = 1x1, no change
+        result = fill_object_bboxes(grid)
+        self.assertEqual(result, grid)
+
+    def test_fill_object_bboxes_connected(self):
+        from arc_agent.primitives import fill_object_bboxes
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 3, 0, 0, 0],
+            [0, 0, 3, 0, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = fill_object_bboxes(grid)
+        # 3s not connected (diagonal), so each is 1x1 bbox, no change
+        self.assertEqual(result, grid)
+
+
+class TestV20ToolkitContents(unittest.TestCase):
+    def test_new_v20_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "shift_down_1", "shift_up_1", "shift_left_1", "shift_right_1",
+            "fill_enclosed_wall_color",
+            "remove_border_objects", "keep_interior_objects",
+            "hollow_objects", "fill_object_bboxes",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing v0.20 primitive: {name}")
+
+    def test_toolkit_size_v20(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 287)

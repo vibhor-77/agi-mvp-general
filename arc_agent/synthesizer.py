@@ -284,6 +284,8 @@ class ProgramSynthesizer:
         # V19: confirmed solves (22eb0ac0, ded97339, 32597951 all test-confirmed)
         "extend_lines_to_contact",              # 22eb0ac0, ded97339 solved; 40853293 improved
         "recolor_nonzero_inside_8_bbox_to_3",   # 32597951 solved
+        # V20: confirmed pair-solve value (a79310a0 test-confirmed)
+        "shift_down_1",                         # 25ff71a9 solved; a79310a0 pair-solved
     ])
 
     def try_all_pairs(

@@ -3921,6 +3921,200 @@ def recolor_unique_in_row_col(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V20 NEW PRIMITIVES
+# ============================================================
+
+# --- Shift operations (cyclic wrap-around) ---
+
+def shift_down_1(grid: Grid) -> Grid:
+    """Shift all rows down by 1, wrapping bottom row to top."""
+    return [grid[-1]] + grid[:-1]
+
+
+def shift_up_1(grid: Grid) -> Grid:
+    """Shift all rows up by 1, wrapping top row to bottom."""
+    return grid[1:] + [grid[0]]
+
+
+def shift_left_1(grid: Grid) -> Grid:
+    """Shift all columns left by 1, wrapping leftmost to right."""
+    return [row[1:] + [row[0]] for row in grid]
+
+
+def shift_right_1(grid: Grid) -> Grid:
+    """Shift all columns right by 1, wrapping rightmost to left."""
+    return [[row[-1]] + row[:-1] for row in grid]
+
+
+# --- Fill enclosed bg regions with surrounding wall color ---
+
+def fill_enclosed_wall_color(grid: Grid) -> Grid:
+    """Fill each enclosed bg region with the most common color of its wall.
+
+    'Enclosed' means bg cells not reachable from the grid border via
+    4-connected bg paths. Each enclosed component gets filled with the
+    most common non-bg color adjacent to it.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    bg = Counter(grid[r][c] for r in range(h) for c in range(w)).most_common(1)[0][0]
+
+    # BFS from border to find reachable bg cells
+    reachable = set()
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r == 0 or r == h - 1 or c == 0 or c == w - 1) and grid[r][c] == bg:
+                if (r, c) not in reachable:
+                    reachable.add((r, c))
+                    queue.append((r, c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in reachable and grid[nr][nc] == bg:
+                reachable.add((nr, nc))
+                queue.append((nr, nc))
+
+    # Find enclosed components and fill each with its wall's dominant color
+    visited = [[False] * w for _ in range(h)]
+    result = _deep_copy_grid(grid)
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] == bg and (sr, sc) not in reachable and not visited[sr][sc]:
+                component = []
+                wall_colors = Counter()
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    component.append((r, c))
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w:
+                            if grid[nr][nc] == bg and not visited[nr][nc] and (nr, nc) not in reachable:
+                                visited[nr][nc] = True
+                                q.append((nr, nc))
+                            elif grid[nr][nc] != bg:
+                                wall_colors[grid[nr][nc]] += 1
+                if wall_colors:
+                    fill_color = wall_colors.most_common(1)[0][0]
+                    for r, c in component:
+                        result[r][c] = fill_color
+    return result
+
+
+# --- Object border/interior operations ---
+
+def remove_border_objects(grid: Grid) -> Grid:
+    """Remove (erase to bg) all connected objects that touch the grid border."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    bg = Counter(grid[r][c] for r in range(h) for c in range(w)).most_common(1)[0][0]
+    visited = [[False] * w for _ in range(h)]
+    result = _deep_copy_grid(grid)
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                cells = []
+                color = grid[sr][sc]
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    cells.append((r, c))
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] == color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                if any(r == 0 or r == h - 1 or c == 0 or c == w - 1 for r, c in cells):
+                    for r, c in cells:
+                        result[r][c] = bg
+    return result
+
+
+def keep_interior_objects(grid: Grid) -> Grid:
+    """Keep only objects that do NOT touch the grid border; erase border objects."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    bg = Counter(grid[r][c] for r in range(h) for c in range(w)).most_common(1)[0][0]
+    visited = [[False] * w for _ in range(h)]
+    result = [[bg] * w for _ in range(h)]
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                cells = []
+                color = grid[sr][sc]
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    cells.append((r, c))
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] == color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                if not any(r == 0 or r == h - 1 or c == 0 or c == w - 1 for r, c in cells):
+                    for r, c in cells:
+                        result[r][c] = color
+    return result
+
+
+def hollow_objects(grid: Grid) -> Grid:
+    """Erase interior of colored objects, keeping only boundary cells.
+
+    A cell is 'interior' if all 4 cardinal neighbors have the same color.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    bg = Counter(grid[r][c] for r in range(h) for c in range(w)).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != bg:
+                if all(
+                    0 <= r + dr < h and 0 <= c + dc < w and grid[r + dr][c + dc] == grid[r][c]
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                ):
+                    result[r][c] = bg
+    return result
+
+
+def fill_object_bboxes(grid: Grid) -> Grid:
+    """Fill the bounding box of each connected object with the object's color."""
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    bg = Counter(grid[r][c] for r in range(h) for c in range(w)).most_common(1)[0][0]
+    visited = [[False] * w for _ in range(h)]
+    result = _deep_copy_grid(grid)
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                cells = []
+                color = grid[sr][sc]
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    cells.append((r, c))
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] == color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                min_r = min(r for r, c in cells)
+                max_r = max(r for r, c in cells)
+                min_c = min(c for r, c in cells)
+                max_c = max(c for r, c in cells)
+                for r in range(min_r, max_r + 1):
+                    for c in range(min_c, max_c + 1):
+                        result[r][c] = color
+    return result
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -4204,6 +4398,18 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # V18: color merging
         ("recolor_2nd_color_to_dominant", recolor_2nd_color_to_dominant),
         ("erase_2nd_color", erase_2nd_color),
+        # V20: shift operations (cyclic wrap-around)
+        ("shift_down_1", shift_down_1),
+        ("shift_up_1", shift_up_1),
+        ("shift_left_1", shift_left_1),
+        ("shift_right_1", shift_right_1),
+        # V20: fill enclosed bg with wall color
+        ("fill_enclosed_wall_color", fill_enclosed_wall_color),
+        # V20: object border/interior operations
+        ("remove_border_objects", remove_border_objects),
+        ("keep_interior_objects", keep_interior_objects),
+        ("hollow_objects", hollow_objects),
+        ("fill_object_bboxes", fill_object_bboxes),
     ]
 
     for name, impl in partitioning_ops:
