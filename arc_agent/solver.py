@@ -188,17 +188,43 @@ class FourPillarsSolver:
         # Always run the FULL generation budget — no early exit on target_score.
         # We want to discover all viable candidates and alternative programs,
         # not just the first one that hits 0.99.
-        best_program, history = self.synthesizer.synthesize(
-            task=task,
-            max_generations=self.max_generations,
-            target_score=2.0,  # unreachable → always run full budget
-            seed_programs=seed_programs,
-            verbose=self.verbose,
-            cache=cache,
-        )
+        #
+        # During training: run multiple restarts with different population seeds
+        # to explore more of the search space. Each restart gets a fresh random
+        # population but shares the same seed_programs (from deterministic search).
+        n_restarts = 3 if mode == "train" else 1
+        best_program = None
+        best_score = 0.0
+        all_history = []
+
+        for restart_idx in range(n_restarts):
+            # Vary the random state for each restart
+            if restart_idx > 0:
+                import random
+                random.seed(random.randint(0, 2**31) + restart_idx * 7919)
+
+            program, history = self.synthesizer.synthesize(
+                task=task,
+                max_generations=self.max_generations,
+                target_score=2.0,  # unreachable → always run full budget
+                seed_programs=seed_programs,
+                verbose=self.verbose and restart_idx == 0,
+                cache=cache,
+            )
+            all_history.extend(history)
+
+            if program and program.fitness > best_score:
+                best_program = program
+                best_score = program.fitness
+
+            # If we found a pixel-perfect solution, add it as candidate
+            if program and program.fitness >= 0.99 and cache.is_pixel_perfect(program):
+                candidates.append((program, f"evolved_r{restart_idx}"))
+
+            # If perfect on first restart, remaining restarts still run
+            # to discover alternative candidates (diversity)
 
         elapsed = time.time() - start_time
-        best_score = best_program.fitness if best_program else 0.0
 
         # Step 4.5: Try decomposition as fallback (COMPOSABILITY)
         if best_score < 0.99:
