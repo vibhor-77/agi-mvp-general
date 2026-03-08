@@ -115,49 +115,64 @@ class FourPillarsSolver:
         if self.verbose and learned_concepts:
             print(f"Learned concepts: {[lc.name for lc in learned_concepts]}")
 
+        # ── Candidate collection ──────────────────────────────────────
+        # Instead of returning on the first high-scoring program, we collect
+        # all pixel-perfect candidates across search phases and pick the
+        # simplest one (MDL principle: shortest program that explains the data).
+        # Programs that score high on structural_similarity but aren't
+        # pixel-perfect are kept as "best effort" but NOT declared solved.
+        candidates: list[tuple[Program, str]] = []  # (program, method)
+
         # Step 3: Quick check — does any single primitive solve it?
         best_single = self._try_single_primitives(task, cache)
         if best_single and best_single.fitness >= 0.99:
-            elapsed = time.time() - start_time
-            self._record_success(task_id, best_single, best_single.fitness, elapsed)
-            return self._make_result(task_id, best_single, best_single.fitness,
-                                      elapsed, "single_primitive")
+            if cache.is_pixel_perfect(best_single):
+                candidates.append((best_single, "single_primitive"))
 
         # Step 3.2: Try all culture programs directly (cross-run transfer).
-        # Programs loaded from a prior training run are tested exhaustively here —
-        # this is the deterministic counterpart to evolutionary seeding and gives
-        # culture programs the best possible chance of solving eval tasks.
         culture_result: Optional[Program] = None
         if self.toolkit.programs:
             culture_result = self._try_culture_programs(task, cache)
             if culture_result and culture_result.fitness >= 0.99:
-                elapsed = time.time() - start_time
-                self._record_success(task_id, culture_result, culture_result.fitness,
-                                     elapsed)
-                return self._make_result(task_id, culture_result,
-                                         culture_result.fitness, elapsed,
-                                         "culture_transfer")
+                if cache.is_pixel_perfect(culture_result):
+                    candidates.append((culture_result, "culture_transfer"))
+
+        # Early exit: if we already have a 1-step solution, skip expensive search.
+        # A single primitive pixel-perfect solve is the simplest possible (MDL).
+        if candidates and any(len(p.steps) == 1 for p, _ in candidates):
+            winner, method = min(candidates, key=lambda x: len(x[0].steps))
+            elapsed = time.time() - start_time
+            self._record_success(task_id, winner, winner.fitness, elapsed)
+            # Clean up learned concepts before returning
+            for lc in learned_concepts:
+                self.toolkit.concepts.pop(lc.name, None)
+            return self._make_result(task_id, winner, winner.fitness,
+                                      elapsed, method, pixel_perfect=True)
 
         # Step 3.5: Try all pairs of top primitives (fast, high-yield)
         pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=20)
         if pair_result and pair_result.fitness >= 0.99:
-            elapsed = time.time() - start_time
-            self._record_success(task_id, pair_result, pair_result.fitness, elapsed)
-            return self._make_result(task_id, pair_result, pair_result.fitness,
-                                      elapsed, "pair_exhaustion")
+            if cache.is_pixel_perfect(pair_result):
+                candidates.append((pair_result, "pair_exhaustion"))
 
         # Step 3.7: Near-miss triple search.
-        # When the best pair scores ≥ 0.80 but < 0.99 it means one more step
-        # might close the gap. Try every concept as append AND prepend — 2×N
-        # cost, only paid when pair_result is a strong near-miss.
         triple_result = self.synthesizer.try_best_triples(
             pair_result, cache, pair_score_threshold=0.80
         )
         if triple_result and triple_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(triple_result):
+                candidates.append((triple_result, "triple_search"))
+
+        # If we have pixel-perfect candidates from deterministic search,
+        # skip expensive evolution — pick the simplest (MDL).
+        if candidates:
+            winner, method = min(candidates, key=lambda x: len(x[0].steps))
             elapsed = time.time() - start_time
-            self._record_success(task_id, triple_result, triple_result.fitness, elapsed)
-            return self._make_result(task_id, triple_result, triple_result.fitness,
-                                      elapsed, "triple_search")
+            self._record_success(task_id, winner, winner.fitness, elapsed)
+            for lc in learned_concepts:
+                self.toolkit.concepts.pop(lc.name, None)
+            return self._make_result(task_id, winner, winner.fitness,
+                                      elapsed, method, pixel_perfect=True)
 
         # Inject best candidates into seeds for evolution, best first.
         # Use high threshold (0.85) to avoid polluting evolution with noise.
@@ -183,7 +198,6 @@ class FourPillarsSolver:
         best_score = best_program.fitness if best_program else 0.0
 
         # Step 4.5: Try decomposition as fallback (COMPOSABILITY)
-        # If the evolved solution is weak, attempt problem decomposition
         if best_score < 0.99:
             decomposed = self.decomposer.decompose_if_needed(
                 task,
@@ -201,11 +215,18 @@ class FourPillarsSolver:
                 if self.verbose:
                     print(f"  ◆ Decomposition improved score to {best_score:.3f}")
 
-        # Step 5: Promote solutions to reusable concepts (COMPOSABILITY)
-        # Lower threshold (0.95) allows near-miss knowledge to compound.
-        # This is critical for cumulative culture — even imperfect solutions
-        # contain useful sub-patterns that should be available for future tasks.
-        if best_score >= 0.99:
+        # Step 5: Check if evolved/decomposed solution is pixel-perfect.
+        # Only pixel-perfect programs on ALL training examples count as solved.
+        solved = False
+        if best_score >= 0.99 and best_program and cache.is_pixel_perfect(best_program):
+            solved = True
+            method = "evolved"
+            # Check if best_single was actually better (shorter)
+            if best_single and best_single.fitness >= best_score:
+                if cache.is_pixel_perfect(best_single) and len(best_single) <= len(best_program):
+                    best_program = best_single
+                    best_score = best_single.fitness
+                    method = "single_primitive"
             self._record_success(task_id, best_program, best_score, elapsed)
         elif best_score >= 0.95:
             # Near-miss: promote as concept but don't count as "solved"
@@ -217,10 +238,19 @@ class FourPillarsSolver:
                 if self.verbose:
                     print(f"  ◆ Near-miss concept promoted: {new_concept.name} "
                           f"(score={best_score:.3f})")
+            method = "evolved"
         elif best_score > 0.8:
             self.tasks_partially_solved += 1
-            # Record for transfer but don't promote to toolkit
             self.archive.record_solution(task_id, best_program, best_score)
+            method = "evolved"
+        else:
+            method = "evolved"
+
+        # Also check if best_single was the best (even if not solved)
+        if not solved and best_single and best_single.fitness >= best_score:
+            best_program = best_single
+            best_score = best_single.fitness
+            method = "single_primitive"
 
         # Clean up task-specific learned concepts (they're task-bound, not reusable)
         for lc in learned_concepts:
@@ -233,13 +263,8 @@ class FourPillarsSolver:
         # Decay exploration over time
         self.explorer.decay_epsilon()
 
-        method = "evolved"
-        if best_single and best_single.fitness >= best_score:
-            best_program = best_single
-            best_score = best_single.fitness
-            method = "single_primitive"
-
-        return self._make_result(task_id, best_program, best_score, elapsed, method)
+        return self._make_result(task_id, best_program, best_score, elapsed, method,
+                                  pixel_perfect=solved)
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -611,10 +636,11 @@ class FourPillarsSolver:
 
         return result if result else None
 
-    def _make_result(self, task_id, program, score, elapsed, method):
+    def _make_result(self, task_id, program, score, elapsed, method,
+                      pixel_perfect: bool = False):
         return {
             "task_id": task_id,
-            "solved": score >= 0.99,
+            "solved": pixel_perfect,
             "score": score,
             "program": program.name if program else "none",
             "program_length": len(program) if program else 0,

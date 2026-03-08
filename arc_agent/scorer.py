@@ -230,6 +230,27 @@ class TaskCache:
 
         return scores
 
+    def is_pixel_perfect(self, program) -> bool:
+        """Check if program produces pixel-perfect output on ALL training examples.
+
+        This is stricter than score_program >= 0.99 (which uses structural
+        similarity and can give false positives). Use this to decide whether
+        a program has truly "solved" a task before committing to it.
+        """
+        if self.n_examples == 0:
+            return False
+        for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
+            predicted = program.execute(inp)
+            p = _safe_to_np(predicted)
+            if p is None:
+                return False
+            pred_h, pred_w = p.shape
+            if pred_h != exp_h or pred_w != exp_w:
+                return False
+            if not np.array_equal(p, e):
+                return False
+        return True
+
     def validate_on_test(self, program) -> tuple[bool, float]:
         """Validate on held-out test examples. Returns (all_exact, avg_score)."""
         if not self._test_expected:
