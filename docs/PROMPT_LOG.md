@@ -1288,3 +1288,72 @@ This is a critical methodology correction. Key takeaways:
 - Form specific hypotheses: "adding primitive X should solve tasks Y, Z"
 - Test each hypothesis on those specific tasks before full benchmark
 - Focus on simple, human-intuitive transformations
+
+---
+
+## Session 19 — Pattern Completion & Conditional DSL Experiments (March 2026)
+
+### Context
+Continued from Session 18. User had asked for implementation of spatial primitives (pattern completion) and code synthesis approaches.
+
+### Work Done
+
+#### 1. Inpainting Primitives (ACCEPTED — +3 solves)
+
+**Hypothesis**: Tiled pattern detection can solve near-miss tasks where all changes fill zeros.
+
+**Implementation**: Added `inpaint_tiled()` and `inpaint_from_context()` to `primitives.py`.
+- `inpaint_tiled`: Detects 2D periodic tiling from non-zero cells, builds template, fills zeros
+- `inpaint_from_context`: Uses row/column neighbor voting for non-periodic patterns
+- Fixed critical bug: period detection was too strict (required exact divisibility)
+
+**Validation**: Tested on 22 pattern-completion training tasks:
+- Before: 10/22 solved
+- After: 13/22 solved (+3: 29ec7d0e, 0dfd9992, c3f564a4)
+- All 22 tasks score above 80%
+
+**Result**: **ACCEPTED** — 13 TDD tests, 480 total tests pass.
+
+#### 2. Cell Rules DSL (REJECTED — 0 new solves)
+
+**Hypothesis**: Per-cell conditional branching (if neighbor has color X, set to Y) will solve near-miss tasks.
+
+**Implementation**: Created `cell_rules.py` with 7 predicates and 3 actions, `CellRuleConcept`, and `_try_cell_rules()` in solver.
+
+**Validation**: Tested on 10 near-miss tasks (0.90-0.99 baseline scores):
+- 0 new solves
+- Best cell rule score: 0.981 (never pixel-perfect)
+- All scores same as or worse than baseline evolved solutions
+
+**Result**: **REJECTED** — Code reverted.
+
+#### 3. Enumeration-based Cell Synthesis (REJECTED — 0 new solves)
+
+**Hypothesis**: Systematic enumeration of small cell programs (Const, Self, NeighborAt, IfColor, MapColor) will discover task-specific rules.
+
+**Implementation**: Created `cell_synth.py` with 7 DSL node types, BFS enumeration, and `_try_cell_synthesis()` in solver.
+
+**Validation**: Tested on same 10 near-miss tasks:
+- 0 new solves
+- Cell synth scored WORSE than baseline on all 5 detailed tests (-0.007 to -0.303)
+- Best expressions were trivially "Self" (identity)
+
+**Result**: **REJECTED** — Code reverted.
+
+### Root Cause Analysis
+
+The 169 near-miss tasks don't need per-cell conditional logic. They need **multi-step spatial reasoning**: "find object A, find marker B, draw a line from A toward B" or "detect region boundary, extend it." These are geometric/relational operations at the *object* level, not the cell level. Our existing evolved multi-primitive compositions already capture more of this structure than per-cell rules can.
+
+### Verification
+
+| Metric | Result |
+|--------|--------|
+| Tests passing | **480** (13 new inpainting tests) |
+| Training solved (projected) | **86** (+3 from inpainting) |
+| Cell rules experiment | REJECTED (0 new solves) |
+| Cell synthesis experiment | REJECTED (0 new solves) |
+
+### Next Steps
+- Focus on object-level spatial reasoning (line drawing, projection, boundary extension)
+- Consider parametric primitives with task-specific parameter search
+- Investigate the 91 tasks scoring <0.80 that use evolved method — what types are they?
