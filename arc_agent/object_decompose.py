@@ -223,6 +223,9 @@ def _try_conditional_recolor(
     for strategy_name, strategy_fn in [
         ("by_size", _learn_recolor_by_size),
         ("by_singleton", _learn_recolor_by_singleton),
+        ("by_input_color", _learn_recolor_by_input_color),
+        ("by_position", _learn_recolor_by_position),
+        ("by_shape", _learn_recolor_by_shape),
     ]:
         rule = strategy_fn(train)
         if rule is None:
@@ -390,6 +393,160 @@ def _learn_recolor_by_singleton(train: list[dict]) -> dict | None:
     return {True: multi_color, False: singleton_color}
 
 
+def _learn_recolor_by_input_color(train: list[dict]) -> dict | None:
+    """Learn an input_color→output_color mapping from training examples.
+
+    If each input color consistently maps to the same output color across
+    all training examples, returns {input_color: output_color}.
+    Handles many-to-one mappings (e.g., colors {2,3,9} all → color 5).
+    """
+    color_map: dict[int, int] = {}
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            in_color = si["color"]
+            out_color = so["color"]
+            if in_color in color_map:
+                if color_map[in_color] != out_color:
+                    return None  # inconsistent
+            color_map[in_color] = out_color
+
+    # Validate: must actually change something
+    has_change = any(k != v for k, v in color_map.items())
+    if not has_change:
+        return None
+
+    return color_map
+
+
+def _learn_recolor_by_position(train: list[dict]) -> dict | None:
+    """Learn a position-based recolor rule from training examples.
+
+    Checks if objects can be split into groups by vertical or horizontal
+    position, where each group maps to a consistent output color.
+    Returns {"axis": "v"|"h", "threshold": float, "above": color, "below": color}
+    or None.
+    """
+    # Collect (position, input_color, output_color) tuples from all examples
+    all_observations: list[tuple[float, float, int, int]] = []
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        h = len(ex["input"])
+        w = len(ex["input"][0]) if ex["input"] else 0
+
+        for si, so in matches:
+            # Normalize position to [0, 1] range for cross-example consistency
+            center_r = (si["position"][0] + si["bbox"][2]) / 2.0 / max(h, 1)
+            center_c = (si["position"][1] + si["bbox"][3]) / 2.0 / max(w, 1)
+            all_observations.append((center_r, center_c, si["color"], so["color"]))
+
+    if not all_observations:
+        return None
+
+    # Must have at least 2 different output colors
+    out_colors = set(obs[3] for obs in all_observations)
+    if len(out_colors) < 2:
+        return None
+
+    # Try vertical split (top vs bottom) at midpoint
+    for axis, pos_idx in [("v", 0), ("h", 1)]:
+        threshold = 0.5
+
+        above_colors: set[int] = set()
+        below_colors: set[int] = set()
+        for obs in all_observations:
+            if obs[pos_idx] < threshold:
+                above_colors.add(obs[3])
+            else:
+                below_colors.add(obs[3])
+
+        # Each half must map to exactly one color, and they must differ
+        if (len(above_colors) == 1 and len(below_colors) == 1
+                and above_colors != below_colors):
+            above_color = next(iter(above_colors))
+            below_color = next(iter(below_colors))
+            return {
+                "axis": axis,
+                "threshold": threshold,
+                "above": above_color,
+                "below": below_color,
+            }
+
+    return None
+
+
+def _learn_recolor_by_shape(train: list[dict]) -> dict | None:
+    """Learn a shape_signature→color mapping from training examples.
+
+    Normalizes each object's shape (translate to origin, ignore color) and
+    checks if same shapes always map to the same output color.
+    Returns {shape_signature: output_color} or None.
+    """
+    shape_to_color: dict[tuple, int] = {}
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            sig = _shape_signature(si)
+            out_color = so["color"]
+            if sig in shape_to_color:
+                if shape_to_color[sig] != out_color:
+                    return None  # inconsistent
+            shape_to_color[sig] = out_color
+
+    # Must have at least 2 different shape signatures mapping to different colors
+    unique_colors = set(shape_to_color.values())
+    if len(unique_colors) < 2:
+        return None
+
+    # Must actually change something
+    has_change = False
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+        for si, so in matches:
+            if si["color"] != so["color"]:
+                has_change = True
+                break
+        if has_change:
+            break
+    if not has_change:
+        return None
+
+    return shape_to_color
+
+
+def _shape_signature(shape: dict) -> tuple:
+    """Compute a translation-invariant, color-invariant shape signature.
+
+    Returns a frozenset of relative (row, col) positions as a sorted tuple.
+    """
+    positions = []
+    for r in range(len(shape["subgrid"])):
+        for c in range(len(shape["subgrid"][0])):
+            if shape["subgrid"][r][c] != 0:
+                positions.append((r, c))
+    if not positions:
+        return ()
+    # Normalize to origin
+    min_r = min(p[0] for p in positions)
+    min_c = min(p[1] for p in positions)
+    normalized = tuple(sorted((r - min_r, c - min_c) for r, c in positions))
+    return normalized
+
+
 def _make_conditional_recolor_fn(
     rule: dict,
     strategy: str,
@@ -401,6 +558,9 @@ def _make_conditional_recolor_fn(
         shapes = find_foreground_shapes(grid)
         if not shapes:
             return grid
+
+        h = len(grid)
+        w = len(grid[0]) if grid else 0
 
         # Start with a copy of the grid (preserve background)
         result = [row[:] for row in grid]
@@ -416,6 +576,28 @@ def _make_conditional_recolor_fn(
             elif strategy == "by_singleton":
                 is_multi = shape["size"] > 1
                 new_color = rule[is_multi]
+            elif strategy == "by_input_color":
+                in_color = shape["color"]
+                if in_color in rule:
+                    new_color = rule[in_color]
+                else:
+                    new_color = shape["color"]
+            elif strategy == "by_position":
+                # Compute normalized center position
+                center_r = (shape["position"][0] + shape["bbox"][2]) / 2.0 / max(h, 1)
+                center_c = (shape["position"][1] + shape["bbox"][3]) / 2.0 / max(w, 1)
+                axis = rule["axis"]
+                pos_val = center_r if axis == "v" else center_c
+                if pos_val < rule["threshold"]:
+                    new_color = rule["above"]
+                else:
+                    new_color = rule["below"]
+            elif strategy == "by_shape":
+                sig = _shape_signature(shape)
+                if sig in rule:
+                    new_color = rule[sig]
+                else:
+                    new_color = shape["color"]
             else:
                 new_color = shape["color"]
 
