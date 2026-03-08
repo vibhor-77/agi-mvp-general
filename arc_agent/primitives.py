@@ -342,6 +342,116 @@ def fill_enclosed(grid: Grid) -> Grid:
     return result
 
 
+def _flood_fill(grid: Grid, r: int, c: int, h: int, w: int) -> set:
+    """Flood fill to find connected component of same color starting from (r,c)."""
+    color = grid[r][c]
+    component = set()
+    stack = [(r, c)]
+    while stack:
+        tr, tc = stack.pop()
+        if (tr, tc) in component or tr < 0 or tr >= h or tc < 0 or tc >= w:
+            continue
+        if grid[tr][tc] != color:
+            continue
+        component.add((tr, tc))
+        stack.extend([(tr + 1, tc), (tr - 1, tc), (tr, tc + 1), (tr, tc - 1)])
+    return component
+
+
+def project_markers_to_block(grid: Grid) -> Grid:
+    """Draw lines from block edges to isolated marker cells."""
+    h, w = _grid_dims(grid)
+    if h == 0 or w == 0:
+        return grid
+
+    result = _deep_copy_grid(grid)
+
+    # Find background color (most common)
+    color_counts = {}
+    for row in grid:
+        for cell in row:
+            color_counts[cell] = color_counts.get(cell, 0) + 1
+    bg_color = max(color_counts, key=color_counts.get) if color_counts else 0
+
+    # Find the largest connected component (block)
+    block_cells = set()
+    visited = set()
+    for r in range(h):
+        for c in range(w):
+            if (r, c) in visited or grid[r][c] == bg_color:
+                continue
+            comp = _flood_fill(grid, r, c, h, w)
+            visited.update(comp)
+            if len(comp) > len(block_cells):
+                block_cells = comp
+
+    if not block_cells:
+        return result
+
+    # Get block bounds
+    rows = [r for r, c in block_cells]
+    cols = [c for r, c in block_cells]
+    min_r, max_r = min(rows), max(rows)
+    min_c, max_c = min(cols), max(cols)
+
+    # Find isolated markers (1-2 cells each)
+    markers = []
+    visited = set()
+    for r in range(h):
+        for c in range(w):
+            if (r, c) in visited or (r, c) in block_cells or grid[r][c] == bg_color:
+                continue
+            comp = _flood_fill(grid, r, c, h, w)
+            visited.update(comp)
+            if len(comp) <= 2:
+                for mr, mc in comp:
+                    markers.append((grid[r][c], mr, mc))
+
+    # For each marker, draw a line from the closest aligned block edge
+    for marker_color, marker_r, marker_c in markers:
+        # Find aligned edges (marker must share row or column with block edge)
+        edges = []
+
+        if marker_r < min_r and min_c <= marker_c <= max_c:  # Top aligned
+            edges.append((min_r - marker_r, 'top'))
+        if marker_r > max_r and min_c <= marker_c <= max_c:  # Bottom aligned
+            edges.append((marker_r - max_r, 'bottom'))
+        if marker_c < min_c and min_r <= marker_r <= max_r:  # Left aligned
+            edges.append((min_c - marker_c, 'left'))
+        if marker_c > max_c and min_r <= marker_r <= max_r:  # Right aligned
+            edges.append((marker_c - max_c, 'right'))
+
+        if not edges:
+            continue  # Skip unaligned markers
+
+        # Choose the closest aligned edge
+        _, edge = min(edges, key=lambda x: x[0])
+
+        # Draw line from marker to the gap just outside the block edge
+        if edge == 'top':
+            # Top edge of block is at min_r. Draw from marker_r to min_r-1 (gap before block)
+            for r in range(marker_r, min_r):
+                if 0 <= r < h:
+                    result[r][marker_c] = marker_color
+        elif edge == 'bottom':
+            # Bottom edge of block is at max_r. Draw from max_r+1 to marker_r (gap after block)
+            for r in range(max_r + 1, marker_r + 1):
+                if 0 <= r < h:
+                    result[r][marker_c] = marker_color
+        elif edge == 'left':
+            # Left edge of block is at min_c. Draw from marker_c to min_c-1 (gap before block)
+            for c in range(marker_c, min_c):
+                if 0 <= c < w:
+                    result[marker_r][c] = marker_color
+        elif edge == 'right':
+            # Right edge of block is at max_c. Draw from max_c+1 to marker_c (gap after block)
+            for c in range(max_c + 1, marker_c + 1):
+                if 0 <= c < w:
+                    result[marker_r][c] = marker_color
+
+    return result
+
+
 # ============================================================
 # RELATIONSHIPS: Predicates for conditional logic
 # ============================================================
@@ -4358,6 +4468,7 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("flood_fill_bg", flood_fill_background),
         ("outline", outline),
         ("fill_enclosed", fill_enclosed),
+        ("project_markers_to_block", project_markers_to_block),
         ("invert_colors", invert_colors),
         ("extract_colors", extract_unique_colors),
         ("count_per_row", count_nonzero_per_row),
