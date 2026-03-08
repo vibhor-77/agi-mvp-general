@@ -2256,11 +2256,12 @@ class TestLearnedColorMapping(unittest.TestCase):
             "test": [],
         }
         concepts = solver._learn_task_concepts(task)
-        self.assertEqual(len(concepts), 1)
-        self.assertEqual(concepts[0].name, "learned_color_map")
+        # At least the color map should be learned
+        color_maps = [c for c in concepts if c.name == "learned_color_map"]
+        self.assertEqual(len(color_maps), 1)
 
         # Verify the mapping works
-        result = concepts[0].apply([[1, 2, 0]])
+        result = color_maps[0].apply([[1, 2, 0]])
         self.assertEqual(result, [[2, 1, 0]])
 
     def test_no_mapping_for_diff_dims(self):
@@ -2290,6 +2291,201 @@ class TestLearnedColorMapping(unittest.TestCase):
         }
         concepts = solver._learn_task_concepts(task)
         self.assertEqual(len(concepts), 0)
+
+
+class TestNeighborRuleLearner(unittest.TestCase):
+    """Test neighbor-rule learning in solver."""
+
+    def _make_solver(self):
+        from arc_agent.solver import FourPillarsSolver
+        return FourPillarsSolver(verbose=False)
+
+    def test_learns_fill_adjacent_rule(self):
+        """Task: bg cells adjacent to non-bg get filled with a specific color."""
+        solver = self._make_solver()
+        # 5x5 grid, bg=0. Color 5 object at center.
+        # Output: cells adjacent to color-5 become color 1.
+        task = {
+            "train": [
+                {
+                    "input": [
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 5, 0, 0],
+                        [0, 5, 5, 5, 0],
+                        [0, 0, 5, 0, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [0, 1, 0, 1, 0],  # corners stay 0, adjacent to 5 → 1
+                        [1, 0, 5, 0, 1],
+                        [0, 5, 5, 5, 0],
+                        [1, 0, 5, 0, 1],
+                        [0, 1, 0, 1, 0],
+                    ],
+                },
+                {
+                    "input": [
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 5, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [0, 0, 0, 0, 0],
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 5, 0, 0],
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                },
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        # Should learn at least one neighbor rule
+        neighbor_concepts = [c for c in concepts if "neighbor" in c.name]
+        self.assertGreater(len(neighbor_concepts), 0,
+                           "Should learn at least one neighbor rule concept")
+
+        # Verify it produces correct output for the first training example
+        result = neighbor_concepts[0].apply(task["train"][0]["input"])
+        self.assertEqual(result, task["train"][0]["output"])
+
+    def test_learns_remove_isolated_pixels(self):
+        """Task: remove isolated non-bg pixels (no non-bg neighbors)."""
+        solver = self._make_solver()
+        task = {
+            "train": [
+                {
+                    "input": [
+                        [0, 0, 3, 0, 0],
+                        [0, 2, 2, 2, 0],
+                        [0, 2, 2, 2, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 7, 0],  # isolated pixel at (4,3)
+                    ],
+                    "output": [
+                        [0, 0, 3, 0, 0],
+                        [0, 2, 2, 2, 0],
+                        [0, 2, 2, 2, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],  # isolated pixel removed
+                    ],
+                },
+                {
+                    "input": [
+                        [0, 0, 0, 0, 0],
+                        [0, 4, 4, 0, 0],
+                        [0, 4, 4, 0, 0],
+                        [0, 0, 0, 0, 6],  # isolated pixel at (3,4)
+                        [0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [0, 0, 0, 0, 0],
+                        [0, 4, 4, 0, 0],
+                        [0, 4, 4, 0, 0],
+                        [0, 0, 0, 0, 0],  # isolated pixel removed
+                        [0, 0, 0, 0, 0],
+                    ],
+                },
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        neighbor_concepts = [c for c in concepts if "neighbor" in c.name]
+        self.assertGreater(len(neighbor_concepts), 0)
+
+    def test_no_rule_for_inconsistent_task(self):
+        """When changes don't follow consistent local rules, no concept is learned."""
+        solver = self._make_solver()
+        # Inconsistent: same local neighborhood maps to different outputs
+        task = {
+            "train": [
+                {
+                    "input": [[0, 1, 0], [0, 0, 0], [0, 0, 0]],
+                    "output": [[0, 1, 0], [0, 3, 0], [0, 0, 0]],
+                },
+                {
+                    "input": [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+                    "output": [[0, 5, 0], [0, 1, 0], [0, 0, 0]],
+                },
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        neighbor_concepts = [c for c in concepts if "neighbor" in c.name]
+        # Might learn 0 concepts, or ones that don't validate; either is fine
+        for nc in neighbor_concepts:
+            # If any were learned, verify they actually produce correct output
+            for ex in task["train"]:
+                result = nc.apply(ex["input"])
+                self.assertEqual(result, ex["output"],
+                    f"Concept {nc.name} should match training output")
+
+    def test_no_rule_for_different_dims(self):
+        """No neighbor rules learned when input/output dims differ."""
+        solver = self._make_solver()
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[1]]},
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        self.assertEqual(len(concepts), 0)
+
+    def test_multiple_feature_extractors_tried(self):
+        """Verify that multiple feature sets are attempted."""
+        solver = self._make_solver()
+        # Simple task that should be learnable by multiple feature sets
+        task = {
+            "train": [
+                {
+                    "input": [
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 2, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 2, 0, 0],
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                },
+                {
+                    "input": [
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 2, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [0, 0, 0, 0, 0],
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 2, 0, 0],
+                        [0, 1, 0, 1, 0],
+                        [0, 0, 0, 0, 0],
+                    ],
+                },
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        neighbor_concepts = [c for c in concepts if "neighbor" in c.name]
+        # At least "basic" should work for this
+        self.assertGreater(len(neighbor_concepts), 0)
+        # All learned concepts should produce correct output
+        for nc in neighbor_concepts:
+            for ex in task["train"]:
+                result = nc.apply(ex["input"])
+                self.assertEqual(result, ex["output"],
+                    f"Concept {nc.name} should match training output")
 
 
 class TestV20ToolkitContents(unittest.TestCase):

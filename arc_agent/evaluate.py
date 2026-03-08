@@ -24,12 +24,9 @@ Usage examples:
     # Save results JSON
     python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --output results.json
 
-    # Two-phase pipeline: learn from training, apply to evaluation
+    # RECOMMENDED: Two-phase pipeline with culture transfer
     python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-culture culture.json
     python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation --load-culture culture.json
-
-    # Save learned toolkit for later
-    python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --save-toolkit toolkit.json
 
 Reproducibility:
     All runs are seeded. Use --seed to change the seed; the same (seed, workers)
@@ -55,10 +52,6 @@ def main() -> int:
     parser.add_argument(
         "--output", default="",
         help="Save full results to this JSON file",
-    )
-    parser.add_argument(
-        "--save-toolkit", default="",
-        help="Save the learned toolkit to this JSON file after evaluation",
     )
     parser.add_argument(
         "--limit", type=int, default=0,

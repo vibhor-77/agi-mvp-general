@@ -160,12 +160,13 @@ class FourPillarsSolver:
                                       elapsed, "triple_search")
 
         # Inject best candidates into seeds for evolution, best first.
+        # Use high threshold (0.85) to avoid polluting evolution with noise.
         seed_programs = list(seed_programs) if seed_programs else []
-        if culture_result and culture_result.fitness > 0.5:
+        if culture_result and culture_result.fitness > 0.85:
             seed_programs.insert(0, culture_result)
-        if triple_result and triple_result.fitness > 0.5:
+        if triple_result and triple_result.fitness > 0.85:
             seed_programs.insert(0, triple_result)
-        if pair_result and pair_result.fitness > 0.5:
+        if pair_result and pair_result.fitness > 0.85:
             seed_programs.insert(0, pair_result)
 
         # Step 4: Evolutionary synthesis (FEEDBACK + APPROXIMABILITY + EXPLORATION)
@@ -332,6 +333,7 @@ class FourPillarsSolver:
 
         Currently learns:
           - Color mapping: if color A→B consistently, apply that mapping.
+          - Neighbor rules: local neighborhood features → output color.
 
         Returns a list of Concept objects that can be temporarily injected
         into the toolkit for this task's search.
@@ -341,25 +343,241 @@ class FourPillarsSolver:
         if not train:
             return concepts
 
-        # 1. COLOR MAPPING: learn consistent pixel-by-pixel color changes
+        # Only learn same-dims concepts (input and output grids must match)
         same_dims = all(
             len(ex["input"]) == len(ex["output"])
             and len(ex["input"][0]) == len(ex["output"][0])
             for ex in train
         )
-        if same_dims:
-            color_map = self._learn_color_mapping(train)
-            if color_map:
-                mapping = dict(color_map)  # capture for closure
+        if not same_dims:
+            return concepts
 
-                def apply_color_map(grid: Grid, _m=mapping) -> Grid:
-                    return [[_m.get(cell, cell) for cell in row] for row in grid]
+        # 1. COLOR MAPPING: learn consistent pixel-by-pixel color changes
+        color_map = self._learn_color_mapping(train)
+        if color_map:
+            mapping = dict(color_map)  # capture for closure
 
-                concepts.append(Concept(
-                    kind="operator",
-                    name="learned_color_map",
-                    implementation=apply_color_map,
-                ))
+            def apply_color_map(grid: Grid, _m=mapping) -> Grid:
+                return [[_m.get(cell, cell) for cell in row] for row in grid]
+
+            concepts.append(Concept(
+                kind="operator",
+                name="learned_color_map",
+                implementation=apply_color_map,
+            ))
+
+        # 2. NEIGHBOR RULES: learn local neighborhood → output color mappings
+        # Try multiple feature extractors; each successful one becomes a concept
+        neighbor_concepts = self._learn_neighbor_rules(train)
+        concepts.extend(neighbor_concepts)
+
+        return concepts
+
+    # ----------------------------------------------------------------
+    # Neighbor-rule learning (MDL: local rules from examples)
+    # ----------------------------------------------------------------
+
+    @staticmethod
+    def _get_bg(grid: Grid) -> int:
+        """Get background color (most common) for a grid."""
+        from collections import Counter
+        flat = [grid[r][c] for r in range(len(grid)) for c in range(len(grid[0]))]
+        return Counter(flat).most_common(1)[0][0]
+
+    @staticmethod
+    def _neighbor_info(grid: Grid, r: int, c: int, bg: int):
+        """Get 4-connected and 8-connected neighbor info."""
+        from collections import Counter
+        rows, cols = len(grid), len(grid[0])
+
+        # 4-connected
+        n4 = []
+        for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols:
+                n4.append(grid[nr][nc])
+
+        # 8-connected (all 8 neighbors)
+        n8 = []
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if dr == 0 and dc == 0:
+                    continue
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols:
+                    n8.append(grid[nr][nc])
+
+        non_bg_4 = [n for n in n4 if n != bg]
+        non_bg_8 = [n for n in n8 if n != bg]
+        n_non_bg_4 = len(non_bg_4)
+        n_non_bg_8 = len(non_bg_8)
+        dom_4 = Counter(non_bg_4).most_common(1)[0][0] if non_bg_4 else bg
+        dom_8 = Counter(non_bg_8).most_common(1)[0][0] if non_bg_8 else bg
+
+        return n_non_bg_4, n_non_bg_8, dom_4, dom_8
+
+    @staticmethod
+    def _extract_features_basic(grid: Grid, r: int, c: int) -> tuple:
+        """Extract basic neighborhood features for a cell.
+
+        Features: (is_bg, n_non_bg_4, n_non_bg_8, dominant_8)
+        """
+        bg = FourPillarsSolver._get_bg(grid)
+        cell = grid[r][c]
+        is_bg = cell == bg
+        n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
+        return (is_bg, n4, n8, dom8)
+
+    @staticmethod
+    def _extract_features_with_center(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (center_color, n_non_bg_4, n_non_bg_8, dominant_8)"""
+        bg = FourPillarsSolver._get_bg(grid)
+        cell = grid[r][c]
+        n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
+        return (cell, n4, n8, dom8)
+
+    @staticmethod
+    def _extract_features_with_row(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (is_bg, n_non_bg_4, n_non_bg_8, dom_8, row_dominant_color)"""
+        from collections import Counter
+        bg = FourPillarsSolver._get_bg(grid)
+        cell = grid[r][c]
+        is_bg = cell == bg
+        n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
+
+        # Row dominant non-bg color
+        row_non_bg = [v for v in grid[r] if v != bg]
+        row_dom = Counter(row_non_bg).most_common(1)[0][0] if row_non_bg else bg
+
+        return (is_bg, n4, n8, dom8, row_dom)
+
+    @staticmethod
+    def _extract_features_with_col(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (is_bg, n_non_bg_4, n_non_bg_8, dom_8, col_dominant_color)"""
+        from collections import Counter
+        rows = len(grid)
+        bg = FourPillarsSolver._get_bg(grid)
+        cell = grid[r][c]
+        is_bg = cell == bg
+        n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
+
+        # Column dominant non-bg color
+        col_non_bg = [grid[rr][c] for rr in range(rows) if grid[rr][c] != bg]
+        col_dom = Counter(col_non_bg).most_common(1)[0][0] if col_non_bg else bg
+
+        return (is_bg, n4, n8, dom8, col_dom)
+
+    def _learn_neighbor_rules(self, train: list[dict]) -> list[Concept]:
+        """Learn neighbor-rule concepts from training examples.
+
+        For each feature extractor, collect (features → output_color) across
+        all changed cells in all training examples. If a consistent mapping
+        exists (every feature tuple maps to exactly one output color) and it
+        correctly predicts all changes while NOT changing cells that should
+        stay the same, it becomes a Concept.
+
+        Returns a list of valid neighbor-rule Concepts.
+        """
+        from collections import Counter
+
+        feature_extractors = [
+            ("basic", self._extract_features_basic),
+            ("with_center", self._extract_features_with_center),
+            ("with_row", self._extract_features_with_row),
+            ("with_col", self._extract_features_with_col),
+        ]
+
+        concepts = []
+
+        for feat_name, extractor in feature_extractors:
+            rules: dict[tuple, dict[int, int]] = {}  # feat → {out_color: count}
+            valid = True
+
+            # Phase 1: Collect rules from all changed cells
+            for ex in train:
+                inp, out = ex["input"], ex["output"]
+                rows, cols = len(inp), len(inp[0])
+                for r in range(rows):
+                    for c_idx in range(cols):
+                        if inp[r][c_idx] != out[r][c_idx]:
+                            feat = extractor(inp, r, c_idx)
+                            if feat not in rules:
+                                rules[feat] = {}
+                            out_color = out[r][c_idx]
+                            rules[feat][out_color] = rules[feat].get(out_color, 0) + 1
+
+            if not rules:
+                continue
+
+            # Phase 2: Check consistency — each feature tuple must map
+            # to exactly one output color
+            rule_map: dict[tuple, int] = {}
+            for feat, out_counts in rules.items():
+                if len(out_counts) != 1:
+                    valid = False
+                    break
+                rule_map[feat] = next(iter(out_counts))
+
+            if not valid or not rule_map:
+                continue
+
+            # Phase 3: Validate — apply rules to training inputs and check
+            # that (a) all changed cells are correctly predicted and
+            # (b) no unchanged cells are incorrectly modified.
+            all_correct = True
+            for ex in train:
+                inp, out = ex["input"], ex["output"]
+                rows, cols = len(inp), len(inp[0])
+
+                # Compute background for this grid
+                flat = [inp[r][c_idx] for r in range(rows) for c_idx in range(cols)]
+                bg = Counter(flat).most_common(1)[0][0]
+
+                for r in range(rows):
+                    for c_idx in range(cols):
+                        feat = extractor(inp, r, c_idx)
+                        if feat in rule_map:
+                            predicted = rule_map[feat]
+                            if predicted != out[r][c_idx]:
+                                all_correct = False
+                                break
+                        else:
+                            # No rule for this feature → cell stays unchanged
+                            if inp[r][c_idx] != out[r][c_idx]:
+                                all_correct = False
+                                break
+                    if not all_correct:
+                        break
+                if not all_correct:
+                    break
+
+            if not all_correct:
+                continue
+
+            # Phase 4: Build the concept closure
+            frozen_rules = dict(rule_map)  # capture
+            frozen_name = feat_name  # capture
+
+            def make_applier(rules_dict, ext_func):
+                """Create a closure with its own copies of rules and extractor."""
+                def apply_neighbor_rule(grid: Grid) -> Grid:
+                    result = [row[:] for row in grid]
+                    rows_g, cols_g = len(grid), len(grid[0])
+                    for r in range(rows_g):
+                        for c_idx in range(cols_g):
+                            feat_val = ext_func(grid, r, c_idx)
+                            if feat_val in rules_dict:
+                                result[r][c_idx] = rules_dict[feat_val]
+                    return result
+                return apply_neighbor_rule
+
+            applier = make_applier(frozen_rules, extractor)
+
+            concepts.append(Concept(
+                kind="operator",
+                name=f"learned_neighbor_{frozen_name}",
+                implementation=applier,
+            ))
 
         return concepts
 
