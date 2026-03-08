@@ -178,4 +178,254 @@ def solve_by_object_decomposition(
             if cache.is_pixel_perfect(program):
                 return program
 
+    # Strategy 2: Conditional per-object recolor by property.
+    # Many ARC tasks recolor objects based on their size, position, or shape.
+    # Learn a property→color mapping from training examples.
+    conditional = _try_conditional_recolor(task, cache)
+    if conditional is not None:
+        cond_score = cache.score_program(conditional)
+        if cond_score > best_score:
+            best_score = cond_score
+            best_program = conditional
+
     return best_program
+
+
+# ============================================================
+# Conditional per-object recolor by property
+# ============================================================
+
+def _try_conditional_recolor(
+    task: dict,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Learn a per-object recolor rule based on object properties.
+
+    Matches input objects to output objects by position overlap, then
+    checks if the color mapping is determined by a single property:
+      - size (number of pixels)
+      - shape (normalized pixel set)
+      - is_singleton (size == 1 vs size > 1)
+
+    Returns a Program if a consistent, generalizable rule is found.
+    """
+    train = task.get("train", [])
+    if not train:
+        return None
+
+    # Only same-dims tasks
+    for ex in train:
+        inp, out = ex["input"], ex["output"]
+        if len(inp) != len(out) or len(inp[0]) != len(out[0]):
+            return None
+
+    # Try each property-based strategy
+    for strategy_name, strategy_fn in [
+        ("by_size", _learn_recolor_by_size),
+        ("by_singleton", _learn_recolor_by_singleton),
+    ]:
+        rule = strategy_fn(train)
+        if rule is None:
+            continue
+
+        # Build the transform function
+        transform_fn = _make_conditional_recolor_fn(rule, strategy_name)
+        program = Program(
+            steps=[Concept(
+                kind="composed",
+                name=f"per_object_recolor({strategy_name})",
+                implementation=transform_fn,
+            )],
+        )
+
+        # Score on training
+        score = cache.score_program(program)
+        program.fitness = score
+
+        if cache.is_pixel_perfect(program):
+            return program
+
+    return None
+
+
+def _match_objects_by_position(inp: Grid, out: Grid) -> list[tuple[dict, dict]] | None:
+    """Match input objects to output objects by position overlap.
+
+    Returns list of (input_shape, output_shape) pairs, or None if
+    matching fails (different number of objects, ambiguous matches).
+    """
+    from .objects import find_foreground_shapes
+
+    shapes_in = find_foreground_shapes(inp)
+    shapes_out = find_foreground_shapes(out)
+
+    if len(shapes_in) == 0:
+        return None
+
+    matches = []
+    used_out = set()
+
+    for si in shapes_in:
+        # Build pixel set for input shape
+        si_pixels = set()
+        for r in range(len(si["subgrid"])):
+            for c in range(len(si["subgrid"][0])):
+                if si["subgrid"][r][c] != 0:
+                    si_pixels.add((si["position"][0] + r, si["position"][1] + c))
+
+        # Find best matching output shape by pixel overlap
+        best_idx = -1
+        best_overlap = 0
+        for j, so in enumerate(shapes_out):
+            if j in used_out:
+                continue
+            so_pixels = set()
+            for r in range(len(so["subgrid"])):
+                for c in range(len(so["subgrid"][0])):
+                    if so["subgrid"][r][c] != 0:
+                        so_pixels.add((so["position"][0] + r, so["position"][1] + c))
+            overlap = len(si_pixels & so_pixels)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_idx = j
+
+        if best_idx >= 0:
+            used_out.add(best_idx)
+            matches.append((si, shapes_out[best_idx]))
+        else:
+            # No matching output — object was removed or entirely new pixels
+            # Try matching by position proximity
+            best_idx = -1
+            best_dist = float("inf")
+            for j, so in enumerate(shapes_out):
+                if j in used_out:
+                    continue
+                dist = abs(si["position"][0] - so["position"][0]) + \
+                       abs(si["position"][1] - so["position"][1])
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = j
+            if best_idx >= 0:
+                used_out.add(best_idx)
+                matches.append((si, shapes_out[best_idx]))
+            else:
+                return None
+
+    return matches
+
+
+def _learn_recolor_by_size(train: list[dict]) -> dict | None:
+    """Learn a size→color mapping from training examples.
+
+    If all objects of the same size consistently map to the same output color
+    across all training examples, returns {size: output_color}.
+    """
+    size_to_color: dict[int, int] = {}
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            size = si["size"]
+            out_color = so["color"]
+            if size in size_to_color:
+                if size_to_color[size] != out_color:
+                    return None  # inconsistent
+            size_to_color[size] = out_color
+
+    # Validate: the mapping must actually change SOMETHING
+    # (not all objects map to the same color they already had)
+    has_change = False
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+        for si, so in matches:
+            if si["color"] != so["color"]:
+                has_change = True
+                break
+        if has_change:
+            break
+
+    if not has_change:
+        return None
+
+    return size_to_color
+
+
+def _learn_recolor_by_singleton(train: list[dict]) -> dict | None:
+    """Learn a singleton-vs-multi recolor rule.
+
+    If objects with size==1 always map to one color and objects with size>1
+    always map to another color (consistently across examples), return the rule.
+    Returns {True: color_for_multi, False: color_for_singleton} or None.
+    """
+    singleton_colors: set[int] = set()
+    multi_colors: set[int] = set()
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            if si["size"] == 1:
+                singleton_colors.add(so["color"])
+            else:
+                multi_colors.add(so["color"])
+
+    # Each class must map to exactly one color
+    if len(singleton_colors) != 1 or len(multi_colors) != 1:
+        return None
+
+    singleton_color = next(iter(singleton_colors))
+    multi_color = next(iter(multi_colors))
+
+    # Must actually change something
+    if singleton_color == multi_color:
+        return None
+
+    return {True: multi_color, False: singleton_color}
+
+
+def _make_conditional_recolor_fn(
+    rule: dict,
+    strategy: str,
+) -> Callable[[Grid], Grid]:
+    """Build a Grid→Grid function from a learned conditional recolor rule."""
+    from .objects import find_foreground_shapes, place_subgrid
+
+    def transform(grid: Grid) -> Grid:
+        shapes = find_foreground_shapes(grid)
+        if not shapes:
+            return grid
+
+        # Start with a copy of the grid (preserve background)
+        result = [row[:] for row in grid]
+
+        for shape in shapes:
+            if strategy == "by_size":
+                size = shape["size"]
+                if size in rule:
+                    new_color = rule[size]
+                else:
+                    # Unknown size — keep original color
+                    new_color = shape["color"]
+            elif strategy == "by_singleton":
+                is_multi = shape["size"] > 1
+                new_color = rule[is_multi]
+            else:
+                new_color = shape["color"]
+
+            # Recolor the object's pixels in-place
+            pos = shape["position"]
+            for r in range(len(shape["subgrid"])):
+                for c in range(len(shape["subgrid"][0])):
+                    if shape["subgrid"][r][c] != 0:
+                        result[pos[0] + r][pos[1] + c] = new_color
+
+        return result
+
+    return transform

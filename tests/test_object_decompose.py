@@ -292,3 +292,104 @@ class TestObjectDecomposeSolver:
         result = solve_by_object_decomposition(task, toolkit, cache)
         # Should return None (no per-object transform can produce full 9s)
         assert result is None or result.fitness < 0.99
+
+
+# ============================================================
+# Conditional per-object recolor
+# ============================================================
+
+class TestConditionalRecolor:
+    """Tests for conditional per-object recolor by property."""
+
+    def test_recolor_by_size(self):
+        """Large objects get recolored, singletons stay (like task 67385a82)."""
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        # Multi-pixel objects (color 3) become color 8; singletons stay 3
+        inp1 = [
+            [3, 3, 0],
+            [0, 3, 0],
+            [3, 0, 3],
+        ]
+        out1 = [
+            [8, 8, 0],
+            [0, 8, 0],
+            [3, 0, 3],
+        ]
+        inp2 = [
+            [0, 3, 3, 3, 0],
+            [0, 0, 0, 0, 0],
+            [3, 0, 3, 3, 0],
+        ]
+        out2 = [
+            [0, 8, 8, 8, 0],
+            [0, 0, 0, 0, 0],
+            [3, 0, 8, 8, 0],
+        ]
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+                {"input": inp2, "output": out2},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        assert result is not None
+        assert result.fitness >= 0.99
+        assert "recolor" in result.name.lower()
+
+    def test_recolor_by_size_consistent(self):
+        """All objects of size 2 become color 1, size 1 stay color 2."""
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        inp1 = [[2, 0, 2, 2], [0, 0, 0, 0]]
+        out1 = [[2, 0, 1, 1], [0, 0, 0, 0]]
+
+        inp2 = [[0, 2, 2, 0], [2, 0, 0, 2]]
+        out2 = [[0, 1, 1, 0], [2, 0, 0, 2]]
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+                {"input": inp2, "output": out2},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        assert result is not None
+        assert result.fitness >= 0.99
+
+    def test_no_recolor_when_inconsistent(self):
+        """If same-size objects map to different colors, no rule found."""
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        # Same size objects map to different output colors
+        inp1 = [[1, 0, 2], [0, 0, 0]]
+        out1 = [[3, 0, 4], [0, 0, 0]]  # size-1 -> 3 and size-1 -> 4?!
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        # Should not find a per-object recolor rule since same-size objects
+        # map to different colors
+        assert result is None or result.fitness < 0.99
