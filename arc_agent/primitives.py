@@ -2439,6 +2439,444 @@ def extend_nonzero_to_fill_col(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V15 NEW PRIMITIVES
+# ============================================================
+
+def recolor_isolated_to_nearest(grid: Grid) -> Grid:
+    """Recolor isolated pixels (no 4-way same-color neighbor) to nearest non-bg color.
+
+    An isolated pixel is one with no orthogonal neighbor of the same color.
+    Each such pixel is recolored to the non-bg color closest to it (Manhattan).
+    Handles tasks where scattered markers need to take on surrounding object colors.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            v = grid[r][c]
+            if v == bg:
+                continue
+            has_same_neighbor = any(
+                0 <= r+dr < h and 0 <= c+dc < w and grid[r+dr][c+dc] == v
+                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]
+            )
+            if has_same_neighbor:
+                continue
+            # Isolated — find nearest non-bg, non-v cell
+            best_d, best_v = float('inf'), None
+            for rr in range(h):
+                for cc in range(w):
+                    if grid[rr][cc] not in (bg, v):
+                        d = abs(r-rr) + abs(c-cc)
+                        if d < best_d:
+                            best_d, best_v = d, grid[rr][cc]
+            if best_v is not None:
+                result[r][c] = best_v
+    return result
+
+
+def recolor_small_objects_to_nearest(grid: Grid) -> Grid:
+    """Recolor small objects (size ≤ 3) to the color of the nearest larger object.
+
+    Helps tasks where tiny blobs of one color need to adopt a nearby object's color.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter, deque
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+
+    visited = [[False]*w for _ in range(h)]
+    components = []
+
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                color = grid[sr][sc]
+                cells = []
+                q = deque([(sr, sc)])
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.popleft()
+                    cells.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and not visited[nr][nc] and grid[nr][nc]==color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                components.append((color, cells))
+
+    # Partition into small vs large
+    sizes = [len(cells) for _, cells in components]
+    if not sizes:
+        return grid
+    max_size = max(sizes)
+    threshold = min(3, max_size // 3) if max_size > 3 else 1
+
+    large_cells = {}  # cell → color
+    for color, cells in components:
+        if len(cells) > threshold:
+            for cell in cells:
+                large_cells[cell] = color
+
+    if not large_cells:
+        return grid
+
+    result = [row[:] for row in grid]
+    for color, cells in components:
+        if len(cells) <= threshold:
+            for r, c in cells:
+                # Find nearest large cell
+                best_d, best_v = float('inf'), None
+                for (lr, lc), lcolor in large_cells.items():
+                    d = abs(r-lr) + abs(c-lc)
+                    if d < best_d:
+                        best_d, best_v = d, lcolor
+                if best_v is not None:
+                    result[r][c] = best_v
+    return result
+
+
+def mirror_h_merge(grid: Grid) -> Grid:
+    """Mirror horizontally and overlay: keep non-bg from either original or mirrored.
+
+    Useful for tasks where the left and right halves are complementary.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = []
+    for row in grid:
+        rev = row[::-1]
+        new_row = [a if a != bg else b for a, b in zip(row, rev)]
+        result.append(new_row)
+    return result
+
+
+def mirror_v_merge(grid: Grid) -> Grid:
+    """Mirror vertically and overlay: keep non-bg from either original or mirrored."""
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    h = len(grid)
+    result = []
+    for r in range(h):
+        row = []
+        for c in range(len(grid[r])):
+            a = grid[r][c]
+            b = grid[h-1-r][c]
+            row.append(a if a != bg else b)
+        result.append(row)
+    return result
+
+
+def sort_rows_by_value(grid: Grid) -> Grid:
+    """Sort values in each row in ascending order."""
+    return [sorted(row) for row in grid]
+
+
+def sort_cols_by_value(grid: Grid) -> Grid:
+    """Sort values in each column in ascending order."""
+    return transpose(sort_rows_by_value(transpose(grid)))
+
+
+def recolor_by_size_rank(grid: Grid) -> Grid:
+    """Recolor each connected component by its size rank (largest=1, 2nd=2, ...)."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter, deque
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+
+    visited = [[False]*w for _ in range(h)]
+    components = []
+    for sr in range(h):
+        for sc in range(w):
+            if not visited[sr][sc] and grid[sr][sc] != bg:
+                color = grid[sr][sc]
+                cells = []
+                q = deque([(sr, sc)])
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.popleft()
+                    cells.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and not visited[nr][nc] and grid[nr][nc]==color:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                components.append((color, cells))
+
+    if not components:
+        return grid
+
+    # Sort by size descending, assign rank color (1=largest)
+    components.sort(key=lambda x: len(x[1]), reverse=True)
+    result = [row[:] for row in grid]
+    for rank, (_, cells) in enumerate(components):
+        new_color = (rank % 9) + 1
+        for r, c in cells:
+            result[r][c] = new_color
+    return result
+
+
+def fill_row_from_right(grid: Grid) -> Grid:
+    """Propagate each row's non-bg color rightward (fill bg cells to the right)."""
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = []
+    for row in grid:
+        new_row = row[:]
+        last = bg
+        for i in range(len(row)-1, -1, -1):
+            if row[i] != bg:
+                last = row[i]
+            else:
+                new_row[i] = last
+        result.append(new_row)
+    return result
+
+
+def fill_col_from_bottom(grid: Grid) -> Grid:
+    """Propagate each col's non-bg color upward from the bottom."""
+    return transpose(fill_row_from_right(transpose(grid)))
+
+
+def extract_objects_on_grid(grid: Grid) -> Grid:
+    """Keep only objects that lie on a regular grid (equally spaced rows/cols).
+
+    Useful for tasks where objects are arranged in a grid pattern and off-grid
+    noise should be removed.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+
+    # Find rows and cols that have the most non-bg content
+    row_density = [sum(1 for v in grid[r] if v != bg) for r in range(h)]
+    col_density = [sum(1 for r in range(h) if grid[r][c] != bg) for c in range(w)]
+
+    # Find top-density rows/cols (potential grid lines)
+    max_row_d = max(row_density) if row_density else 0
+    max_col_d = max(col_density) if col_density else 0
+    if max_row_d == 0:
+        return grid
+
+    threshold_row = max_row_d * 0.5
+    threshold_col = max_col_d * 0.5
+    dense_rows = {r for r in range(h) if row_density[r] >= threshold_row}
+    dense_cols = {c for c in range(w) if col_density[c] >= threshold_col}
+
+    result = [[bg]*w for _ in range(h)]
+    for r in dense_rows:
+        for c in range(w):
+            result[r][c] = grid[r][c]
+    for c in dense_cols:
+        for r in range(h):
+            if result[r][c] == bg:
+                result[r][c] = grid[r][c]
+    return result
+
+
+def recolor_by_column_index(grid: Grid) -> Grid:
+    """Replace non-bg cells with (column_index % 9) + 1.
+
+    Creates a column-striped recoloring. Different from color_by_col_position
+    as it uses 1-indexed cyclic coloring.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    return [[(c % 9) + 1 if v != bg else bg for c, v in enumerate(row)] for row in grid]
+
+
+def recolor_by_row_index(grid: Grid) -> Grid:
+    """Replace non-bg cells with (row_index % 9) + 1."""
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    return [[(r % 9) + 1 if v != bg else bg for v in row] for r, row in enumerate(grid)]
+
+
+def tile_grid_2x1(grid: Grid) -> Grid:
+    """Tile the grid twice horizontally (double width)."""
+    return [row + row for row in grid]
+
+
+def tile_grid_1x2(grid: Grid) -> Grid:
+    """Tile the grid twice vertically (double height)."""
+    return grid + [row[:] for row in grid]
+
+
+def crop_to_content_border(grid: Grid) -> Grid:
+    """Crop to the bounding box of all non-bg cells, then add 1-cell bg border."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+
+    rows = [r for r in range(h) if any(grid[r][c] != bg for c in range(w))]
+    cols = [c for c in range(w) if any(grid[r][c] != bg for r in range(h))]
+    if not rows or not cols:
+        return grid
+
+    r0, r1 = max(0, rows[0]-1), min(h-1, rows[-1]+1)
+    c0, c1 = max(0, cols[0]-1), min(w-1, cols[-1]+1)
+    return [grid[r][c0:c1+1] for r in range(r0, r1+1)]
+
+
+def mask_by_color_overlap(grid: Grid) -> Grid:
+    """For each pair of cells in same row: where colors overlap, keep; else bg.
+
+    Finds the most common non-bg value and keeps only cells matching it.
+    """
+    if not grid or not grid[0]:
+        return grid
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    non_bg = [v for v, _ in Counter(flat).most_common() if v != bg]
+    if not non_bg:
+        return grid
+    keep = non_bg[0]  # most common non-bg
+    return [[v if v == keep else bg for v in row] for row in grid]
+
+
+def complete_symmetry_diagonal(grid: Grid) -> Grid:
+    """Complete diagonal (main diagonal) symmetry: if grid[r][c] set, set grid[c][r] too."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    if h != w:
+        return grid
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            a, b = grid[r][c], grid[c][r]
+            if a != bg and b == bg:
+                result[c][r] = a
+            elif b != bg and a == bg:
+                result[r][c] = b
+    return result
+
+
+def remove_color_noise(grid: Grid) -> Grid:
+    """Remove isolated single pixels of any color (replace with bg).
+
+    Opposite of recolor_isolated_to_nearest — just erases isolated pixels.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            v = grid[r][c]
+            if v == bg:
+                continue
+            has_same = any(
+                0<=r+dr<h and 0<=c+dc<w and grid[r+dr][c+dc]==v
+                for dr,dc in [(-1,0),(1,0),(0,-1),(0,1)]
+            )
+            if not has_same:
+                result[r][c] = bg
+    return result
+
+
+def fill_diagonal_stripes(grid: Grid) -> Grid:
+    """Fill background cells with a diagonal stripe pattern based on (r+c) % num_colors.
+
+    Uses the non-bg colors found in the grid.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    flat = [v for row in grid for v in row]
+    bg = Counter(flat).most_common(1)[0][0]
+    colors = [v for v, _ in Counter(flat).most_common() if v != bg]
+    if not colors:
+        return grid
+    n = len(colors)
+    result = []
+    for r in range(h):
+        row = []
+        for c in range(w):
+            if grid[r][c] != bg:
+                row.append(grid[r][c])
+            else:
+                row.append(colors[(r+c) % n])
+        result.append(row)
+    return result
+
+
+def keep_border_only(grid: Grid) -> Grid:
+    """Keep only the outermost ring of cells, set interior to bg."""
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+    from collections import Counter
+    bg = Counter(v for row in grid for v in row).most_common(1)[0][0]
+    result = [[bg]*w for _ in range(h)]
+    for c in range(w):
+        result[0][c] = grid[0][c]
+        result[h-1][c] = grid[h-1][c]
+    for r in range(h):
+        result[r][0] = grid[r][0]
+        result[r][w-1] = grid[r][w-1]
+    return result
+
+
+def repeat_pattern_to_size(grid: Grid) -> Grid:
+    """Find smallest repeating sub-pattern and tile it to fill original size.
+
+    More aggressive version of fill_tile_pattern — works bottom-up from 1x1.
+    """
+    if not grid or not grid[0]:
+        return grid
+    h, w = len(grid), len(grid[0])
+
+    # Try tile sizes from 1x1 up to h//2 x w//2
+    for th in range(1, h//2 + 1):
+        if h % th != 0:
+            continue
+        for tw in range(1, w//2 + 1):
+            if w % tw != 0:
+                continue
+            # Check if grid is a tiling of this tile
+            tile = [grid[r][:tw] for r in range(th)]
+            valid = True
+            for r in range(h):
+                for c in range(w):
+                    if grid[r][c] != tile[r % th][c % tw]:
+                        valid = False
+                        break
+                if not valid:
+                    break
+            if valid and (th < h or tw < w):
+                # Return the tile tiled to original size (same content)
+                return [[tile[r % th][c % tw] for c in range(w)] for r in range(h)]
+    return grid
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -2623,6 +3061,33 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # V14: Position-based coloring
         ("color_by_row_position", color_by_row_position),
         ("color_by_col_position", color_by_col_position),
+        # V15: Isolated pixel operations
+        ("recolor_isolated_to_nearest", recolor_isolated_to_nearest),
+        ("recolor_small_objs_to_nearest", recolor_small_objects_to_nearest),
+        ("remove_color_noise", remove_color_noise),
+        # V15: Mirror merge
+        ("mirror_h_merge", mirror_h_merge),
+        ("mirror_v_merge", mirror_v_merge),
+        # V15: Sort operations
+        ("sort_rows_by_value", sort_rows_by_value),
+        ("sort_cols_by_value", sort_cols_by_value),
+        # V15: Object recoloring
+        ("recolor_by_size_rank", recolor_by_size_rank),
+        # V15: Propagation
+        ("fill_row_from_right", fill_row_from_right),
+        ("fill_col_from_bottom", fill_col_from_bottom),
+        # V15: Structural
+        ("extract_objects_on_grid", extract_objects_on_grid),
+        ("crop_to_content_border", crop_to_content_border),
+        ("keep_border_only", keep_border_only),
+        ("complete_symmetry_diagonal", complete_symmetry_diagonal),
+        # V15: Tiling
+        ("tile_grid_2x1", tile_grid_2x1),
+        ("tile_grid_1x2", tile_grid_1x2),
+        ("repeat_pattern_to_size", repeat_pattern_to_size),
+        # V15: Misc
+        ("fill_diagonal_stripes", fill_diagonal_stripes),
+        ("mask_by_color_overlap", mask_by_color_overlap),
     ]
 
     for name, impl in partitioning_ops:

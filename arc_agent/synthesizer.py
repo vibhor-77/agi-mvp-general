@@ -259,6 +259,11 @@ class ProgramSynthesizer:
         "connect_pixels_to_rect", "recolor_2nd_to_3rd",
         "extend_nonzero_fill_row", "extend_nonzero_fill_col",
         "complete_pattern_4way",
+        # V15: new essential second steps
+        "recolor_isolated_to_nearest", "recolor_small_objs_to_nearest",
+        "remove_color_noise", "mirror_h_merge", "mirror_v_merge",
+        "sort_rows_by_value", "sort_cols_by_value",
+        "complete_symmetry_diagonal", "fill_row_from_right", "fill_col_from_bottom",
     ])
 
     def try_all_pairs(

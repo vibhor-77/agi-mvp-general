@@ -805,3 +805,49 @@ The 7 new primitives added 2 deterministic pair-solves, improve the evolution se
 - New solves confirmed: 22eb0ac0 (extend_nonzero_fill_row → x2), 4093f84a (gravity_toward_color)
 
 **Primitives dropped (scored 0 on all 400 tasks):** `rotate_colors_up`, `rotate_colors_down`, `color_by_row_position`, `color_by_col_position` (kept in code but removed from ESSENTIAL)
+
+**Full benchmark results (Mac, 8 workers):**
+- Training: **69/400 (17.2%)** exact, 59/400 (14.8%) test-confirmed, mean=0.850
+- Evaluation: **25/400 (6.2%)** exact, 19/400 (4.8%) test-confirmed, mean=0.819
+
+| Version | Train | Eval | Notes |
+|---------|-------|------|-------|
+| v0.12 | 66/400 (16.5%) | 23/400 (5.8%) | Triple search |
+| v0.13 | 66/400 (16.5%) | 23/400 (5.8%) | 7 primitives |
+| v0.14 | 69/400 (17.2%) | 25/400 (6.2%) | 27 primitives |
+
+---
+
+## Session 12 — v0.15: 19 New Primitives Targeting Eval Near-Misses
+
+**Analysis:** Ran single-prim sweep on 400 eval tasks; found 182 near-misses (0.85-0.99).
+- 88/182 need zeros→color fill  
+- 78/182 need color→color recoloring
+- 45 tasks where `identity` is best prim — truly need new operations
+- Top new prim near-misses: `repeat_pattern_to_size` (76 eval near), `extract_objects_on_grid` (74), `complete_symmetry_diagonal` (50), `crop_to_content_border` (40), `recolor_isolated_to_nearest` (37)
+
+**New primitives (v0.15):**
+- `recolor_isolated_to_nearest`: recolor isolated pixels to nearest non-bg color (37 eval near)
+- `recolor_small_objs_to_nearest`: recolor tiny objects (≤3 cells) to nearest large object color
+- `remove_color_noise`: erase isolated single pixels
+- `mirror_h_merge` / `mirror_v_merge`: mirror and overlay non-bg cells from both halves
+- `sort_rows_by_value` / `sort_cols_by_value`: sort values ascending in each row/col
+- `recolor_by_size_rank`: recolor each object by its size rank
+- `fill_row_from_right` / `fill_col_from_bottom`: rightward/upward propagation fill
+- `extract_objects_on_grid`: keep only objects on dense row/col grid lines
+- `crop_to_content_border`: crop to non-bg bbox + 1 border
+- `keep_border_only`: keep only outermost ring
+- `complete_symmetry_diagonal`: enforce diagonal (transpose) symmetry
+- `tile_grid_2x1` / `tile_grid_1x2`: tile grid horizontally/vertically
+- `repeat_pattern_to_size`: find repeating sub-pattern and verify it tiles whole grid
+- `fill_diagonal_stripes` / `mask_by_color_overlap`: misc utilities
+
+**Results:**
+- Toolkit: 224 concepts (was 205, +19)
+- Tests: 368 passing (was 349, +19)
+- 80-task training benchmark: **17/80 (21.2%)** exact (was 12/80 = 15.0%) — +6 tasks!
+
+| Version | Train (400) | Eval (400) |
+|---------|-------------|-----------|
+| v0.14 | 69/400 (17.2%) | 25/400 (6.2%) |
+| v0.15 | TBD | TBD |

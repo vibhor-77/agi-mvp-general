@@ -1375,3 +1375,214 @@ class TestV14ToolkitContents(unittest.TestCase):
     def test_toolkit_size_v14(self):
         tk = build_initial_toolkit()
         self.assertGreaterEqual(tk.size, 205)
+
+
+# ============================================================
+# V15 PRIMITIVE TESTS
+# ============================================================
+
+from arc_agent.primitives import (
+    recolor_isolated_to_nearest, recolor_small_objects_to_nearest,
+    remove_color_noise, mirror_h_merge, mirror_v_merge,
+    sort_rows_by_value, sort_cols_by_value, recolor_by_size_rank,
+    fill_row_from_right, fill_col_from_bottom,
+    complete_symmetry_diagonal, keep_border_only,
+    tile_grid_2x1, tile_grid_1x2, repeat_pattern_to_size,
+)
+
+
+class TestRecolorIsolatedToNearest(unittest.TestCase):
+    def test_isolated_gets_nearest_color(self):
+        # 5 is isolated, nearest non-bg color is 3 (nearby block)
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 3, 3, 0, 0],
+            [0, 3, 3, 0, 5],  # 5 is isolated, nearest is 3
+            [0, 0, 0, 0, 0],
+        ]
+        result = recolor_isolated_to_nearest(grid)
+        self.assertEqual(result[2][4], 3)
+
+    def test_non_isolated_unchanged(self):
+        grid = [
+            [0, 0, 0],
+            [0, 2, 2],  # 2s are adjacent, not isolated
+            [0, 0, 0],
+        ]
+        result = recolor_isolated_to_nearest(grid)
+        self.assertEqual(result[1][1], 2)
+        self.assertEqual(result[1][2], 2)
+
+    def test_empty_unchanged(self):
+        self.assertEqual(recolor_isolated_to_nearest([]), [])
+
+
+class TestRemoveColorNoise(unittest.TestCase):
+    def test_removes_isolated_pixels(self):
+        grid = [
+            [0, 0, 0, 0],
+            [0, 1, 0, 0],  # isolated 1
+            [0, 0, 2, 2],  # connected 2s
+            [0, 0, 2, 2],
+        ]
+        result = remove_color_noise(grid)
+        self.assertEqual(result[1][1], 0)  # isolated 1 removed
+        self.assertEqual(result[2][2], 2)  # connected 2 kept
+        self.assertEqual(result[2][3], 2)  # connected 2 kept
+
+    def test_all_connected_unchanged(self):
+        grid = [[1, 1], [1, 1]]
+        result = remove_color_noise(grid)
+        self.assertEqual(result, [[1, 1], [1, 1]])
+
+
+class TestMirrorHMerge(unittest.TestCase):
+    def test_fills_bg_from_mirror(self):
+        grid = [
+            [1, 0, 0, 2],
+        ]
+        result = mirror_h_merge(grid)
+        # Original: [1,0,0,2], mirrored: [2,0,0,1]
+        # Merge: [1,0,0,2] (non-bg wins)
+        self.assertEqual(result[0][0], 1)
+        self.assertEqual(result[0][3], 2)
+
+    def test_bg_filled_from_mirror(self):
+        # Row [1, 0, 0, 3]: mirrored = [3, 0, 0, 1]
+        # Merged: [1, 3, 3, 3] — bg(0) positions get mirror value
+        grid = [[1, 0, 0, 3]]
+        result = mirror_h_merge(grid)
+        self.assertEqual(result[0][0], 1)  # original kept
+        self.assertEqual(result[0][3], 3)  # original kept
+        # middle positions: original=0, mirror=0 → stays 0
+        self.assertEqual(result[0][1], 0)
+
+
+class TestMirrorVMerge(unittest.TestCase):
+    def test_fills_bg_from_vmirror(self):
+        grid = [
+            [1, 0],
+            [0, 0],
+            [0, 2],
+        ]
+        result = mirror_v_merge(grid)
+        # row 0 original [1,0], mirrored row (row 2) [0,2] → [1,2]
+        self.assertEqual(result[0][0], 1)
+        self.assertEqual(result[0][1], 2)
+
+
+class TestSortRows(unittest.TestCase):
+    def test_sorts_row_ascending(self):
+        grid = [[3, 1, 2], [6, 4, 5]]
+        result = sort_rows_by_value(grid)
+        self.assertEqual(result[0], [1, 2, 3])
+        self.assertEqual(result[1], [4, 5, 6])
+
+
+class TestSortCols(unittest.TestCase):
+    def test_sorts_col_ascending(self):
+        grid = [[3, 6], [1, 4], [2, 5]]
+        result = sort_cols_by_value(grid)
+        self.assertEqual([result[r][0] for r in range(3)], [1, 2, 3])
+        self.assertEqual([result[r][1] for r in range(3)], [4, 5, 6])
+
+
+class TestFillRowFromRight(unittest.TestCase):
+    def test_propagates_rightward(self):
+        grid = [[0, 0, 3, 0, 0]]
+        result = fill_row_from_right(grid)
+        # From right, 3 is at position 2, propagates left to positions 0,1
+        self.assertEqual(result[0][0], 3)
+        self.assertEqual(result[0][1], 3)
+        self.assertEqual(result[0][2], 3)
+        # Positions after 3 stay 0 (no value to right of 3)
+        self.assertEqual(result[0][3], 0)
+
+
+class TestCompleteSymmetryDiagonal(unittest.TestCase):
+    def test_mirrors_across_diagonal(self):
+        grid = [
+            [0, 5, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+        ]
+        result = complete_symmetry_diagonal(grid)
+        # (0,1)=5 should set (1,0)=5
+        self.assertEqual(result[1][0], 5)
+
+    def test_non_square_unchanged(self):
+        grid = [[1, 2, 3], [4, 5, 6]]
+        result = complete_symmetry_diagonal(grid)
+        self.assertEqual(result, grid)
+
+
+class TestKeepBorderOnly(unittest.TestCase):
+    def test_keeps_border_clears_interior(self):
+        # Grid filled with 1s, interior 2 should be cleared to bg (1)
+        # Actually keep_border_only sets interior to bg (most common)
+        # Use a grid where border=1 and interior has different value
+        grid = [
+            [1, 1, 1, 1],
+            [1, 2, 2, 1],
+            [1, 2, 2, 1],
+            [1, 1, 1, 1],
+        ]
+        result = keep_border_only(grid)
+        # bg=1 (most common), interior 2s replaced by 1
+        self.assertEqual(result[1][1], 1)
+        self.assertEqual(result[1][2], 1)
+        # border values unchanged
+        self.assertEqual(result[0][0], 1)
+
+
+class TestTileGrid(unittest.TestCase):
+    def test_tile_2x1(self):
+        grid = [[1, 2], [3, 4]]
+        result = tile_grid_2x1(grid)
+        self.assertEqual(result[0], [1, 2, 1, 2])
+        self.assertEqual(result[1], [3, 4, 3, 4])
+
+    def test_tile_1x2(self):
+        grid = [[1, 2], [3, 4]]
+        result = tile_grid_1x2(grid)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result[2], [1, 2])
+        self.assertEqual(result[3], [3, 4])
+
+
+class TestRepeatPatternToSize(unittest.TestCase):
+    def test_tiled_grid_returns_same(self):
+        # A 4x4 grid that's already a 2x2 tile repeated
+        grid = [
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+        ]
+        result = repeat_pattern_to_size(grid)
+        # Should return same content (already tiled)
+        self.assertEqual(result, grid)
+
+    def test_non_tiled_unchanged(self):
+        grid = [[1, 2], [3, 5]]  # no repeating pattern
+        result = repeat_pattern_to_size(grid)
+        self.assertEqual(result, grid)
+
+
+class TestV15ToolkitContents(unittest.TestCase):
+    def test_new_v15_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "recolor_isolated_to_nearest", "recolor_small_objs_to_nearest",
+            "remove_color_noise", "mirror_h_merge", "mirror_v_merge",
+            "sort_rows_by_value", "sort_cols_by_value", "recolor_by_size_rank",
+            "fill_row_from_right", "fill_col_from_bottom",
+            "complete_symmetry_diagonal", "keep_border_only",
+            "tile_grid_2x1", "tile_grid_1x2", "repeat_pattern_to_size",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing: {name}")
+
+    def test_toolkit_size_v15(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 224)
