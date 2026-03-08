@@ -962,3 +962,137 @@ Eval 30/400 = **7.5%** — best result yet. +9 train solves, +4 eval solves vs s
 
 Note: Diminishing returns appearing — each new batch adds fewer solves.
 Marginal gains suggest we need to look beyond simple primitives.
+
+---
+
+## Session 15 — v0.22: Metric Correction & CLI Restructure
+
+### User requests
+1. Restructure CLI into separate `train` and `eval` subcommands with unified `--culture-file`
+2. Fix metric definitions — "Solved (exact)" should mean pixel-perfect on BOTH train AND test
+3. Investigate why fluke numbers weren't showing in output
+
+### Key correction: Fluke definition was backwards
+The user identified that the original fluke definition was incorrect:
+- **Wrong**: Fluke = pixel-perfect on train but failed test (that's an overfit)
+- **Correct**: Fluke = passed test but NOT pixel-perfect on train (test success is luck)
+
+This led to a full metric redefinition:
+- **Solved (exact)** = pixel-perfect on train AND test (golden metric)
+- **Flukes** = passed test but NOT pixel-perfect on train
+- **Overfits** = pixel-perfect on train but FAILED test
+- **TC (test confirmed)** = solved exact + flukes
+
+The user emphasized: "TC is not the real metric during training and validation, it is TC - Flukes."
+
+### v0.22 Results (with corrected metrics)
+
+| Metric | Train | Eval |
+|--------|-------|------|
+| **Solved (exact)** | 79/400 (19.8%) | 18/400 (4.5%) |
+| Test confirmed | 82/400 (20.5%) | 23/400 (5.8%) |
+| Flukes | 3 | 5 |
+| Overfits | 20 | 8 |
+
+Note: Numbers appear lower than v0.17 because the metric changed. Previous versions counted "solved" as pixel-perfect on train only.
+
+### Commits
+- `75699e1` Restructure CLI into train/eval subcommands with --culture-file
+- `3dfa018` Fix metric definitions: Solved(exact) = pixel-perfect on train AND test
+- `f7d7f20` Update README with v0.22 results and correct metric definitions
+
+---
+
+## Session 16 — v0.23: Object-Centric Reasoning & Architecture Overhaul
+
+### User requests
+1. Analyze diminishing returns — "go back to my comment about diminishing returns"
+2. Rethink the core approach from first principles
+3. Design and implement object-centric reasoning
+4. "Use scientific method, TDD, proceed incrementally"
+5. Fix progress tracker showing wrong numbers (103 vs 81 discrepancy)
+6. Add `infer` mode for private eval submission
+7. Remove all early exits — always explore full search space
+8. "Training is still too fast — are we leaving gains on the table?"
+
+### Diminishing returns analysis
+Data-driven analysis showed:
+- Evolution contributes only 1 solve on eval
+- 68% of tasks are same-dims, we solve only 2.2% of those
+- Train-eval gap (79 vs 18) indicates primitives are overfit to training
+- 287 primitives doing grid-level transforms, not object-level reasoning
+- Top ARC approaches (ARGA 36.6%) separate perception from transformation
+
+### Object-centric reasoning (Phase 1+2)
+
+Implemented perceive → compare → infer → apply pipeline:
+1. **SceneGraph**: grid decomposed into background + list of SceneObjects
+2. **Structured diffs**: compare input/output scenes per-object
+3. **Consistent rules**: find patterns across ALL training examples
+4. **Rule types**: recolor, removal, global color mapping, size-conditional recolor
+
+Results: 10 training tasks solved by object rules (2 → 10 = 5x improvement).
+
+### Missed candidates analysis
+- 39 eval tasks score ≥95% on both train and test but aren't solved
+- Theoretical ceiling with top-3 submissions: ~57 solves (14.3%)
+- Currently only keeping 1 candidate per task
+
+### Architecture overhaul: Three modes
+User pointed out several issues:
+1. Progress tracker showed "Solved (exact): 103" but summary showed "81" — tracker was using PP train only
+2. "Even in eval mode, we probably don't want early exit"
+3. "Have an inference mode where we do not look at test output at all"
+4. "Training is still way too fast" — need more exhaustive search
+
+Changes made:
+- **Three CLI modes**: `train` (saves culture), `infer` (no test peeking), `eval` (full scoreboard)
+- **No early exits** in any mode — always run full search pipeline
+- **Consistent symbols**: ✓=solved exact, ◇=overfit, △=fluke, ~=partial, ✗=low
+- **Evolution runs full budget** — target_score set unreachable (no early break)
+- **3x evolution restarts** during training for more exploration
+- **Progress tracker fixed** to show golden metric consistently
+
+### v0.23 Results
+
+| Metric | Train | Eval |
+|--------|-------|------|
+| **Solved (exact)** | 81/400 (20.2%) | 19/400 (4.8%) |
+| Test confirmed | 84/400 (21.0%) | 23/400 (5.8%) |
+| Flukes | 3 | 4 |
+| Overfits | 22 | 10 |
+| Total candidates | 430 across 103 tasks | 3 across 3 tasks |
+| Multi-candidate | 96 tasks had >1 | — |
+
+### Key commits
+- `cecb8c3` Add object-centric scene reasoning pipeline (Phase 1)
+- `48a2675` Add global color map and size-conditional recolor rules
+- `c9e6a06` Add diagnostic scripts for object rule analysis
+- `559e010` Make train exhaustive and eval lean: mode-aware solver
+- `2123b16` Add infer mode, fix metrics display, remove all early exits
+- `b741953` Remove evolution early-exit: always run full generation budget
+- `b4f6353` Add 3x evolution restarts during training
+
+### Key files created/modified
+- **arc_agent/scene.py** — NEW: object-centric reasoning (~485 lines)
+- **tests/test_scene.py** — NEW: 26 TDD tests for scene module
+- **arc_agent/evaluate.py** — Rewritten: three modes (train/infer/eval)
+- **arc_agent/dataset.py** — Fixed metrics, progress tracker, candidate tracking
+- **arc_agent/solver.py** — No early exits, 3x restarts, mode parameter
+- **scripts/analyze_object_rules.py** — NEW: pattern analysis diagnostic
+- **scripts/debug_recolor.py** — NEW: recolor failure analysis
+
+### User principles established
+- "Note that anytime I give instructions, feel free to push back if that might not be the right approach. Use a data driven scientific approach to make decisions."
+- "Commit the changes first every time" before running benchmarks
+- "TC is not the real metric during training and validation, it is TC - Flukes"
+- Always use the golden metric: solved exact = pixel-perfect on train AND test
+- Training should be MORE expensive than eval, not less
+- No early exits — always get the full picture
+- Focus on eval numbers, not train numbers
+
+### Next steps identified
+- Richer object rules: movement, conditional, relational
+- Multiple candidate submission (top-3 diverse predictions per task)
+- Investigate why evolution stalls immediately on many tasks
+- Test on ARC-AGI-2
