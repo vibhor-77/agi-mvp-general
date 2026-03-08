@@ -1357,3 +1357,88 @@ The 169 near-miss tasks don't need per-cell conditional logic. They need **multi
 - Focus on object-level spatial reasoning (line drawing, projection, boundary extension)
 - Consider parametric primitives with task-specific parameter search
 - Investigate the 91 tasks scoring <0.80 that use evolved method — what types are they?
+
+---
+
+## Session 20 — Object-Decomposition Architecture (March 2026)
+
+### Prompt
+
+User requested implementation of a **perceive → decompose → transform-per-object → reassemble** architecture, noting:
+
+> "One thing I see missing is identifying the shape(s). I don't think any of our primitives are read only, e.g. find_bounding_box or something? And then we decompose the larger grid into smaller grids, and the transformation functions can be applied recursively on those."
+>
+> "e.g. find_foreground_shapes() -> array of grids; for grid in main_grid.find_foreground_shapes(): replace_color(grid, color1, color2)"
+
+Also mentioned that parameterized primitives and spatial primitives were added in the prior session (Session 19 continued):
+- `arc_agent/param_search/` — SubstituteColor, FillEnclosedWith, RecolorByFrequency (0 new solves, infrastructure retained)
+- `arc_agent/spatial/` — extend_lines, fill_rooms, mirror_pattern, gravity_drop (0 new solves, fill_rooms got 0.982 on e73095fd)
+- Line projection primitive: +1 solve (2c608aff)
+
+### Claude's Reasoning
+
+Explored existing infrastructure thoroughly:
+- `find_objects()` in objects.py returns connected components as `GridObject` with `to_grid()`, `bbox`, `center`
+- `scene.py` has `build_scene()` and `solve_with_object_rules()` but only discovers recolor/remove rules
+- `decompose.py` has color-channel, spatial quadrant, and diff-focus — but NO per-object decomposition
+- **Critical gap identified**: No way to extract objects as subgrids, transform each, and place results back
+
+### Implementation
+
+**Step 1: Perception helpers** (added to `objects.py`):
+- `find_bounding_box(grid)` — returns (min_r, min_c, max_r, max_c) of all non-zero cells, or None
+- `find_foreground_shapes(grid)` — extracts each connected component as `{subgrid, bbox, color, size, position}`
+- `place_subgrid(canvas, subgrid, position, transparent_color=0)` — inverse of `to_grid()`, places transformed subgrid back
+
+**Step 2: Object decomposition solver** (new file `arc_agent/object_decompose.py`):
+- `solve_by_object_decomposition(task, toolkit, cache)` — iterates all ~250 toolkit operators
+- For each operator: applies it to each object's subgrid independently, reassembles onto background canvas
+- If any single operator produces pixel-perfect results on ALL training examples, returns it
+- Runs in ~12 seconds across all 400 tasks (30ms per task average)
+
+**Step 3: Integration** into solver pipeline as step 3.95 (after object rules, before evolution).
+
+**Step 4: Tests** — 16 tests covering perception helpers and end-to-end decomposition:
+- find_bounding_box: 5 tests (single, multiple, empty, full, single-pixel)
+- find_foreground_shapes: 3 tests (multi-object, empty, single-pixel)
+- place_subgrid: 5 tests (basic, transparency, roundtrip, no-mutation, custom transparent)
+- End-to-end: 3 tests (mirror per-object, recolor per-object, no-solution returns None)
+
+### Results
+
+Scanned all 400 training tasks:
+
+| Task | Baseline Score | Object Decomp | Transform | Status |
+|------|---------------|---------------|-----------|--------|
+| 3aa6fb7a | 1.000 (solved) | 1.000 | per_object(rotate_colors_up) | Already solved |
+| 4347f46a | 1.000 (solved) | 1.000 | per_object(outline) | Already solved |
+| 60b61512 | 0.959 | 1.000 | per_object(fill_bg_7) | Improved but test fails (0.951) |
+| 6d75e8bb | 1.000 (solved) | 1.000 | per_object(fill_bg_2) | Already solved |
+
+**Net result**: 0 new test-confirmed solves. The infrastructure is sound — object decomposition correctly identifies per-object transforms — but the transforms that match are either already found by simpler methods or use hardcoded parameters (fill_bg_7) that don't generalize.
+
+**Key insight**: The real power of object decomposition will come from combining it with parameterized primitives, so the per-object transform can learn parameters structurally (e.g., "fill each object's interior with the second-most-common color") rather than as absolute values.
+
+### Files Modified/Created
+
+| File | Action |
+|------|--------|
+| `arc_agent/objects.py` | Added find_foreground_shapes, find_bounding_box, place_subgrid |
+| `arc_agent/object_decompose.py` | NEW — per-object decomposition solver (180 lines) |
+| `arc_agent/solver.py` | Added _try_object_decomposition, integrated as step 3.95 |
+| `tests/test_object_decompose.py` | NEW — 16 TDD tests |
+
+### Verification
+
+| Metric | Result |
+|--------|--------|
+| New tests | 16 (all passing) |
+| Regressions | 0 |
+| New training solves | 0 (60b61512 improved on train but fails test) |
+| Scan time (400 tasks) | 12 seconds |
+
+### Next Steps
+- Combine object decomposition with parameterized primitives (the "hybrid" approach)
+- Per-object transforms with learned parameters: apply substitute_color per-object with colors learned from examples
+- Multi-object matching: learn different transforms for objects of different sizes/colors
+- Investigate resize tasks: when output dimensions differ, the per-object subgrids may need scaling

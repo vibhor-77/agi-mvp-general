@@ -185,6 +185,7 @@ agi-mvp-general/
 │   ├── objects.py                   # Object-level primitives (connected components)
 │   ├── scene.py                     # Object-centric reasoning (perceive→infer→apply)
 │   ├── decompose.py                 # Task decomposition (color-channel, spatial, diff)
+│   ├── object_decompose.py          # Per-object decomposition (perceive→transform→reassemble)
 │   ├── culture.py                   # Culture save/load (cumulative knowledge transfer)
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
@@ -276,6 +277,9 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Multiple evolution restarts (3x during training)
 - [x] Consistent metric definitions (solved exact = train AND test)
 - [x] Cell-level rule synthesis (per-cell conditional transformations)
+- [x] Object decomposition (perceive → transform-per-object → reassemble)
+- [x] Parameterized primitives (structural parameter learning)
+- [x] Spatial primitives (line extension, room filling, mirror, gravity)
 - [ ] Richer object rules (movement, conditional, relational)
 - [x] Multiple candidate submission (top-k diverse predictions per task)
 - [ ] ARC-AGI-2 evaluation
