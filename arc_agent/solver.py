@@ -185,10 +185,13 @@ class FourPillarsSolver:
             seed_programs.insert(0, pair_result)
 
         # Step 4: Evolutionary synthesis (FEEDBACK + APPROXIMABILITY + EXPLORATION)
+        # Always run the FULL generation budget — no early exit on target_score.
+        # We want to discover all viable candidates and alternative programs,
+        # not just the first one that hits 0.99.
         best_program, history = self.synthesizer.synthesize(
             task=task,
             max_generations=self.max_generations,
-            target_score=0.99,
+            target_score=2.0,  # unreachable → always run full budget
             seed_programs=seed_programs,
             verbose=self.verbose,
             cache=cache,
