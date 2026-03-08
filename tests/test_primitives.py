@@ -2240,6 +2240,58 @@ class TestTripleSearchPrepend(unittest.TestCase):
             self.assertGreaterEqual(triple.fitness, pair.fitness)
 
 
+class TestLearnedColorMapping(unittest.TestCase):
+    """Test example-parameterized color mapping in solver."""
+
+    def test_learn_color_mapping_simple(self):
+        from arc_agent.solver import FourPillarsSolver
+        solver = FourPillarsSolver(verbose=False)
+
+        # Task: swap color 1 and 2
+        task = {
+            "train": [
+                {"input": [[1, 0], [0, 2]], "output": [[2, 0], [0, 1]]},
+                {"input": [[1, 1], [2, 0]], "output": [[2, 2], [1, 0]]},
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        self.assertEqual(len(concepts), 1)
+        self.assertEqual(concepts[0].name, "learned_color_map")
+
+        # Verify the mapping works
+        result = concepts[0].apply([[1, 2, 0]])
+        self.assertEqual(result, [[2, 1, 0]])
+
+    def test_no_mapping_for_diff_dims(self):
+        from arc_agent.solver import FourPillarsSolver
+        solver = FourPillarsSolver(verbose=False)
+
+        # Different dimensions => no color mapping
+        task = {
+            "train": [
+                {"input": [[1, 0], [0, 2]], "output": [[1]]},
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        self.assertEqual(len(concepts), 0)
+
+    def test_no_mapping_for_identity(self):
+        from arc_agent.solver import FourPillarsSolver
+        solver = FourPillarsSolver(verbose=False)
+
+        # Identity => no changes => no mapping
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[1, 2], [3, 4]]},
+            ],
+            "test": [],
+        }
+        concepts = solver._learn_task_concepts(task)
+        self.assertEqual(len(concepts), 0)
+
+
 class TestV20ToolkitContents(unittest.TestCase):
     def test_new_v20_primitives_exist(self):
         tk = build_initial_toolkit()

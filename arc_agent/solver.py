@@ -13,8 +13,9 @@ The solver also implements the "cumulative culture" principle:
 """
 from __future__ import annotations
 import time
+from collections import defaultdict
 from typing import Optional
-from .concepts import Toolkit, Archive, Program
+from .concepts import Toolkit, Archive, Program, Concept, Grid
 from .primitives import build_initial_toolkit
 from .synthesizer import ProgramSynthesizer
 from .explorer import ExplorationEngine
@@ -105,6 +106,14 @@ class FourPillarsSolver:
         seed_programs = self.explorer.generate_seed_programs(features)
         if self.verbose:
             print(f"Seed programs from transfer: {len(seed_programs)}")
+
+        # Step 2.5: Learn task-specific concepts from examples (MDL principle)
+        # These are temporarily injected into the toolkit for this task's search.
+        learned_concepts = self._learn_task_concepts(task)
+        for lc in learned_concepts:
+            self.toolkit.add_concept(lc)
+        if self.verbose and learned_concepts:
+            print(f"Learned concepts: {[lc.name for lc in learned_concepts]}")
 
         # Step 3: Quick check — does any single primitive solve it?
         best_single = self._try_single_primitives(task, cache)
@@ -212,6 +221,10 @@ class FourPillarsSolver:
             # Record for transfer but don't promote to toolkit
             self.archive.record_solution(task_id, best_program, best_score)
 
+        # Clean up task-specific learned concepts (they're task-bound, not reusable)
+        for lc in learned_concepts:
+            self.toolkit.concepts.pop(lc.name, None)
+
         # Record concept library growth
         self.concept_growth.append(self.toolkit.size)
         self.solve_times.append(elapsed)
@@ -305,6 +318,80 @@ class FourPillarsSolver:
 
         if self.verbose:
             print(f"  ✓ SOLVED in {elapsed:.2f}s (score={score:.3f})")
+
+    # ----------------------------------------------------------------
+    # Example-parameterized concepts: learn transforms FROM the task
+    # ----------------------------------------------------------------
+
+    def _learn_task_concepts(self, task: dict) -> list[Concept]:
+        """Learn example-parameterized concepts from training examples.
+
+        Instead of using only hard-coded primitives, we extract simple
+        transforms directly from the input→output examples. This follows
+        the MDL / Kolmogorov principle: the simplest explanation wins.
+
+        Currently learns:
+          - Color mapping: if color A→B consistently, apply that mapping.
+
+        Returns a list of Concept objects that can be temporarily injected
+        into the toolkit for this task's search.
+        """
+        concepts: list[Concept] = []
+        train = task.get("train", [])
+        if not train:
+            return concepts
+
+        # 1. COLOR MAPPING: learn consistent pixel-by-pixel color changes
+        same_dims = all(
+            len(ex["input"]) == len(ex["output"])
+            and len(ex["input"][0]) == len(ex["output"][0])
+            for ex in train
+        )
+        if same_dims:
+            color_map = self._learn_color_mapping(train)
+            if color_map:
+                mapping = dict(color_map)  # capture for closure
+
+                def apply_color_map(grid: Grid, _m=mapping) -> Grid:
+                    return [[_m.get(cell, cell) for cell in row] for row in grid]
+
+                concepts.append(Concept(
+                    kind="operator",
+                    name="learned_color_map",
+                    implementation=apply_color_map,
+                ))
+
+        return concepts
+
+    @staticmethod
+    def _learn_color_mapping(train: list[dict]) -> Optional[dict[int, int]]:
+        """Learn a consistent color mapping from training examples.
+
+        Returns {in_color: out_color} if every changed pixel follows the
+        same mapping across ALL examples. Returns None otherwise.
+        """
+        mappings: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        for ex in train:
+            inp, out = ex["input"], ex["output"]
+            for r in range(len(inp)):
+                for c in range(len(inp[0])):
+                    if inp[r][c] != out[r][c]:
+                        mappings[inp[r][c]][out[r][c]] += 1
+
+        if not mappings:
+            return None
+
+        # Each input color must map to exactly one output color
+        result: dict[int, int] = {}
+        for in_color, out_counts in mappings.items():
+            best_out = max(out_counts, key=out_counts.get)
+            # Check consistency: best_out must dominate
+            total = sum(out_counts.values())
+            if out_counts[best_out] < total * 0.9:
+                return None  # ambiguous mapping
+            result[in_color] = best_out
+
+        return result if result else None
 
     def _make_result(self, task_id, program, score, elapsed, method):
         return {

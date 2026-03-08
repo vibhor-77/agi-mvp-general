@@ -286,6 +286,8 @@ class ProgramSynthesizer:
         "recolor_nonzero_inside_8_bbox_to_3",   # 32597951 solved
         # V20: confirmed pair-solve value (a79310a0 test-confirmed)
         "shift_down_1",                         # 25ff71a9 solved; a79310a0 pair-solved
+        # V21: confirmed pair-solve value
+        "swap_most_least",                      # b94a9452 pair-solved (tc=True)
     ])
 
     def try_all_pairs(
