@@ -272,6 +272,13 @@ class ProgramSynthesizer:
         "remove_color_noise",
         # V15 speed-fix: re-added after confirmed lost solve (0b148d64)
         "crop_nonzero",             # low solo rank but critical as 2nd step
+        # V16: demonstrated pair-solve value
+        "fill_stripe_gaps_h",               # 22168020 solved; 40853293 as 1st step
+        "fill_stripe_gaps_v",               # complement of fill_stripe_gaps_h
+        "propagate_color_v",                # d037b0a7 solved
+        "complete_tile_from_modal_row",     # 7f4411dc solved as 2nd step
+        "recolor_smallest_obj_in_each_row", # ba97ae07 solved
+        "snap_isolated_to_rect_boundary",   # d89b689b solved
     ])
 
     def try_all_pairs(

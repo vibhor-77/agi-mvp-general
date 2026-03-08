@@ -1586,3 +1586,115 @@ class TestV15ToolkitContents(unittest.TestCase):
     def test_toolkit_size_v15(self):
         tk = build_initial_toolkit()
         self.assertGreaterEqual(tk.size, 224)
+
+
+class TestFillStripeGaps(unittest.TestCase):
+    def test_fill_stripe_gaps_h_basic(self):
+        from arc_agent.primitives import fill_stripe_gaps_h
+        # Row with same color on both sides of zeros
+        grid = [[3, 0, 0, 3], [1, 2, 1, 2]]
+        result = fill_stripe_gaps_h(grid)
+        # Row 0: 3 _ _ 3 → 3 3 3 3
+        self.assertEqual(result[0], [3, 3, 3, 3])
+        # Row 1: different colors — should not fill
+        self.assertEqual(result[1], [1, 2, 1, 2])
+
+    def test_fill_stripe_gaps_v_basic(self):
+        from arc_agent.primitives import fill_stripe_gaps_v
+        # Column 0 has 5 on top and bottom with zeros between
+        grid = [[5, 0], [0, 0], [5, 0]]
+        result = fill_stripe_gaps_v(grid)
+        self.assertEqual(result[0][0], 5)
+        self.assertEqual(result[1][0], 5)
+        self.assertEqual(result[2][0], 5)
+
+
+class TestCompleteTileFromModal(unittest.TestCase):
+    def test_complete_tile_from_modal_row(self):
+        from arc_agent.primitives import complete_tile_from_modal_row
+        # Row majority is 1, one anomaly of 7
+        grid = [[1, 1, 1, 7, 1, 1],
+                [2, 2, 2, 2, 2, 2]]
+        result = complete_tile_from_modal_row(grid)
+        # Anomalous 7 in row 0 should be replaced by 1
+        self.assertEqual(result[0][3], 1)
+        # Row 1 all same — no change
+        self.assertEqual(result[1], [2, 2, 2, 2, 2, 2])
+
+    def test_complete_tile_from_modal_col(self):
+        from arc_agent.primitives import complete_tile_from_modal_col
+        # Column 0 majority is 3, one anomaly of 9
+        grid = [[3], [3], [9], [3], [3], [3]]
+        result = complete_tile_from_modal_col(grid)
+        self.assertEqual(result[2][0], 3)
+
+
+class TestRecolorMinority(unittest.TestCase):
+    def test_recolor_minority_in_rows(self):
+        from arc_agent.primitives import recolor_minority_in_rows
+        # Row with dominant color 2, one stray 7
+        grid = [[0, 0, 0, 0],
+                [2, 2, 7, 2],
+                [3, 3, 3, 3]]
+        result = recolor_minority_in_rows(grid)
+        # The 7 (appears once in row 1, dominant is 2) should be recolored to 2
+        self.assertEqual(result[1][2], 2)
+
+
+class TestPropagateColor(unittest.TestCase):
+    def test_propagate_color_h(self):
+        from arc_agent.primitives import propagate_color_h
+        grid = [[0, 0, 3, 0, 0, 0],
+                [0, 5, 0, 0, 0, 0]]
+        result = propagate_color_h(grid)
+        # Row 0: 3 propagates right
+        self.assertEqual(result[0][3], 3)
+        self.assertEqual(result[0][5], 3)
+        # Row 1: 5 propagates right
+        self.assertEqual(result[1][2], 5)
+
+    def test_propagate_color_v(self):
+        from arc_agent.primitives import propagate_color_v
+        grid = [[0, 4], [0, 0], [0, 0]]
+        result = propagate_color_v(grid)
+        # Col 1: 4 propagates down
+        self.assertEqual(result[1][1], 4)
+        self.assertEqual(result[2][1], 4)
+
+
+class TestSnapIsolatedToRect(unittest.TestCase):
+    def test_snap_isolated_leaves_main_object(self):
+        from arc_agent.primitives import snap_isolated_to_rect_boundary
+        # Simple: one isolated pixel outside a rectangle
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 8, 8, 8, 0],
+            [0, 8, 8, 8, 0],
+            [0, 0, 0, 0, 0],
+            [3, 0, 0, 0, 0],  # isolated 3, outside rectangle
+        ]
+        result = snap_isolated_to_rect_boundary(grid)
+        # The isolated 3 should be moved (original position cleared)
+        self.assertEqual(result[4][0], 0)
+
+
+class TestV16ToolkitContents(unittest.TestCase):
+    def test_new_v16_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "fill_stripe_gaps_h", "fill_stripe_gaps_v",
+            "complete_tile_from_modal_col", "complete_tile_from_modal_row",
+            "recolor_minority_in_rows", "recolor_minority_in_cols",
+            "recolor_smallest_obj_in_each_row", "recolor_smallest_obj_in_each_col",
+            "fill_grid_intersections", "propagate_color_h", "propagate_color_v",
+            "recolor_unique_in_row_col", "snap_isolated_to_rect_boundary",
+            "recolor_touching_2nd_to_8", "recolor_touching_2nd_to_3",
+            "recolor_neighbors_of_2nd_color",
+            "extend_color_within_col_bounds", "extend_color_within_row_bounds",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing v0.16 primitive: {name}")
+
+    def test_toolkit_size_v16(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 242)

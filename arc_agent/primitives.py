@@ -2877,6 +2877,524 @@ def repeat_pattern_to_size(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V16 NEW PRIMITIVES
+# ============================================================
+
+def fill_stripe_gaps_h(grid: Grid) -> Grid:
+    """Fill bg (0) cells between same-color cells within each row.
+
+    For each row, if a 0 lies between two cells of the same non-zero color
+    with no other colors between them, fill those 0s with that color.
+    Useful for: extending color stripes horizontally to fill gaps.
+    """
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row = result[r]
+        # Forward scan: track last non-zero color seen and its column
+        changed = True
+        while changed:
+            changed = False
+            for c in range(w):
+                if row[c] == 0:
+                    # Find nearest non-zero to left and right
+                    left_c, left_col = 0, -1
+                    for lc in range(c - 1, -1, -1):
+                        if row[lc] != 0:
+                            left_c, left_col = row[lc], lc
+                            break
+                    right_c, right_col = 0, -1
+                    for rc in range(c + 1, w):
+                        if row[rc] != 0:
+                            right_c, right_col = row[rc], rc
+                            break
+                    if left_c != 0 and left_c == right_c:
+                        # Fill the gap
+                        for fc in range(left_col + 1, right_col):
+                            if row[fc] == 0:
+                                row[fc] = left_c
+                                changed = True
+    return result
+
+
+def fill_stripe_gaps_v(grid: Grid) -> Grid:
+    """Fill bg (0) cells between same-color cells within each column.
+
+    Vertical counterpart of fill_stripe_gaps_h.
+    """
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for c in range(w):
+        changed = True
+        while changed:
+            changed = False
+            for r in range(h):
+                if result[r][c] == 0:
+                    left_c, left_row = 0, -1
+                    for lr in range(r - 1, -1, -1):
+                        if result[lr][c] != 0:
+                            left_c, left_row = result[lr][c], lr
+                            break
+                    right_c, right_row = 0, -1
+                    for rr in range(r + 1, h):
+                        if result[rr][c] != 0:
+                            right_c, right_row = result[rr][c], rr
+                            break
+                    if left_c != 0 and left_c == right_c:
+                        for fr in range(left_row + 1, right_row):
+                            if result[fr][c] == 0:
+                                result[fr][c] = left_c
+                                changed = True
+    return result
+
+
+def complete_tile_from_modal_col(grid: Grid) -> Grid:
+    """For each column position, fill anomalous cells with the modal (majority) value.
+
+    In tiled grids, column position c%tile_width determines the expected color.
+    Cells that deviate from the column's modal value are filled with the mode.
+    Useful for: fixing isolated exceptions in tiled/striped patterns.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for c in range(w):
+        col_vals = [grid[r][c] for r in range(h)]
+        mode = Counter(col_vals).most_common(1)[0][0]
+        mode_count = Counter(col_vals)[mode]
+        if mode_count > h // 2:  # Clear majority
+            for r in range(h):
+                if result[r][c] != mode and col_vals.count(result[r][c]) == 1:
+                    result[r][c] = mode
+    return result
+
+
+def complete_tile_from_modal_row(grid: Grid) -> Grid:
+    """For each row, fill anomalous cells with the modal (majority) value.
+
+    Row counterpart of complete_tile_from_modal_col.
+    Useful for: fixing isolated exceptions in tiled/striped patterns.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row_vals = grid[r]
+        mode = Counter(row_vals).most_common(1)[0][0]
+        mode_count = Counter(row_vals)[mode]
+        if mode_count > w // 2:
+            for c in range(w):
+                if result[r][c] != mode and row_vals.count(result[r][c]) == 1:
+                    result[r][c] = mode
+    return result
+
+
+def recolor_minority_in_rows(grid: Grid) -> Grid:
+    """In each row, recolor cells that hold a color unique to that row.
+
+    If a row has one cell of a color not repeated elsewhere in that row
+    but that color appears in an adjacent row at the same column,
+    replace it with the row's dominant non-bg color.
+    Specifically: cells where color appears only once in that row → bg color.
+    Useful for: fixing stray/exception cells in horizontally striped grids.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    # Find background: most common color overall
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    for r in range(h):
+        row_vals = [grid[r][c] for c in range(w)]
+        counter = Counter(row_vals)
+        # The dominant non-bg color for this row
+        row_dominant = None
+        for color, cnt in counter.most_common():
+            if color != bg:
+                row_dominant = color
+                break
+        if row_dominant is None:
+            continue
+        for c in range(w):
+            cell = grid[r][c]
+            if cell != bg and cell != row_dominant and counter[cell] == 1:
+                # This is a minority outlier — check if it matches column neighbors
+                result[r][c] = row_dominant
+    return result
+
+
+def recolor_minority_in_cols(grid: Grid) -> Grid:
+    """In each column, recolor cells that hold a color unique to that column.
+
+    Column counterpart of recolor_minority_in_rows.
+    Useful for: fixing stray/exception cells in vertically striped grids.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    for c in range(w):
+        col_vals = [grid[r][c] for r in range(h)]
+        counter = Counter(col_vals)
+        col_dominant = None
+        for color, cnt in counter.most_common():
+            if color != bg:
+                col_dominant = color
+                break
+        if col_dominant is None:
+            continue
+        for r in range(h):
+            cell = grid[r][c]
+            if cell != bg and cell != col_dominant and counter[cell] == 1:
+                result[r][c] = col_dominant
+    return result
+
+
+def snap_isolated_to_rect_boundary(grid: Grid) -> Grid:
+    """Move isolated non-bg pixels to the nearest edge of the largest rectangle.
+
+    For each isolated pixel (no 4-connected same-color neighbor) that is NOT
+    inside or adjacent to the largest non-bg rectangle:
+    - Project it onto the nearest row/column of that rectangle's boundary.
+    Useful for: tasks where scattered pixels should align to a central object.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # Find the largest connected non-bg region's bounding box
+    visited = [[False] * w for _ in range(h)]
+    best_size, best_cells = 0, []
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] != bg and not visited[sr][sc]:
+                # BFS
+                queue = [(sr, sc)]
+                visited[sr][sc] = True
+                cells = []
+                while queue:
+                    r, c = queue.pop()
+                    cells.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and grid[nr][nc] != bg:
+                            visited[nr][nc] = True
+                            queue.append((nr, nc))
+                if len(cells) > best_size:
+                    best_size = len(cells)
+                    best_cells = cells
+
+    if not best_cells:
+        return grid
+
+    rect_rows = {r for r, c in best_cells}
+    rect_cols = {c for r, c in best_cells}
+    r_min, r_max = min(rect_rows), max(rect_rows)
+    c_min, c_max = min(rect_cols), max(rect_cols)
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg:
+                continue
+            # Check if isolated (no 4-connected same-color neighbor)
+            color = grid[r][c]
+            isolated = True
+            for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                nr, nc = r+dr, c+dc
+                if 0 <= nr < h and 0 <= nc < w and grid[nr][nc] == color:
+                    isolated = False
+                    break
+            if not isolated:
+                continue
+            # Check if it's part of the main rectangle
+            if r in rect_rows and c in rect_cols:
+                continue
+            # Project to nearest edge of bounding box
+            # Clamp to bbox
+            proj_r = max(r_min, min(r_max, r))
+            proj_c = max(c_min, min(c_max, c))
+            if proj_r == r and proj_c == c:
+                continue  # Already inside bbox
+            # Place at boundary
+            result[r][c] = bg
+            result[proj_r][proj_c] = color
+    return result
+
+
+def recolor_smallest_obj_in_each_row(grid: Grid) -> Grid:
+    """In each row, find the smallest non-bg connected segment and recolor it.
+
+    Each row is treated as a 1D sequence. The shortest run of a single
+    non-bg color that is NOT the dominant color of the row gets recolored
+    to the row's dominant color.
+    Useful for: fixing minority-colored segments in striped grids.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row = grid[r]
+        counter = Counter(v for v in row if v != bg)
+        if len(counter) < 2:
+            continue
+        dominant = counter.most_common(1)[0][0]
+        minority_colors = {c for c, cnt in counter.items() if c != dominant and cnt <= 3}
+        for c in range(w):
+            if row[c] in minority_colors:
+                result[r][c] = dominant
+    return result
+
+
+def recolor_smallest_obj_in_each_col(grid: Grid) -> Grid:
+    """In each column, recolor minority-colored segments to the column's dominant color.
+
+    Column counterpart of recolor_smallest_obj_in_each_row.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for c in range(w):
+        col = [grid[r][c] for r in range(h)]
+        counter = Counter(v for v in col if v != bg)
+        if len(counter) < 2:
+            continue
+        dominant = counter.most_common(1)[0][0]
+        minority_colors = {clr for clr, cnt in counter.items() if clr != dominant and cnt <= 3}
+        for r in range(h):
+            if col[r] in minority_colors:
+                result[r][c] = dominant
+    return result
+
+
+def fill_grid_intersections(grid: Grid) -> Grid:
+    """At row/col intersections, fill with the color that appears in both that row and col.
+
+    For each bg cell at (r,c): if there's a non-bg color that appears both
+    in row r AND in column c, place that color there.
+    Useful for: grid/matrix tasks where intersections should be colored.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row_colors = {grid[r][c] for c in range(w) if grid[r][c] != bg}
+        for c in range(w):
+            if grid[r][c] != bg:
+                continue
+            col_colors = {grid[rr][c] for rr in range(h) if grid[rr][c] != bg}
+            intersection = row_colors & col_colors
+            if len(intersection) == 1:
+                result[r][c] = intersection.pop()
+    return result
+
+
+def propagate_color_h(grid: Grid) -> Grid:
+    """Extend each non-bg color rightward to fill bg cells until hitting another color.
+
+    Each non-bg cell propagates its color rightward through bg cells,
+    stopping when it hits a non-bg cell.
+    Useful for: filling color bars / stripes to the right.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        current = bg
+        for c in range(w):
+            if grid[r][c] != bg:
+                current = grid[r][c]
+            elif current != bg:
+                result[r][c] = current
+    return result
+
+
+def propagate_color_v(grid: Grid) -> Grid:
+    """Extend each non-bg color downward to fill bg cells until hitting another color.
+
+    Vertical counterpart of propagate_color_h.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for c in range(w):
+        current = bg
+        for r in range(h):
+            if grid[r][c] != bg:
+                current = grid[r][c]
+            elif current != bg:
+                result[r][c] = current
+    return result
+
+
+def _make_recolor_neighbors_of_color(target_color: int, new_color: int):
+    """Factory: recolor non-bg cells adjacent to target_color cells to new_color."""
+    def _recolor_neighbors(grid: Grid) -> Grid:
+        from collections import Counter
+        h, w = _grid_dims(grid)
+        all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+        bg = Counter(all_vals).most_common(1)[0][0]
+        # Find second most common non-bg color if target_color == -1
+        non_bg = [(v, c) for v, c in Counter(all_vals).most_common() if v != bg]
+        if not non_bg:
+            return grid
+        # resolve target_color: -1 means 2nd most common
+        tc = target_color if target_color > 0 else (non_bg[1][0] if len(non_bg) > 1 else non_bg[0][0])
+        nc = new_color if new_color > 0 else (non_bg[0][0] if non_bg else bg)
+
+        # Find all cells adjacent to tc
+        adjacent = set()
+        for r in range(h):
+            for c in range(w):
+                if grid[r][c] == tc:
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc2 = r+dr, c+dc
+                        if 0 <= nr < h and 0 <= nc2 < w and grid[nr][nc2] not in (bg, tc):
+                            adjacent.add((nr, nc2))
+
+        result = _deep_copy_grid(grid)
+        for r, c in adjacent:
+            result[r][c] = nc
+        return result
+    return _recolor_neighbors
+
+
+# V16: recolor cells touching 2nd-most-common color, to color 8 or 3
+recolor_touching_2nd_to_8 = _make_recolor_neighbors_of_color(-1, 8)
+recolor_touching_2nd_to_3 = _make_recolor_neighbors_of_color(-1, 3)
+
+
+def recolor_neighbors_of_2nd_color(grid: Grid) -> Grid:
+    """Recolor cells adjacent to the 2nd most common non-bg color.
+
+    Finds the 2nd most common non-bg color (the 'accent' color), then
+    recolors all cells touching it to color 8.
+    Useful for: border/halo marking around a secondary object.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v, cnt) for v, cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+
+    accent_color = non_bg[1][0]
+    dominant = non_bg[0][0]
+
+    adjacent = set()
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == accent_color:
+                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    nr, nc = r+dr, c+dc
+                    if 0 <= nr < h and 0 <= nc < w and grid[nr][nc] == dominant:
+                        adjacent.add((nr, nc))
+
+    result = _deep_copy_grid(grid)
+    for r, c in adjacent:
+        result[r][c] = 8
+    return result
+
+
+def extend_color_within_col_bounds(grid: Grid) -> Grid:
+    """Within each column, extend the dominant non-bg color to fill bg cells.
+
+    For each column, find the row range that contains non-bg cells,
+    then fill all bg cells within that range with the column's dominant color.
+    Useful for: filling gaps in vertical stripes.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for c in range(w):
+        col = [grid[r][c] for r in range(h)]
+        non_bg_rows = [r for r in range(h) if col[r] != bg]
+        if not non_bg_rows:
+            continue
+        r_min, r_max = min(non_bg_rows), max(non_bg_rows)
+        col_counter = Counter(v for v in col if v != bg)
+        if not col_counter:
+            continue
+        dominant = col_counter.most_common(1)[0][0]
+        for r in range(r_min, r_max + 1):
+            if result[r][c] == bg:
+                result[r][c] = dominant
+    return result
+
+
+def extend_color_within_row_bounds(grid: Grid) -> Grid:
+    """Within each row, extend the dominant non-bg color to fill bg cells.
+
+    Row counterpart of extend_color_within_col_bounds.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row = [grid[r][c] for c in range(w)]
+        non_bg_cols = [c for c in range(w) if row[c] != bg]
+        if not non_bg_cols:
+            continue
+        c_min, c_max = min(non_bg_cols), max(non_bg_cols)
+        row_counter = Counter(v for v in row if v != bg)
+        if not row_counter:
+            continue
+        dominant = row_counter.most_common(1)[0][0]
+        for c in range(c_min, c_max + 1):
+            if result[r][c] == bg:
+                result[r][c] = dominant
+    return result
+
+
+def recolor_unique_in_row_col(grid: Grid) -> Grid:
+    """Recolor cells where a color appears exactly once in its row OR once in its col.
+
+    If a non-bg cell's color appears only once in its row AND it's not the
+    dominant color of its column, recolor it to the column's dominant color.
+    Useful for: fixing stray exception cells that don't fit the row/col pattern.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        row_counter = Counter(grid[r][c] for c in range(w) if grid[r][c] != bg)
+        for c in range(w):
+            if grid[r][c] == bg:
+                continue
+            cell_color = grid[r][c]
+            if row_counter[cell_color] != 1:
+                continue  # Not unique in row
+            # This cell's color appears exactly once in its row
+            col_vals = [grid[rr][c] for rr in range(h) if grid[rr][c] != bg]
+            col_counter = Counter(col_vals)
+            if not col_counter:
+                continue
+            col_dominant = col_counter.most_common(1)[0][0]
+            if col_dominant != cell_color:
+                result[r][c] = col_dominant
+    return result
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -3088,6 +3606,33 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # V15: Misc
         ("fill_diagonal_stripes", fill_diagonal_stripes),
         ("mask_by_color_overlap", mask_by_color_overlap),
+        # V16: Stripe gap filling
+        ("fill_stripe_gaps_h", fill_stripe_gaps_h),
+        ("fill_stripe_gaps_v", fill_stripe_gaps_v),
+        # V16: Tile completion from modal row/col
+        ("complete_tile_from_modal_col", complete_tile_from_modal_col),
+        ("complete_tile_from_modal_row", complete_tile_from_modal_row),
+        # V16: Minority recoloring in rows/cols
+        ("recolor_minority_in_rows", recolor_minority_in_rows),
+        ("recolor_minority_in_cols", recolor_minority_in_cols),
+        ("recolor_smallest_obj_in_each_row", recolor_smallest_obj_in_each_row),
+        ("recolor_smallest_obj_in_each_col", recolor_smallest_obj_in_each_col),
+        # V16: Grid intersection fill
+        ("fill_grid_intersections", fill_grid_intersections),
+        # V16: Directional propagation
+        ("propagate_color_h", propagate_color_h),
+        ("propagate_color_v", propagate_color_v),
+        # V16: Unique-in-row/col recoloring
+        ("recolor_unique_in_row_col", recolor_unique_in_row_col),
+        # V16: Snap isolated pixels to object
+        ("snap_isolated_to_rect_boundary", snap_isolated_to_rect_boundary),
+        # V16: Recolor cells touching a specific color object
+        ("recolor_touching_2nd_to_8", recolor_touching_2nd_to_8),
+        ("recolor_touching_2nd_to_3", recolor_touching_2nd_to_3),
+        ("recolor_neighbors_of_2nd_color", recolor_neighbors_of_2nd_color),
+        # V16: Extend color to fill column/row within object bounds
+        ("extend_color_within_col_bounds", extend_color_within_col_bounds),
+        ("extend_color_within_row_bounds", extend_color_within_row_bounds),
     ]
 
     for name, impl in partitioning_ops:
