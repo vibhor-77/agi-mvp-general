@@ -163,6 +163,14 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(triple_result):
                 candidates.append((triple_result, "triple_search"))
 
+        # Step 3.9: Object-centric reasoning (perceive → compare → infer)
+        # Only for same-dims tasks. Runs even if we have pair/triple candidates
+        # since object rules may provide a better (more generalizable) solution.
+        object_result = self._try_object_rules(task, cache)
+        if object_result and object_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(object_result):
+                candidates.append((object_result, "object_rules"))
+
         # If we have pixel-perfect candidates from deterministic search,
         # skip expensive evolution — pick the simplest (MDL).
         if candidates:
@@ -344,6 +352,44 @@ class FourPillarsSolver:
 
         if self.verbose:
             print(f"  ✓ SOLVED in {elapsed:.2f}s (score={score:.3f})")
+
+    # ----------------------------------------------------------------
+    # Object-centric reasoning: perceive → compare → infer → apply
+    # ----------------------------------------------------------------
+
+    def _try_object_rules(self, task: dict,
+                           cache: "TaskCache") -> Optional[Program]:
+        """Try to solve the task using object-level rule inference.
+
+        Builds scene graphs from each training example, computes structured
+        diffs (what changed about each object), finds consistent rules
+        across all examples, and validates them.
+
+        Returns a Program wrapping the inferred rules, or None.
+        """
+        from .scene import solve_with_object_rules, ObjectRule
+        from .concepts import Concept
+
+        transform = solve_with_object_rules(task)
+        if transform is None:
+            return None
+
+        # Wrap the transform as a Concept → Program
+        concept = Concept(
+            kind="operator",
+            name="object_rule_inferred",
+            implementation=transform,
+        )
+        program = Program([concept])
+
+        # Score it to set fitness
+        score = cache.score_program(program)
+        program.fitness = score
+
+        if self.verbose:
+            print(f"  ◆ Object rules inferred (score={score:.3f})")
+
+        return program
 
     # ----------------------------------------------------------------
     # Example-parameterized concepts: learn transforms FROM the task
