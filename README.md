@@ -19,9 +19,21 @@ General intelligence is not a single algorithm. It is an emergent property that 
 
 These pillars are substrate-independent and scale fractally — from neurons to brains to societies.
 
-## Key Innovation: No Reset Button
+## Key Innovations
+
+### 1. No Reset Button
 
 Current AI systems "reset" with each training run — knowledge doesn't compound. This agent implements **cumulative culture**: successful programs become first-class concepts in the Toolkit, available for future composition. Later tasks benefit from earlier learning. The Toolkit can be saved to disk and loaded across runs, solving the Reset Button Problem completely.
+
+### 2. Cell Synthesis (Enumeration-based DSL)
+
+Rather than relying only on hand-coded primitives, the solver can now **discover task-specific cell-level transformation rules** through enumeration of a compact DSL. This enables discovery of context-dependent color mappings and neighbor-based transformations that fixed primitives cannot capture.
+
+A dedicated synthesizer enumerates small cell-level programs (up to depth 2) and scores each against training examples, keeping the best. Example programs discovered automatically:
+- `IfColor(1, Const(9), Const(5))` — map color 1→9, else 5
+- `IfNeighborHas(2, NeighborMajority, Self)` — if neighbor has color 2, use majority; else keep self
+
+See [docs/CELL_SYNTHESIS.md](docs/CELL_SYNTHESIS.md) for details. This addresses near-miss tasks (0.85-0.99 accuracy) that require per-cell logic.
 
 ## Quick Start
 
@@ -31,7 +43,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (467 tests)
+# Run the test suite (550 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
