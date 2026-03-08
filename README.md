@@ -39,12 +39,12 @@ git clone https://github.com/fchollet/ARC-AGI.git
 
 # Full benchmark with culture transfer (RECOMMENDED):
 # Step 1: Train and save learned culture
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
-    --save-culture culture.json
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
+    --culture-file culture.json --output results_train.json
 
 # Step 2: Evaluate with culture from training
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation \
-    --load-culture culture.json
+python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output results_eval.json
 ```
 
 **Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup and all CLI options.
@@ -72,23 +72,23 @@ git clone https://github.com/fchollet/ARC-AGI.git
 
 # 2. RECOMMENDED: Two-phase pipeline with culture transfer
 #    Train on training set, save learned programs/concepts:
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
-    --save-culture culture.json
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
+    --culture-file culture.json --output results_train.json
 
 #    Evaluate with culture loaded (programs learned from training
 #    are tried on each eval task before pair/evolution search):
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation \
-    --load-culture culture.json
+python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output results_eval.json
 
 # 3. Quick test on first 20 tasks (single process for easy debugging)
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --limit 20 --workers 1
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training --limit 20 --workers 1
 
 # 4. Run with explicit worker count (e.g. 10 cores on M1 Max)
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 10
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training --workers 10
 
-# 5. Save results JSON and learned toolkit
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
-    --output results.json --save-toolkit learned_toolkit.json
+# 5. Save results JSON with culture
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
+    --output results.json --culture-file culture.json
 ```
 
 ## Project Structure

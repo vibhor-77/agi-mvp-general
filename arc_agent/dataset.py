@@ -377,6 +377,7 @@ def evaluate_dataset(
     workers: int = 0,
     load_culture_path: str = "",
     save_culture_path: str = "",
+    mode: str = "train",
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
 
@@ -398,6 +399,9 @@ def evaluate_dataset(
                             into each worker's solver before solving tasks
         save_culture_path:  if set, aggregate learned culture from all workers
                             and save to this JSON file after evaluation
+        mode:               "train" or "eval". Train mode saves culture;
+                            eval mode loads culture. Future: train-only
+                            logic like candidate selection learning.
 
     Returns:
         Dict with keys:
@@ -416,7 +420,7 @@ def evaluate_dataset(
         _tmp = FourPillarsSolver(verbose=False)
         init_tk = _tmp.toolkit.size
         del _tmp
-        print(f"CPU: {describe_cpu()}")
+        print(f"Mode: {mode.upper()}  |  CPU: {describe_cpu()}")
         print(f"Workers: {n_workers}  |  Tasks: {n_tasks}  |  "
               f"Seed: {seed}  |  "
               f"Initial toolkit: {init_tk} concepts")
@@ -473,11 +477,8 @@ def evaluate_dataset(
     completed     = len(task_results)
 
     # Fluke tracking: pixel-perfect on training but failed test
-    solved_and_tested = sum(1 for r in task_results.values()
-                            if r["solved"] and r.get("test_score", 0) > 0)
     flukes = sum(1 for r in task_results.values()
-                 if r["solved"] and not r["test_passed"]
-                 and r.get("test_score", -1) >= 0)
+                 if r["solved"] and not r["test_passed"])
     # Near-miss bonus: not pixel-perfect on train but passed test anyway
     near_miss_tc = sum(1 for r in task_results.values()
                        if not r["solved"] and r["test_passed"])
@@ -488,7 +489,7 @@ def evaluate_dataset(
         above80 = solved_count + partial_count
 
         print(f"\n{'='*60}")
-        print("BENCHMARK RESULTS")
+        print(f"BENCHMARK RESULTS — {mode.upper()} MODE")
         print(f"{'='*60}")
         print(f"Tasks completed:    {completed}/{n_tasks}")
         print(f"Solved (exact):     {solved_count}/{completed} "
@@ -518,6 +519,7 @@ def evaluate_dataset(
         print(f"{'='*60}")
 
     summary = {
+        "mode":               mode,
         "total_tasks":        n_tasks,
         "completed_tasks":    completed,
         "solved_exact":       solved_count,
