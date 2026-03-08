@@ -337,6 +337,93 @@ def keep_smallest_object_only(grid: Grid) -> Grid:
     return result
 
 
+# ============================================================
+# Perception helpers (read-only primitives)
+# ============================================================
+
+def find_bounding_box(grid: Grid) -> tuple[int, int, int, int] | None:
+    """Return bounding box of all non-zero cells.
+
+    Returns (min_row, min_col, max_row, max_col) or None if grid is all zeros.
+    This is a read-only perception primitive — it inspects but doesn't transform.
+    """
+    min_r = min_c = float('inf')
+    max_r = max_c = -1
+    for r, row in enumerate(grid):
+        for c, val in enumerate(row):
+            if val != 0:
+                if r < min_r:
+                    min_r = r
+                if r > max_r:
+                    max_r = r
+                if c < min_c:
+                    min_c = c
+                if c > max_c:
+                    max_c = c
+    if max_r == -1:
+        return None
+    return (int(min_r), int(min_c), int(max_r), int(max_c))
+
+
+def find_foreground_shapes(grid: Grid) -> list[dict]:
+    """Extract each object as a subgrid with metadata for reassembly.
+
+    Returns a list of dicts, one per connected component, each containing:
+        subgrid:  The object extracted as a minimal cropped grid (via to_grid).
+        bbox:     (min_r, min_c, max_r, max_c) of the object.
+        color:    The object's color value.
+        size:     Number of pixels in the object.
+        position: (row, col) of the subgrid's top-left corner in the original grid.
+
+    This is a read-only perception primitive — it wraps find_objects() + to_grid()
+    and adds position metadata needed for reassembly after per-object transforms.
+    """
+    objects = find_objects(grid)
+    shapes = []
+    for obj in objects:
+        bbox = obj.bbox
+        shapes.append({
+            "subgrid": obj.to_grid(),
+            "bbox": bbox,
+            "color": obj.color,
+            "size": obj.size,
+            "position": (bbox[0], bbox[1]),  # top-left corner
+        })
+    return shapes
+
+
+def place_subgrid(canvas: Grid, subgrid: Grid, position: tuple[int, int],
+                  transparent_color: int = 0) -> Grid:
+    """Place a subgrid onto a canvas at the given position.
+
+    This is the inverse of GridObject.to_grid() — it takes a (possibly
+    transformed) subgrid and places it back into a larger grid.
+
+    Args:
+        canvas:  The target grid (will NOT be mutated; a copy is returned).
+        subgrid: The grid to place.
+        position: (row, col) of where subgrid's top-left goes on canvas.
+        transparent_color: Cells with this value in subgrid don't overwrite canvas.
+
+    Returns:
+        New grid with subgrid placed on canvas.
+    """
+    result = [row[:] for row in canvas]
+    pr, pc = position
+    sh = len(subgrid)
+    sw = len(subgrid[0]) if subgrid else 0
+    ch = len(canvas)
+    cw = len(canvas[0]) if canvas else 0
+
+    for r in range(sh):
+        for c in range(sw):
+            tr, tc = pr + r, pc + c
+            if 0 <= tr < ch and 0 <= tc < cw:
+                if subgrid[r][c] != transparent_color:
+                    result[tr][tc] = subgrid[r][c]
+    return result
+
+
 def mirror_objects_horizontal(grid: Grid) -> Grid:
     """Mirror each object horizontally within its bounding box.
 

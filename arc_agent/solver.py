@@ -180,6 +180,13 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(object_result):
                 candidates.append((object_result, "object_rules"))
 
+        # Step 3.95: Object decomposition (per-object transform search)
+        # Apply each toolkit primitive to each object independently, reassemble.
+        obj_decomp_result = self._try_object_decomposition(task, cache)
+        if obj_decomp_result and obj_decomp_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(obj_decomp_result):
+                candidates.append((obj_decomp_result, "object_decompose"))
+
         # Always run evolution to discover additional candidates,
         # even if deterministic search already found a solution.
         # Inject best candidates into seeds for evolution, best first.
@@ -464,6 +471,27 @@ class FourPillarsSolver:
             print(f"  ◆ Object rules inferred (score={score:.3f})")
 
         return program
+
+    # ----------------------------------------------------------------
+    # Object decomposition: per-object transform search
+    # ----------------------------------------------------------------
+
+    def _try_object_decomposition(self, task: dict,
+                                   cache: "TaskCache") -> Optional[Program]:
+        """Try to solve the task by applying a single transform per object.
+
+        For each primitive in the toolkit, applies it to each object's
+        subgrid independently and reassembles. If any primitive produces
+        pixel-perfect results on all training examples, returns it.
+        """
+        from .object_decompose import solve_by_object_decomposition
+
+        result = solve_by_object_decomposition(task, self.toolkit, cache)
+
+        if result and self.verbose:
+            print(f"  ◆ Object decomposition (score={result.fitness:.3f})")
+
+        return result
 
     # ----------------------------------------------------------------
     # Example-parameterized concepts: learn transforms FROM the task
