@@ -2,7 +2,7 @@
 
 **Author:** Vibhor Jain
 **Date:** March 2026
-**Status:** Active Research — Prototype v0.2 Complete (object primitives + persistence)
+**Status:** Active Research — v0.24 (multi-candidate submission, 467 tests)
 
 ---
 
@@ -142,6 +142,22 @@ To validate that each pillar is necessary:
 | Remove approximability (binary scoring only) | Evolutionary search loses gradient; much slower convergence |
 | Remove composability (single primitives only) | Cannot solve multi-step tasks |
 | Remove exploration (exploit only) | Gets stuck in local optima; cannot discover novel solutions |
+
+---
+
+## 4.4 Data Integrity Policy
+
+**CRITICAL: No eval data leakage.** Evaluation tasks must NEVER be examined to
+guide algorithm design, primitive selection, or search strategy. Doing so would
+invalidate public eval numbers and cause overfitting that hurts private eval.
+
+| Rule | Details |
+|------|---------|
+| Training tasks | May be examined freely for debugging and hypothesis formation |
+| Evaluation tasks | Score-only — never inspect inputs/outputs for algorithm design |
+| Culture files | Use versioned names (`culture_v024.json`) for reproducible comparisons |
+| Methodology | Scientific method: hypothesis → test on training subset → measure → accept/reject |
+| Validation | Every change must show measurable improvement on training before commit |
 
 ---
 

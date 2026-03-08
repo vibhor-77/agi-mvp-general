@@ -1189,3 +1189,102 @@ python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
 - Richer object rules: movement, conditional, relational
 - Investigate why evolution stalls immediately on many tasks
 - Test on ARC-AGI-2
+
+---
+
+## Session 18 — Methodology Reset & Scientific Rigor (March 2026)
+
+### Prompt
+
+> Running the command like this (note the name of the culture file, you should
+> use a versioned file name): `culture_v024.json`
+>
+> We are hitting diminishing returns — train as well as eval accuracy haven't
+> moved in several iterations. Use the scientific method to make incremental but
+> solid progress over time by doing several micro iterations. Currently, it looks
+> like you made a bunch of changes using theory, but did not validate if it
+> actually improves performance on the benchmark. You could have tried it out
+> first using a subset of the benchmark, and also specific examples.
+>
+> The benchmark is written by humans for humans to be able to solve. Solving it
+> relies on intuitive and relatively short transformations, not some really deep
+> or complex transformation tree. An average human uses relatively simple
+> intuition. So the problem should not be that hard if we approach it the right way.
+
+**Follow-up directive:**
+
+> Do not look at any eval tasks for improving the algorithm — that would be data
+> leakage. The public eval numbers will not be trustworthy anymore and will cause
+> us to perform worse on private eval.
+>
+> Always keep the repository world class: minimal, elegant, comprehensive, well
+> commented, well tested. Use TDD. Follow the scientific method for solid,
+> reliable, reproducible, deterministic progress.
+
+### Claude's Reasoning
+
+This is a critical methodology correction. Key takeaways:
+
+1. **Stop theory-first development.** We were adding primitives, search strategies,
+   and architectural changes based on what *should* help, without validating each
+   change against the actual benchmark. This is the antithesis of the scientific
+   method.
+
+2. **Micro-iteration workflow.** The correct loop is:
+   - Hypothesis → test on specific training tasks → measure → accept/reject → repeat.
+   - Only commit changes that demonstrably improve metrics.
+
+3. **Data leakage policy.** NEVER look at evaluation tasks to guide algorithm design.
+   Only training tasks may be examined for debugging and hypothesis formation.
+   Eval exists solely for final scoring.
+
+4. **Versioned culture files.** Use `culture_v024.json` etc. so we can compare
+   across versions without overwriting.
+
+5. **Human-intuitive transformations.** ARC tasks are designed to be solvable by
+   average humans using simple spatial intuition. If our solver needs deep trees
+   or exotic primitives, we're over-engineering. The right primitives should make
+   most tasks solvable in 1-3 steps.
+
+### Changes Made
+
+1. **`--tasks` CLI flag** — Run specific task IDs for targeted debugging:
+   ```bash
+   python -m arc_agent.evaluate train \
+       --data-dir ARC-AGI/data/training \
+       --tasks 0b148d64 2204b7a8 3c9b0459
+   ```
+   Takes precedence over `--limit` when both are specified.
+
+2. **6 new CLI filtering tests** (467 total, all passing):
+   - `test_tasks_flag_parses`
+   - `test_tasks_filter_selects_correct_subset`
+   - `test_tasks_filter_warns_on_missing`
+   - `test_limit_filter_selects_first_n`
+   - `test_tasks_takes_precedence_over_limit`
+   - `test_top_k_flag_default`
+
+### Key Policies Established
+
+| Policy | Rule |
+|--------|------|
+| Data leakage | NEVER examine eval tasks for algorithm design |
+| Validation | Every change must be measured on training subset before commit |
+| Culture files | Always use versioned names: `culture_vXXX.json` |
+| Scientific method | Hypothesis → experiment → measure → accept/reject |
+| Complexity | Prefer simple 1-3 step solutions over deep trees |
+
+### Verification
+
+| Metric | Result |
+|--------|--------|
+| Tests passing | **467** |
+| `--tasks` flag | Working (tested with argparse + filtering logic) |
+| `--top-k` flag | Working (default: 3) |
+
+### Next Steps
+- Await v0.24 benchmark results from user's current run
+- Analyze training task failures to find patterns (NOT eval tasks)
+- Form specific hypotheses: "adding primitive X should solve tasks Y, Z"
+- Test each hypothesis on those specific tasks before full benchmark
+- Focus on simple, human-intuitive transformations

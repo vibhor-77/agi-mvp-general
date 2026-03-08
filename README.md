@@ -31,7 +31,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (461 tests)
+# Run the test suite (467 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
@@ -109,6 +109,7 @@ For private eval submission, replace `eval` with `infer` in Step 2.
 
 ```
 --limit N        Only run first N tasks (sorted by ID)
+--tasks ID ...   Run only specific task IDs (space-separated)
 --workers N      Parallel workers (0=auto, 1=debug)
 --population N   Evolutionary population size (default: 60)
 --generations N  Max evolution generations (default: 30)
@@ -120,9 +121,15 @@ For private eval submission, replace `eval` with `infer` in Step 2.
 ### Quick debugging run
 
 ```bash
+# Run a small subset
 python -m arc_agent.evaluate train \
     --data-dir ARC-AGI/data/training \
     --limit 20 --workers 1
+
+# Run specific tasks by ID
+python -m arc_agent.evaluate train \
+    --data-dir ARC-AGI/data/training \
+    --tasks 0b148d64 2204b7a8 3c9b0459
 ```
 
 ## Results
@@ -258,7 +265,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (461 tests)
+- [x] Test suite (467 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
