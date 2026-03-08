@@ -147,6 +147,14 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(culture_result):
                     candidates.append((culture_result, "culture_transfer"))
 
+        # Step 3.4: Try parameterized primitives (learn from examples).
+        # These are templates that learn parameters from training examples,
+        # enabling structural generalization (e.g., "map by frequency rank" not absolute colors).
+        param_result = self._try_parameterized(task, cache)
+        if param_result and param_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(param_result):
+                candidates.append((param_result, "parameterized"))
+
         # No early exit — always try all search strategies to find
         # the best and most diverse set of candidates.
 
@@ -389,6 +397,35 @@ class FourPillarsSolver:
 
         if self.verbose:
             print(f"  ✓ SOLVED in {elapsed:.2f}s (score={score:.3f})")
+
+    # ----------------------------------------------------------------
+    # Parameterized primitives: learn structure from examples
+    # ----------------------------------------------------------------
+
+    def _try_parameterized(self, task: dict,
+                          cache: "TaskCache | None" = None) -> Optional[Program]:
+        """Try parameterized primitives that learn from training examples.
+
+        These are template functions that learn parameters structurally
+        (by frequency rank, spatial role) rather than absolute values,
+        enabling generalization to unseen colors.
+
+        Returns the best Program wrapping a parameterized primitive, or None.
+        """
+        from .param_search import try_parameterized
+
+        if cache is None:
+            cache = TaskCache(task)
+
+        result = try_parameterized(task, cache=cache)
+
+        if result:
+            score = cache.score_program(result)
+            result.fitness = score
+            if self.verbose:
+                print(f"  ◆ Parameterized primitive found (score={score:.3f})")
+
+        return result
 
     # ----------------------------------------------------------------
     # Object-centric reasoning: perceive → compare → infer → apply
