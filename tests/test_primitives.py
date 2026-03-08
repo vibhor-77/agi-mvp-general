@@ -1700,99 +1700,6 @@ class TestV16ToolkitContents(unittest.TestCase):
         self.assertGreaterEqual(tk.size, 242)
 
 
-class TestFillLargestHole(unittest.TestCase):
-    def test_fill_largest_hole_with_8(self):
-        from arc_agent.primitives import fill_largest_hole_with_8
-        # Use a larger bg (0) region so 0 is detected as bg
-        grid = [
-            [0, 0, 0, 0, 0, 0, 0],
-            [0, 1, 1, 1, 1, 1, 0],
-            [0, 1, 0, 0, 0, 1, 0],
-            [0, 1, 0, 0, 0, 1, 0],
-            [0, 1, 1, 1, 1, 1, 0],
-            [0, 0, 0, 0, 0, 0, 0],
-        ]
-        result = fill_largest_hole_with_8(grid)
-        # Interior cells (enclosed by 1s) should be 8
-        self.assertEqual(result[2][2], 8)
-        self.assertEqual(result[3][4], 8)
-        # Outer bg stays 0
-        self.assertEqual(result[0][0], 0)
-        # Border 1s stay 1
-        self.assertEqual(result[1][1], 1)
-
-    def test_fill_largest_hole_no_hole(self):
-        from arc_agent.primitives import fill_largest_hole_with_8
-        grid = [[0, 1, 0], [0, 0, 0], [0, 1, 0]]
-        result = fill_largest_hole_with_8(grid)
-        self.assertEqual(result, grid)
-
-
-class TestTileBlock(unittest.TestCase):
-    def test_tile_left_block_to_fill_h(self):
-        from arc_agent.primitives import tile_left_block_to_fill_h
-        grid = [[1, 2, 1, 0, 0, 0], [3, 2, 3, 0, 0, 0]]
-        result = tile_left_block_to_fill_h(grid)
-        self.assertEqual(result[0][3], 1)
-        self.assertEqual(result[0][4], 2)
-        self.assertEqual(result[0][5], 1)
-
-    def test_tile_top_block_to_fill_v(self):
-        from arc_agent.primitives import tile_top_block_to_fill_v
-        grid = [[1, 3], [2, 4], [0, 0], [0, 0]]
-        result = tile_top_block_to_fill_v(grid)
-        self.assertEqual(result[2][0], 1)
-        self.assertEqual(result[3][1], 4)
-
-
-class TestSwapPairs(unittest.TestCase):
-    def test_swap_row_pairs(self):
-        from arc_agent.primitives import swap_row_pairs
-        grid = [[1, 1], [2, 2], [3, 3], [4, 4]]
-        result = swap_row_pairs(grid)
-        self.assertEqual(result[0], [2, 2])
-        self.assertEqual(result[1], [1, 1])
-        self.assertEqual(result[2], [4, 4])
-        self.assertEqual(result[3], [3, 3])
-
-    def test_swap_col_pairs(self):
-        from arc_agent.primitives import swap_col_pairs
-        grid = [[1, 2, 3, 4]]
-        result = swap_col_pairs(grid)
-        self.assertEqual(result[0], [2, 1, 4, 3])
-
-
-class TestRecolorBgAtIntersection(unittest.TestCase):
-    def test_recolor_bg_at_row_col_intersection(self):
-        from arc_agent.primitives import recolor_bg_at_row_col_intersection
-        grid = [
-            [3, 0, 0],
-            [0, 3, 0],
-            [0, 0, 0],
-        ]
-        result = recolor_bg_at_row_col_intersection(grid)
-        self.assertEqual(result[0][1], 3)
-
-
-class TestV17ToolkitContents(unittest.TestCase):
-    def test_new_v17_primitives_exist(self):
-        tk = build_initial_toolkit()
-        new_names = [
-            "fill_largest_hole_with_8", "fill_largest_hole_with_dominant",
-            "tile_left_block_to_fill_h", "tile_top_block_to_fill_v",
-            "recolor_bg_at_row_col_intersection",
-            "swap_row_pairs", "swap_col_pairs",
-            "recolor_connector_to_neighbors",
-            "reflect_pattern_to_fill",
-            "recolor_by_col_parity", "recolor_by_row_parity",
-        ]
-        for name in new_names:
-            self.assertIn(name, tk.concepts, f"Missing v0.17 primitive: {name}")
-
-    def test_toolkit_size_v17(self):
-        tk = build_initial_toolkit()
-        self.assertGreaterEqual(tk.size, 253)
-
 
 class TestRecolorDominantTouchingAccent(unittest.TestCase):
     def test_recolor_dominant_touching_accent_to_4(self):
@@ -1960,7 +1867,7 @@ class TestV18ToolkitContents(unittest.TestCase):
 
     def test_toolkit_size_v18(self):
         tk = build_initial_toolkit()
-        self.assertGreaterEqual(tk.size, 267)
+        self.assertGreaterEqual(tk.size, 256)  # 267 - 11 removed v0.17 primitives
 
 
 class TestRecolorNonzeroInsideBbox(unittest.TestCase):
@@ -2133,4 +2040,4 @@ class TestV19ToolkitContents(unittest.TestCase):
 
     def test_toolkit_size_v19(self):
         tk = build_initial_toolkit()
-        self.assertGreaterEqual(tk.size, 289)
+        self.assertGreaterEqual(tk.size, 278)
