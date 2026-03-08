@@ -85,10 +85,17 @@ def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
     """
     test_passed = False
     test_score  = 0.0
-    if result["solved"]:
-        programs = solver.archive.task_solutions.get(task_id, [])
-        if programs:
-            test_passed, test_score = validate_on_test(programs[0], task)
+
+    # Always validate the best program against test when we have a
+    # candidate worth checking. This is critical because:
+    # (1) A program that is pixel-perfect on training might not generalize
+    # (2) A program that is 1 pixel off on training might still be correct
+    #     on test (different examples, different grid sizes)
+    # In a competition, we'd submit the best program regardless, so we
+    # should always measure its test performance for honest reporting.
+    programs = solver.archive.task_solutions.get(task_id, [])
+    if programs:
+        test_passed, test_score = validate_on_test(programs[0], task)
 
     # Collect learned concepts and programs for culture saving
     learned_concepts = []
