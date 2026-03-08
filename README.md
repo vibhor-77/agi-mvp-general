@@ -31,7 +31,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (448 tests)
+# Run the test suite (461 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
@@ -113,6 +113,7 @@ For private eval submission, replace `eval` with `infer` in Step 2.
 --population N   Evolutionary population size (default: 60)
 --generations N  Max evolution generations (default: 30)
 --seed N         Random seed for reproducibility (default: 42)
+--top-k N        Candidates to submit per task (default: 3)
 --quiet          Suppress per-task output
 ```
 
@@ -181,7 +182,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 448 tests (~5,300 LOC)
+├── tests/                           # 461 tests (~5,500 LOC)
 │   ├── test_primitives.py           # Grid transforms (55 tests)
 │   ├── test_scene.py                # Object-centric reasoning (26 tests)
 │   ├── test_concepts.py             # Concept system (21 tests)
@@ -257,7 +258,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (448 tests)
+- [x] Test suite (461 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
@@ -267,7 +268,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Multiple evolution restarts (3x during training)
 - [x] Consistent metric definitions (solved exact = train AND test)
 - [ ] Richer object rules (movement, conditional, relational)
-- [ ] Multiple candidate submission (top-3 diverse predictions)
+- [x] Multiple candidate submission (top-k diverse predictions per task)
 - [ ] ARC-AGI-2 evaluation
 - [ ] Cross-domain transfer experiments
 

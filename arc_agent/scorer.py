@@ -305,6 +305,45 @@ def validate_on_test(program, task: dict) -> tuple[bool, float]:
     return TaskCache(task).validate_on_test(program)
 
 
+def validate_candidates_on_test(
+    candidates: list,
+    task: dict,
+    top_k: int = 3,
+) -> tuple[bool, float]:
+    """Validate multiple candidate programs on held-out test examples.
+
+    Tests up to top_k candidates and returns the best result.
+    This is the key mechanism for multiple candidate submission:
+    if ANY candidate passes test, the task counts as solved.
+
+    Args:
+        candidates: List of Program objects to test.
+        task:       The ARC task dict (must include 'test' key).
+        top_k:      Maximum number of candidates to test (default 3).
+
+    Returns:
+        (any_passed, best_score): True if any candidate passes test,
+        and the highest test score seen.
+    """
+    if not candidates:
+        return False, 0.0
+
+    cache = TaskCache(task)
+    best_passed = False
+    best_score = 0.0
+
+    for prog in candidates[:top_k]:
+        passed, score = cache.validate_on_test(prog)
+        if score > best_score:
+            best_score = score
+        if passed:
+            best_passed = True
+            best_score = max(best_score, score)
+            # Don't break early — we want best_score across all candidates
+
+    return best_passed, best_score
+
+
 def extract_task_features(task: dict) -> dict:
     """Extract structural features for task similarity matching.
 

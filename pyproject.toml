@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "four-pillars-agi"
-version = "0.5.0"
+version = "0.24.0"
 description = "A framework for general intelligence built on four fundamental principles, validated on ARC-AGI"
 readme = "README.md"
 license = {text = "MIT"}

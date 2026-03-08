@@ -255,6 +255,18 @@ class FourPillarsSolver:
             ):
                 candidates.append((best_single, "single_primitive"))
 
+        # Step 5.9: Deduplicate candidates by step sequence.
+        # The same program can appear from different methods (e.g., a single
+        # primitive found both in step 3 and step 5.5). Keep the first occurrence.
+        seen_steps: set[tuple[str, ...]] = set()
+        unique_candidates: list[tuple[Program, str]] = []
+        for prog, meth in candidates:
+            key = tuple(s.name for s in prog.steps)
+            if key not in seen_steps:
+                seen_steps.add(key)
+                unique_candidates.append((prog, meth))
+        candidates = unique_candidates
+
         # Step 6: Pick the winner from ALL candidates (MDL: simplest first).
         solved = False
         method = "evolved"
@@ -297,7 +309,8 @@ class FourPillarsSolver:
 
         return self._make_result(task_id, best_program, best_score, elapsed, method,
                                   pixel_perfect=solved,
-                                  n_candidates=len(candidates))
+                                  n_candidates=len(candidates),
+                                  candidates=candidates)
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -708,7 +721,26 @@ class FourPillarsSolver:
         return result if result else None
 
     def _make_result(self, task_id, program, score, elapsed, method,
-                      pixel_perfect: bool = False, n_candidates: int = 0):
+                      pixel_perfect: bool = False, n_candidates: int = 0,
+                      candidates: list | None = None):
+        """Build the per-task result dict.
+
+        Args:
+            candidates: List of (Program, method_str) tuples — all pixel-perfect
+                        candidates found during search. Serialized as dicts with
+                        'program' (name), 'method', and 'steps' (list of step names)
+                        so they can survive JSON serialization and cross-process transfer.
+        """
+        # Serialize candidates to dicts (Programs aren't JSON-serializable)
+        cand_dicts = []
+        if candidates:
+            for prog, meth in candidates:
+                cand_dicts.append({
+                    "program": prog.name,
+                    "method": meth,
+                    "steps": [s.name for s in prog.steps],
+                })
+
         return {
             "task_id": task_id,
             "solved": pixel_perfect,
@@ -719,6 +751,7 @@ class FourPillarsSolver:
             "method": method,
             "toolkit_size": self.toolkit.size,
             "n_candidates": n_candidates,
+            "candidates": cand_dicts,
         }
 
     def solve_batch(self, tasks: dict[str, dict]) -> dict:

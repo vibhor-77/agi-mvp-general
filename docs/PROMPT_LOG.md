@@ -1093,6 +1093,99 @@ Changes made:
 
 ### Next steps identified
 - Richer object rules: movement, conditional, relational
-- Multiple candidate submission (top-3 diverse predictions per task)
+- ~~Multiple candidate submission (top-3 diverse predictions per task)~~ → Done in Session 17
+- Investigate why evolution stalls immediately on many tasks
+- Test on ARC-AGI-2
+
+---
+
+## Session 17 — v0.24: Multiple Candidate Submission (Top-K Predictions)
+
+**Date:** 2026-03-08
+
+### Prompt
+
+> Continue from where we left off — the repo is clean and all context is logged.
+
+User chose "Multiple candidates (Recommended)" from the options presented.
+
+### Analysis
+
+The solver was already collecting ALL pixel-perfect candidates from every search phase (single primitives, culture transfer, pair exhaustion, triple search, object rules, evolution restarts). However:
+
+1. **Only 1 candidate was submitted** — the shortest (MDL principle) was selected and all others discarded
+2. **Only 1 program was tested against test output** — `validate_on_test(programs[0], task)` tested only the first archived program
+3. **96 training tasks had >1 pixel-perfect candidate** (from v0.23 results) but only one was ever tested
+4. **39 eval tasks scored ≥95% on both train and test** but weren't solved — theoretical ceiling with top-3: ~57 solves (14.3%)
+
+### Design Decision: Top-K Diverse Prediction
+
+Instead of picking one winner, test ALL pixel-perfect candidates (up to top-k) against held-out test output. If ANY candidate passes, the task counts as solved. This is the standard approach in ARC-AGI competitions (2 guesses allowed in official scoring).
+
+**Key insight:** Different search methods find different programs. A pair-exhaustion solution might overfit to training examples while an evolution-discovered solution generalizes, or vice versa. By testing multiple candidates, we increase the probability that at least one generalizes.
+
+### Work Done (TDD)
+
+**Tests written first** (`tests/test_multi_candidate.py`, 13 tests):
+- `TestSolverCandidateCollection` (5 tests): result has `candidates` field, at least one candidate when solved, candidates have program/method/steps dicts, n_candidates matches, winner is shortest
+- `TestValidateCandidatesOnTest` (5 tests): single-candidate matches `validate_on_test`, best candidate wins across mixed good/bad, empty list returns (False, 0.0), top_k limits tested candidates, returns best score
+- `TestCandidateDedup` (1 test): no duplicate step sequences in candidates
+- `TestCollectResultMultiCandidate` (2 tests): _collect_result propagates candidates, multi-candidate improves TC
+
+**Implementation:**
+
+1. **`arc_agent/scorer.py`** — Added `validate_candidates_on_test(candidates, task, top_k=3)`:
+   - Tests up to top_k candidate programs against test output
+   - Returns (any_passed, best_score) — True if ANY candidate passes
+   - Single-candidate case is identical to `validate_on_test()`
+
+2. **`arc_agent/solver.py`** — Three changes:
+   - Added candidate deduplication (step 5.9) — removes duplicate step sequences from different search methods
+   - `_make_result()` now serializes all candidates as dicts with `program`, `method`, and `steps` keys
+   - `solve_task()` passes `candidates` list to `_make_result()`
+
+3. **`arc_agent/dataset.py`** — Three changes:
+   - Added `_rebuild_candidate_programs()` helper — reconstructs Program objects from serialized step-name dicts
+   - `_collect_result()` now rebuilds candidates and calls `validate_candidates_on_test()` instead of `validate_on_test(programs[0], task)`
+   - `evaluate_dataset()` accepts `top_k` parameter, passes it through to workers
+   - Summary output shows `top-K submitted` count
+
+4. **`arc_agent/evaluate.py`** — Added `--top-k N` CLI flag (default: 3)
+
+### Key Files Modified
+- `arc_agent/scorer.py` — `validate_candidates_on_test()` added
+- `arc_agent/solver.py` — candidate dedup, serialization, passing to result
+- `arc_agent/dataset.py` — `_rebuild_candidate_programs()`, multi-candidate validation, `top_k` parameter
+- `arc_agent/evaluate.py` — `--top-k` CLI flag
+- `tests/test_multi_candidate.py` — NEW: 13 TDD tests
+
+### Verification
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Tests passing | 448 | **461** |
+| Candidates submitted per task | 1 | **up to top-k (default 3)** |
+| Test validation | single program | **all candidates** |
+| `--top-k` CLI flag | N/A | **Added** |
+| Candidate deduplication | No | **Yes (by step sequence)** |
+
+### Expected Impact
+
+With top-3 submission, the overfits count (pixel-perfect on train but failed test) should decrease because:
+- Programs that overfit from one method may generalize from another
+- v0.23 had 22 train overfits and 10 eval overfits
+- Each additional candidate gives another chance to pass test
+
+**Full benchmark needed** to measure actual improvement. Run:
+```bash
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
+    --culture-file culture.json --output results_v024_train.json
+python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output results_v024_eval.json
+```
+
+### Next Steps
+- Run full benchmark to measure impact of multi-candidate submission
+- Richer object rules: movement, conditional, relational
 - Investigate why evolution stalls immediately on many tasks
 - Test on ARC-AGI-2

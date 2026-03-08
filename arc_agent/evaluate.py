@@ -44,6 +44,7 @@ Additional options:
     --population N  Evolutionary population size (default: 60)
     --generations N Max evolutionary generations (default: 30)
     --seed N        Random seed for reproducibility (default: 42)
+    --top-k N       Candidates to submit per task (default: 3)
     --quiet         Suppress per-task output
 
 Reproducibility:
@@ -107,6 +108,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--quiet", action="store_true",
         help="Suppress per-task output; only print the final summary",
     )
+    parser.add_argument(
+        "--top-k", type=int, default=3, dest="top_k",
+        help=(
+            "Number of diverse candidates to submit per task (default: 3). "
+            "Each pixel-perfect candidate is tested independently against "
+            "the held-out test output; if ANY candidate passes, the task "
+            "counts as solved. Higher values increase test-confirmation "
+            "rate at no extra compute cost."
+        ),
+    )
 
 
 def _run(args: argparse.Namespace, mode: str) -> int:
@@ -166,6 +177,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         load_culture_path=load_culture_path,
         save_culture_path=save_culture_path,
         mode=mode,
+        top_k=args.top_k,
     )
 
     return 0

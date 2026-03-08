@@ -38,7 +38,7 @@ from typing import Iterator
 import multiprocessing
 
 from .solver import FourPillarsSolver
-from .scorer import validate_on_test
+from .scorer import validate_on_test, validate_candidates_on_test
 from .cpu_utils import default_workers, describe_cpu
 from .culture import save_culture, load_culture
 
@@ -76,12 +76,17 @@ def load_dataset(directory: str) -> dict[str, dict]:
 # ── Worker ─────────────────────────────────────────────────────────────────
 
 def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
-                     task: dict, seed: int, mode: str = "train") -> dict:
+                     task: dict, seed: int, mode: str = "train",
+                     top_k: int = 3) -> dict:
     """Package a per-task result with culture data for aggregation.
 
     Shared by the single-process (shared-solver) path and the per-process
     worker path. Both compute the same result dict so that _aggregate_and_save_culture
     always sees the same format.
+
+    When multiple candidates are available, validates ALL of them (up to top_k)
+    against the test output. If ANY candidate passes, test_passed = True.
+    This is the core of the multiple candidate submission feature.
     """
     test_passed = False
     test_score  = 0.0
@@ -89,9 +94,21 @@ def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
     # In infer mode, we NEVER look at test output — that's the whole point.
     # In train/eval modes, validate against test for honest reporting.
     if mode != "infer":
-        programs = solver.archive.task_solutions.get(task_id, [])
-        if programs:
-            test_passed, test_score = validate_on_test(programs[0], task)
+        # Rebuild candidate programs from step names for multi-candidate validation
+        candidate_programs = _rebuild_candidate_programs(
+            result.get("candidates", []), solver.toolkit
+        )
+
+        if candidate_programs:
+            # Test ALL candidates — if any passes, the task is test-confirmed
+            test_passed, test_score = validate_candidates_on_test(
+                candidate_programs, task, top_k=top_k
+            )
+        else:
+            # Fallback: no candidates, try the single best program
+            programs = solver.archive.task_solutions.get(task_id, [])
+            if programs:
+                test_passed, test_score = validate_on_test(programs[0], task)
 
     # Collect learned concepts and programs for culture saving
     learned_concepts = []
@@ -134,12 +151,46 @@ def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
         "time_seconds":   result["time_seconds"],
         "toolkit_size":   result["toolkit_size"],
         "n_candidates":   result.get("n_candidates", 0),
+        "candidates":     result.get("candidates", []),
         "worker_seed":    seed,
         # Culture data for cross-worker aggregation
         "_learned_concepts": learned_concepts,
         "_solved_programs":  solved_programs,
         "_task_features":    solver.archive.task_features,
     }
+
+
+def _rebuild_candidate_programs(
+    candidate_dicts: list[dict],
+    toolkit: "Toolkit",
+) -> list:
+    """Rebuild Program objects from serialized candidate dicts.
+
+    Each candidate dict has 'steps': list of step names. We look up each
+    step in the toolkit's concepts and reconstruct the Program.
+    Candidates with missing steps (e.g., task-specific learned concepts
+    that were cleaned up) are silently skipped.
+
+    Returns a list of Program objects in the same order as candidates.
+    """
+    from .concepts import Program
+
+    programs = []
+    for cand in candidate_dicts:
+        steps = cand.get("steps", [])
+        if not steps:
+            continue
+        concepts = []
+        all_found = True
+        for step_name in steps:
+            if step_name in toolkit.concepts:
+                concepts.append(toolkit.concepts[step_name])
+            else:
+                all_found = False
+                break
+        if all_found and concepts:
+            programs.append(Program(concepts))
+    return programs
 
 
 def _solve_one(args: tuple) -> dict:
@@ -161,7 +212,12 @@ def _solve_one(args: tuple) -> dict:
         Dict with task_id and all per-task metrics, plus a worker_seed
         for reproducibility bookkeeping and culture data for aggregation.
     """
-    task_id, task, population_size, max_generations, seed, culture_path, mode = args
+    # Support both old 7-element and new 8-element args for compatibility
+    if len(args) == 8:
+        task_id, task, population_size, max_generations, seed, culture_path, mode, top_k = args
+    else:
+        task_id, task, population_size, max_generations, seed, culture_path, mode = args
+        top_k = 3
 
     random.seed(seed)
 
@@ -179,7 +235,8 @@ def _solve_one(args: tuple) -> dict:
             pass  # Gracefully degrade — run without culture
 
     result = solver.solve_task(task, task_id, mode=mode)
-    return _collect_result(solver, result, task_id, task, seed, mode=mode)
+    return _collect_result(solver, result, task_id, task, seed, mode=mode,
+                           top_k=top_k)
 
 
 # ── Progress display ────────────────────────────────────────────────────────
@@ -408,6 +465,7 @@ def evaluate_dataset(
     load_culture_path: str = "",
     save_culture_path: str = "",
     mode: str = "train",
+    top_k: int = 3,
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
 
@@ -432,6 +490,9 @@ def evaluate_dataset(
         mode:               "train" or "eval". Train mode saves culture;
                             eval mode loads culture. Future: train-only
                             logic like candidate selection learning.
+        top_k:              Number of diverse candidates to test against
+                            held-out test output (default 3). Higher = more
+                            chances to pass test, but diminishing returns.
 
     Returns:
         Dict with keys:
@@ -463,7 +524,7 @@ def evaluate_dataset(
     # sorted list, so (seed, workers) always gives identical results.
     worker_args = [
         (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000, load_culture_path, mode)
+         seed + i * 1000, load_culture_path, mode, top_k)
         for i, task_id in enumerate(sorted_ids)
     ]
 
@@ -575,7 +636,9 @@ def evaluate_dataset(
         multi_cand = sum(1 for c in n_cands if c > 1)
         total_cands = sum(n_cands)
         if total_cands > 0:
-            print(f"Total candidates:   {total_cands} across {sum(1 for c in n_cands if c > 0)} tasks")
+            print(f"Total candidates:   {total_cands} across "
+                  f"{sum(1 for c in n_cands if c > 0)} tasks  "
+                  f"(top-{top_k} submitted)")
             if multi_cand > 0:
                 print(f"  └─ Multi-cand:    {multi_cand} tasks had >1 pixel-perfect candidate")
         print(f"{'='*60}")
@@ -598,6 +661,7 @@ def evaluate_dataset(
         "avg_time_per_task":  total_time / max(completed, 1),
         "workers_used":       n_workers,
         "seed":               seed,
+        "top_k":              top_k,
     }
 
     result = {"task_results": task_results, "summary": summary}

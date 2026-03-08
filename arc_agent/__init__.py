@@ -6,4 +6,4 @@
 # Pillar 3: Abstraction & Composability - Recursive concept building
 # Pillar 4: Exploration - Explore/exploit tradeoff
 
-__version__ = "0.5.0"
+__version__ = "0.24.0"
