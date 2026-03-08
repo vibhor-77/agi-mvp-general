@@ -51,18 +51,19 @@ python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.21 (current)
+### ARC-AGI-1 v0.22 (current)
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
-| **Exact solve rate** | 94/400 (23.5%) | 35/400 (8.8%) |
-| Test confirmed | 74/400 (18.5%) | 24/400 (6.0%) |
-| Partial solve (>80%) | 309/400 (77.2%) | 296/400 (74.0%) |
-| Mean score | 0.855 | 0.826 |
-| Total time | 1m39s (8 workers) | 4m16s (8 workers) |
+| **Solved (exact)** | 79/400 (19.8%) | 18/400 (4.5%) |
+| Test confirmed | 82/400 (20.5%) | 23/400 (5.8%) |
+| Flukes | 3 | 5 |
+| Overfits | 20 | 8 |
+| Mean score | 0.851 | — |
 | LLM used | None | None |
 
-287 hand-crafted primitives, example-parameterized color mapping, exhaustive pair + triple search, evolutionary synthesis. Pure Four Pillars — no LLMs.
+Solved (exact) = pixel-perfect on train AND test (our golden metric).
+287 hand-crafted primitives, neighbor-rule learning, example-parameterized color mapping, exhaustive pair + triple search, evolutionary synthesis. Pure Four Pillars — no LLMs.
 
 ## Running the Full ARC-AGI Benchmark
 
