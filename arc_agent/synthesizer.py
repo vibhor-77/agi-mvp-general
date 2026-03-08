@@ -237,33 +237,41 @@ class ProgramSynthesizer:
     # Essential structural primitives that are always included in pair search.
     # These are common "second steps" that score poorly alone but are critical
     # in compositions (e.g. crop_nonzero after a color filter).
+    # ESSENTIAL_PAIR_CONCEPTS: concepts that score LOW individually (won't appear in
+    # top_k=20 naturally) but are highly valuable as a first or second step in pairs.
+    # Keep this list SMALL (target ≤25) to control O(N²) pair-search cost.
+    # Rule: only include if avg single-prim rank > 40 AND demonstrated pair-solve value.
     ESSENTIAL_PAIR_CONCEPTS = frozenset([
-        "identity", "crop_nonzero", "mirror_h", "mirror_v",
-        "rotate_90_cw", "rotate_90_ccw", "rotate_180", "transpose",
-        "fill_enclosed", "outline", "invert_colors",
-        "scale_2x", "scale_3x", "tile_2x2",
-        "get_top_half", "get_bottom_half", "get_left_half", "get_right_half",
-        "get_interior", "get_border",
-        "extract_largest", "extract_smallest",
-        "gravity_down", "gravity_up", "gravity_left", "gravity_right",
-        # Tile / pattern extraction (v0.9)
-        "extract_repeating_tile", "extract_unique_block",
-        "split_sep_overlay", "split_sep_xor",
-        "compress_rows", "compress_cols",
-        "max_color_per_cell", "min_color_per_cell",
-        # Tile completion and lane spreading (v0.13) — useful as second steps
-        "fill_by_symmetry", "fill_tile_pattern",
-        "spread_in_lanes_h", "spread_in_lanes_v",
-        # V14: high-impact as second steps
-        "gravity_toward_color", "fill_holes_in_objects",
-        "connect_pixels_to_rect", "recolor_2nd_to_3rd",
-        "extend_nonzero_fill_row", "extend_nonzero_fill_col",
+        # Structural transformations — low individual score, strong as second steps
+        "identity",             # catch-all; needed when first step is the transform
+        "fill_enclosed",        # flood-fill enclosed regions — rarely top-k alone
+        "split_sep_overlay",    # grid-separator overlay
+        "split_sep_xor",        # grid-separator XOR
+        "compress_rows",        # deduplicate rows
+        "compress_cols",        # deduplicate cols
+        "max_color_per_cell",   # cell-wise max across examples
+        "min_color_per_cell",   # cell-wise min across examples
+        # Tile/pattern (v0.13)
+        "fill_by_symmetry",
+        "fill_tile_pattern",
+        "spread_in_lanes_h",
+        "spread_in_lanes_v",
+        # V14: demonstrated pair-solve value
+        "gravity_toward_color",
+        "fill_holes_in_objects",
+        "connect_pixels_to_rect",
+        "recolor_2nd_to_3rd",
+        "extend_nonzero_fill_row",
         "complete_pattern_4way",
-        # V15: new essential second steps
-        "recolor_isolated_to_nearest", "recolor_small_objs_to_nearest",
-        "remove_color_noise", "mirror_h_merge", "mirror_v_merge",
-        "sort_rows_by_value", "sort_cols_by_value",
-        "complete_symmetry_diagonal", "fill_row_from_right", "fill_col_from_bottom",
+        # V15: demonstrated pair-solve value
+        "recolor_isolated_to_nearest",
+        "mirror_h_merge",
+        "mirror_v_merge",
+        "complete_symmetry_diagonal",
+        "sort_rows_by_value",
+        "remove_color_noise",
+        # V15 speed-fix: re-added after confirmed lost solve (0b148d64)
+        "crop_nonzero",             # low solo rank but critical as 2nd step
     ])
 
     def try_all_pairs(

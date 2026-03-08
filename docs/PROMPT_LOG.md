@@ -851,3 +851,22 @@ The 7 new primitives added 2 deterministic pair-solves, improve the evolution se
 |---------|-------------|-----------|
 | v0.14 | 69/400 (17.2%) | 25/400 (6.2%) |
 | v0.15 | TBD | TBD |
+
+**v0.15 full benchmark results (Mac, 8 workers):**
+- Evaluation: **27/400 (6.8%)** exact, 20/400 (5.0%) test-confirmed, mean=0.819
+- Training: TBD (still running)
+
+| Version | Train | Eval | Δ Eval |
+|---------|-------|------|--------|
+| v0.12 | 16.5% | 5.8% | — |
+| v0.13 | 16.5% | 5.8% | +0 |
+| v0.14 | 17.2% | 6.2% | +0.4pp |
+| **v0.15** | TBD | **6.8%** | **+0.6pp** |
+
+**v0.15 training results:** 72/400 (18.0%) exact, 59/400 (14.8%) test-confirmed, mean=0.851
+Note: eval wall-clock rate crashed to 0.35 tasks/s (from 1.78) — ESSENTIAL set too large.
+
+| Version | Train | Eval |
+|---------|-------|------|
+| v0.14 | 69/400 (17.2%) | 25/400 (6.2%) |
+| **v0.15** | **72/400 (18.0%)** | **27/400 (6.8%)** |
