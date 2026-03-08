@@ -4115,6 +4115,211 @@ def fill_object_bboxes(grid: Grid) -> Grid:
 
 
 # ============================================================
+# INPAINTING: Fill holes in patterned grids
+# ============================================================
+
+def inpaint_tiled(grid: Grid) -> Grid:
+    """Fill zero-cells by detecting a repeating tile period.
+
+    Many ARC tasks have a grid with a 2D periodic pattern where rectangular
+    regions have been replaced with 0 (holes). This primitive detects the
+    row and column periods from the non-zero cells, then fills each zero
+    with the value implied by the tiling.
+
+    Algorithm:
+      1. For each candidate row period p_r (1..H//2), check if all non-zero
+         cells satisfy grid[r][c] == grid[r % p_r][c] across all rows.
+      2. Same for column period p_c.
+      3. Build a "template" tile of size p_r × p_c from the non-zero cells.
+      4. Fill zeros by looking up template[r % p_r][c % p_c].
+
+    Returns the grid unchanged if no period is detected or if there are
+    no zeros to fill.
+    """
+    h, w = len(grid), len(grid[0]) if grid else 0
+    if h == 0 or w == 0:
+        return grid
+
+    # Quick check: any zeros?
+    has_zeros = any(grid[r][c] == 0 for r in range(h) for c in range(w))
+    if not has_zeros:
+        return [row[:] for row in grid]
+
+    # Detect row period: smallest p_r such that for all non-zero cells,
+    # grid[r][c] == grid[r % p_r][c] (or the reference is zero too)
+    best_pr = h  # fallback: no row period
+    for pr in range(1, h // 2 + 1):
+        # Don't require exact divisibility — the grid may be truncated
+        consistent = True
+        for r in range(pr, h):
+            if not consistent:
+                break
+            for c in range(w):
+                val = grid[r][c]
+                ref = grid[r % pr][c]
+                if val != 0 and ref != 0 and val != ref:
+                    consistent = False
+                    break
+        if consistent:
+            best_pr = pr
+            break
+
+    # Detect column period
+    best_pc = w  # fallback: no column period
+    for pc in range(1, w // 2 + 1):
+        # Don't require exact divisibility — the grid may be truncated
+        consistent = True
+        for r in range(h):
+            if not consistent:
+                break
+            for c in range(pc, w):
+                val = grid[r][c]
+                ref = grid[r][c % pc]
+                if val != 0 and ref != 0 and val != ref:
+                    consistent = False
+                    break
+        if consistent:
+            best_pc = pc
+            break
+
+    # Build template from all non-zero cells, collecting votes
+    template: list[list[dict[int, int]]] = [
+        [{} for _ in range(best_pc)] for _ in range(best_pr)
+    ]
+    for r in range(h):
+        for c in range(w):
+            val = grid[r][c]
+            if val != 0:
+                tr, tc = r % best_pr, c % best_pc
+                template[tr][tc][val] = template[tr][tc].get(val, 0) + 1
+
+    # Resolve template to majority vote
+    resolved: list[list[int]] = [[0] * best_pc for _ in range(best_pr)]
+    for tr in range(best_pr):
+        for tc in range(best_pc):
+            votes = template[tr][tc]
+            if votes:
+                resolved[tr][tc] = max(votes, key=votes.get)
+
+    # Fill zeros
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            if result[r][c] == 0:
+                fill_val = resolved[r % best_pr][c % best_pc]
+                if fill_val != 0:
+                    result[r][c] = fill_val
+
+    return result
+
+
+def inpaint_from_context(grid: Grid) -> Grid:
+    """Fill zero-cells by inferring from row and column context.
+
+    For each zero cell at (r, c):
+      1. Look at all non-zero cells in the same column — if a consistent
+         pattern maps row index to value, use it.
+      2. Look at all non-zero cells in the same row — if a consistent
+         pattern maps column index to value, use it.
+      3. If row and column agree, fill. If only one has an answer, use it.
+
+    This handles non-periodic patterns where each row/column has a unique
+    but predictable structure (e.g., diagonal patterns, arithmetic sequences).
+
+    Returns the grid unchanged if there are no zeros.
+    """
+    h, w = len(grid), len(grid[0]) if grid else 0
+    if h == 0 or w == 0:
+        return grid
+
+    has_zeros = any(grid[r][c] == 0 for r in range(h) for c in range(w))
+    if not has_zeros:
+        return [row[:] for row in grid]
+
+    result = [row[:] for row in grid]
+
+    # Strategy 1: For each zero, check if the same column has a consistent
+    # value at the same row position across periodic row groups.
+    # Try multiple passes (iterative filling may reveal more context).
+    for _ in range(3):  # up to 3 passes
+        changed = False
+        for r in range(h):
+            for c in range(w):
+                if result[r][c] != 0:
+                    continue
+
+                # Try column context: find what value appears at row r
+                # in this column by looking at a period offset
+                col_vote = _vote_from_column(result, r, c, h)
+                row_vote = _vote_from_row(result, r, c, w)
+
+                if col_vote != 0 and row_vote != 0:
+                    # Both agree? Use column (usually more reliable)
+                    result[r][c] = col_vote
+                    changed = True
+                elif col_vote != 0:
+                    result[r][c] = col_vote
+                    changed = True
+                elif row_vote != 0:
+                    result[r][c] = row_vote
+                    changed = True
+
+        if not changed:
+            break
+
+    return result
+
+
+def _vote_from_column(grid: Grid, r: int, c: int, h: int) -> int:
+    """Infer value at (r, c) from non-zero cells in the same column.
+
+    Tries to find a period p such that grid[r + k*p][c] is non-zero
+    and consistent for some k.
+    """
+    for p in range(1, h):
+        candidates = []
+        for k in [-1, 1, -2, 2, -3, 3]:
+            nr = r + k * p
+            if 0 <= nr < h and grid[nr][c] != 0:
+                candidates.append(grid[nr][c])
+
+        if len(candidates) >= 2:
+            # Check if all candidates agree
+            if len(set(candidates)) == 1:
+                return candidates[0]
+        elif len(candidates) == 1:
+            # Only one reference point — less reliable but still useful
+            # Only use if period == 1 (adjacent cell)
+            if p == 1:
+                return candidates[0]
+
+    return 0
+
+
+def _vote_from_row(grid: Grid, r: int, c: int, w: int) -> int:
+    """Infer value at (r, c) from non-zero cells in the same row.
+
+    Tries to find a period p such that grid[r][c + k*p] is non-zero
+    and consistent for some k.
+    """
+    for p in range(1, w):
+        candidates = []
+        for k in [-1, 1, -2, 2, -3, 3]:
+            nc = c + k * p
+            if 0 <= nc < w and grid[r][nc] != 0:
+                candidates.append(grid[r][nc])
+
+        if len(candidates) >= 2:
+            if len(set(candidates)) == 1:
+                return candidates[0]
+        elif len(candidates) == 1:
+            if p == 1:
+                return candidates[0]
+
+    return 0
+
+
+# ============================================================
 # TOOLKIT INITIALIZATION
 # ============================================================
 
@@ -4156,6 +4361,8 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("invert_colors", invert_colors),
         ("extract_colors", extract_unique_colors),
         ("count_per_row", count_nonzero_per_row),
+        ("inpaint_tiled", inpaint_tiled),
+        ("inpaint_from_context", inpaint_from_context),
     ]
 
     for name, impl in operators:
