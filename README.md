@@ -34,61 +34,35 @@ pip install numpy           # or: conda install numpy
 # Run the test suite to verify everything works
 python -m unittest discover -s tests -p "*.py"
 
-# Run the sample tasks (10 built-in ARC tasks)
-python -m arc_agent.main
-
-# Full ARC-AGI benchmark (auto-detects performance cores)
+# Clone the ARC-AGI dataset
 git clone https://github.com/fchollet/ARC-AGI.git
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
+
+# Full benchmark with culture transfer (RECOMMENDED):
+# Step 1: Train and save learned culture
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
+    --save-culture culture.json
+
+# Step 2: Evaluate with culture from training
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation \
+    --load-culture culture.json
 ```
 
 **Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup and all CLI options.
 
 ## Results
 
-### ARC-AGI-1 Full Benchmark (400 training tasks)
+### ARC-AGI-1 v0.21 (current)
 
-| Metric | v0.2 | v0.3 | Change |
-|--------|------|------|--------|
-| **Exact solve rate** | 20/400 (5.0%) | **24/400 (6.0%)** | **+20%** |
-| Test correct (held-out) | 19/400 (4.8%) | 23/400 (5.8%) | +21% |
-| Partial solve rate (>80%) | 185/400 | 200/400 | +15 tasks |
-| Concepts learned | 3 | 24 | **8× more compounding** |
-| Toolkit growth | 73 → 76 | 104 → 118 | 14 concepts compounded |
-| Total time | 159.7s (0.40s/task) | 107.0s (0.27s/task) | 33% faster |
-| LLM used | None | None | Pure 4 Pillars |
+| Metric | Training (400) | Evaluation (400) |
+|--------|---------------|-----------------|
+| **Exact solve rate** | 94/400 (23.5%) | 35/400 (8.8%) |
+| Test confirmed | 74/400 (18.5%) | 24/400 (6.0%) |
+| Partial solve (>80%) | 309/400 (77.2%) | 296/400 (74.0%) |
+| Mean score | 0.855 | 0.826 |
+| Total time | 1m39s (8 workers) | 4m16s (8 workers) |
+| LLM used | None | None |
 
-### v0.3 Key Changes
-
-| Change | Details |
-|--------|---------|
-| Toolkit expanded | 73 → 104 concepts (+13 partitioning, +9 fill bg, +9 erase color) |
-| Concept promotion threshold | Lowered from 0.99 → 0.95 (near-miss knowledge compounds) |
-| Seed generation | Richer feature-guided heuristics + 2-step combo seeds |
-| New primitive categories | Grid partitioning, border extraction, color replacement, dedup, sorting |
-| Test suite | 155 → 180 tests |
-
-### v0.4 Key Changes (Conditional Logic + Task Decomposition)
-
-| Change | Details |
-|--------|---------|
-| `ConditionalConcept` | `If(Predicate, ThenConcept, ElseConcept)` as first-class concept |
-| 10 predicates | `is_symmetric_h/v`, `is_square`, `has_single_color`, `is_tall/wide`, `has_many_colors`, `is_small/large`, `has_background_majority` |
-| `DecompositionEngine` | 3 strategies: color-channel, spatial quadrant, diff-focus |
-| Toolkit size | 104 → 114 concepts (10 predicates added) |
-| Test suite | 180 → 216 tests |
-
-### v0.5 Key Changes (NumPy Acceleration + Multiprocessing)
-
-| Change | Details |
-|--------|---------|
-| NumPy scorer | `pixel_accuracy` + `structural_similarity` fully vectorized; `np.bincount` for ARC's 10-color palette |
-| Batch population scoring | `score_population_on_task()` amortizes train-example iteration across entire population |
-| Multiprocessing | `multiprocessing.Pool` parallel evaluation; round-robin task distribution across all CPU cores |
-| `--workers` CLI flag | `0` = all cores (default), `1` = in-process debug mode |
-| Pure-Python fallback | Retained for portability — NumPy is optional |
-| Test suite | 216 → 231 tests |
-| Expected speedup | ~10-20× scoring (NumPy); ~10× wall-clock (10 cores on M1 Max) |
+287 hand-crafted primitives, example-parameterized color mapping, exhaustive pair + triple search, evolutionary synthesis. Pure Four Pillars — no LLMs.
 
 ## Running the Full ARC-AGI Benchmark
 
@@ -96,19 +70,23 @@ python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
 # 1. Clone the official ARC-AGI dataset
 git clone https://github.com/fchollet/ARC-AGI.git
 
-# 2. Run on training set (400 tasks) — uses all CPU cores by default
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training
+# 2. RECOMMENDED: Two-phase pipeline with culture transfer
+#    Train on training set, save learned programs/concepts:
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
+    --save-culture culture.json
 
-# 3. Run with explicit worker count (e.g. 10 cores on M1 Max)
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 10
+#    Evaluate with culture loaded (programs learned from training
+#    are tried on each eval task before pair/evolution search):
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation \
+    --load-culture culture.json
 
-# 4. Run on evaluation set (400 tasks, held-out)
-python -m arc_agent.evaluate --data-dir ARC-AGI/data/evaluation
-
-# 5. Quick test on first 20 tasks (single process for easy debugging)
+# 3. Quick test on first 20 tasks (single process for easy debugging)
 python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --limit 20 --workers 1
 
-# 6. Save results and learned toolkit
+# 4. Run with explicit worker count (e.g. 10 cores on M1 Max)
+python -m arc_agent.evaluate --data-dir ARC-AGI/data/training --workers 10
+
+# 5. Save results JSON and learned toolkit
 python -m arc_agent.evaluate --data-dir ARC-AGI/data/training \
     --output results.json --save-toolkit learned_toolkit.json
 ```
