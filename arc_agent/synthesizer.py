@@ -279,6 +279,8 @@ class ProgramSynthesizer:
         "complete_tile_from_modal_row",     # 7f4411dc solved as 2nd step
         "recolor_smallest_obj_in_each_row", # ba97ae07 solved
         "snap_isolated_to_rect_boundary",   # d89b689b solved
+        # V17: only add to ESSENTIAL after confirmed pair-solve value
+        # (keeping slim — evolution phase will find these when needed)
     ])
 
     def try_all_pairs(

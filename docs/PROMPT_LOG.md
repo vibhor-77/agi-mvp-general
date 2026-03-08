@@ -870,3 +870,72 @@ Note: eval wall-clock rate crashed to 0.35 tasks/s (from 1.78) — ESSENTIAL set
 |---------|-------|------|
 | v0.14 | 69/400 (17.2%) | 25/400 (6.2%) |
 | **v0.15** | **72/400 (18.0%)** | **27/400 (6.8%)** |
+
+---
+
+## Session 13 — v0.16: Near-Miss Analysis & Stripe/Tile Primitives
+
+### v0.15 Speed-Fix Results (v0.15 patch, committed as c9c39f2)
+
+ESSENTIAL_PAIR_CONCEPTS pruned from 55→25 concepts to fix wall-clock crash.
+- `crop_nonzero` re-added to recover lost solve on `0b148d64`
+- Avg pair ops/task: ~3,159 (pairs + triples + evolution)
+- ESSENTIAL size: 25 → ~2,025 pairs/task (before early-exit)
+
+| Version | Train | Eval | Wall-clock (eval) |
+|---------|-------|------|-------------------|
+| v0.15 (peak) | 72/400 (18.0%) | 27/400 (6.8%) | 0.35 tasks/s (broken) |
+| v0.15 fix | 68/400 (17.0%) | 26/400 (6.5%) | 1.02 tasks/s |
+
+Speed fix cost ~4 train / 1 eval solve (from ESSENTIAL pruning), but essential to run at all.
+
+### v0.16 Analysis
+
+**Near-miss scan (pair-search, 400 training tasks):**
+- 60 solved, 206 near-misses (0.80-0.99)
+- Key failure modes:
+  1. **identity→identity (~20 tasks):** Input and output nearly identical; tiny fraction of cells change; need very specific primitive to fix ~2-5% of cells
+  2. **recolor_smallest repeating (~10 tasks):** Same primitive applied twice = wrong; task recolors a *subset* (cells touching an accent color), not all cells of smallest color
+  3. **Stripe gap filling (~5 tasks):** Color stripes separated by bg; need to fill the bg between same-color endpoints
+  4. **Tiled grid anomalies (~5 tasks):** Tiled pattern with one cell deviating from column/row majority
+  5. **Pixel projection (~3 tasks):** Isolated pixels outside main object need to snap to its boundary
+
+**New primitives (v0.16, 18 total → 242 concepts):**
+- `fill_stripe_gaps_h` / `fill_stripe_gaps_v`: fill bg between same-color cell pairs in rows/cols
+- `complete_tile_from_modal_row` / `complete_tile_from_modal_col`: replace anomalous cells with row/col majority
+- `recolor_minority_in_rows` / `recolor_minority_in_cols`: recolor outlier cells in each row/col
+- `recolor_smallest_obj_in_each_row` / `recolor_smallest_obj_in_each_col`: minority-count segments → dominant color
+- `fill_grid_intersections`: fill bg at (row, col) intersections where both have same color
+- `propagate_color_h` / `propagate_color_v`: extend color rightward/downward through bg
+- `recolor_unique_in_row_col`: cells unique in row → column's dominant color
+- `snap_isolated_to_rect_boundary`: project isolated pixels onto bounding box of largest object
+- `recolor_touching_2nd_to_8` / `recolor_touching_2nd_to_3`: recolor cells adjacent to 2nd-color object
+- `recolor_neighbors_of_2nd_color`: mark halo around accent color as 8
+- `extend_color_within_col_bounds` / `extend_color_within_row_bounds`: fill gaps within color extents
+
+**ESSENTIAL set:** 25→31 (within target ≤32 for speed)
+
+**Confirmed new pair-search solves:**
+- `ba97ae07`: recolor_smallest_obj_in_each_row × 2
+- `7f4411dc`: remove_color_noise → complete_tile_from_modal_row
+- `22168020`: fill_stripe_gaps_h × 2
+- `40853293`: fill_stripe_gaps_v → connect_pixels_to_rect
+- `d037b0a7`: propagate_color_v × 2
+- `d89b689b`: snap_isolated_to_rect_boundary × 2
+
+**v0.16 Full Benchmark Results (Mac, 8 workers):**
+
+| Metric | Train | Eval |
+|--------|-------|------|
+| Solved (exact) | **77/400 (19.2%)** | **30/400 (7.5%)** |
+| Partial (>80%) | 229/400 (57.2%) | 260/400 (65.0%) |
+| Test confirmed | 62/400 (15.5%) | 21/400 (5.2%) |
+| Mean score | 0.846 | 0.818 |
+| Wall-clock | 4.47 tasks/s | 2.19 tasks/s |
+
+| Version | Train | Eval | Δ Eval |
+|---------|-------|------|--------|
+| v0.15 fix | 68/400 (17.0%) | 26/400 (6.5%) | — |
+| **v0.16** | **77/400 (19.2%)** | **30/400 (7.5%)** | **+1.0pp** |
+
+Eval 30/400 = **7.5%** — best result yet. +9 train solves, +4 eval solves vs speed-fix baseline.

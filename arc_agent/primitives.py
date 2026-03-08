@@ -2877,6 +2877,412 @@ def repeat_pattern_to_size(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V17 NEW PRIMITIVES
+# ============================================================
+
+def fill_largest_hole_with_8(grid: Grid) -> Grid:
+    """Fill the largest enclosed bg region with color 8.
+
+    Finds all bg (0) regions not reachable from the grid border (enclosed holes),
+    then fills the largest one with color 8.
+    Useful for: marking the biggest void/interior with a specific color.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # BFS from border to find reachable bg cells
+    reachable = [[False] * w for _ in range(h)]
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r == 0 or r == h-1 or c == 0 or c == w-1) and grid[r][c] == bg:
+                if not reachable[r][c]:
+                    reachable[r][c] = True
+                    queue.append((r, c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0<=nr<h and 0<=nc<w and not reachable[nr][nc] and grid[nr][nc] == bg:
+                reachable[nr][nc] = True
+                queue.append((nr, nc))
+
+    # Find all enclosed holes
+    visited = [[False] * w for _ in range(h)]
+    holes = []
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] == bg and not reachable[sr][sc] and not visited[sr][sc]:
+                hole = []
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    hole.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and not visited[nr][nc] and grid[nr][nc] == bg:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                holes.append(hole)
+
+    if not holes:
+        return grid
+
+    largest = max(holes, key=len)
+    result = _deep_copy_grid(grid)
+    for r, c in largest:
+        result[r][c] = 8
+    return result
+
+
+def fill_largest_hole_with_dominant(grid: Grid) -> Grid:
+    """Fill the largest enclosed bg region with the most common non-bg color.
+
+    Same as fill_largest_hole_with_8 but uses the dominant non-bg color instead.
+    Useful for: filling enclosed regions with the main object's color.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v, c) for v, c in Counter(all_vals).most_common() if v != bg]
+    fill_color = non_bg[0][0] if non_bg else 1
+
+    # BFS from border
+    reachable = [[False] * w for _ in range(h)]
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r == 0 or r == h-1 or c == 0 or c == w-1) and grid[r][c] == bg:
+                if not reachable[r][c]:
+                    reachable[r][c] = True
+                    queue.append((r, c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0<=nr<h and 0<=nc<w and not reachable[nr][nc] and grid[nr][nc] == bg:
+                reachable[nr][nc] = True
+                queue.append((nr, nc))
+
+    holes = []
+    visited = [[False] * w for _ in range(h)]
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] == bg and not reachable[sr][sc] and not visited[sr][sc]:
+                hole = []
+                q = [(sr, sc)]
+                visited[sr][sc] = True
+                while q:
+                    r, c = q.pop()
+                    hole.append((r, c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and not visited[nr][nc] and grid[nr][nc] == bg:
+                            visited[nr][nc] = True
+                            q.append((nr, nc))
+                holes.append(hole)
+
+    if not holes:
+        return grid
+
+    largest = max(holes, key=len)
+    result = _deep_copy_grid(grid)
+    for r, c in largest:
+        result[r][c] = fill_color
+    return result
+
+
+def tile_left_block_to_fill_h(grid: Grid) -> Grid:
+    """Tile the leftmost non-bg block horizontally to fill the full width.
+
+    Finds the width of the leftmost non-bg pattern block, then tiles it
+    rightward to fill the entire grid width. The tile width is determined
+    by the first all-bg column (separator).
+    Useful for: extending a partial left pattern to fill a wider canvas.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # Find tile width: first column that is mostly non-bg
+    # Then find first all-bg column (separator) after that
+    tile_w = w  # default: whole grid is the tile
+    for c in range(1, w):
+        col_vals = [grid[r][c] for r in range(h)]
+        if all(v == bg for v in col_vals):
+            tile_w = c
+            break
+
+    if tile_w == w:
+        # No separator found — try based on where non-bg content ends
+        for c in range(w-1, 0, -1):
+            col_vals = [grid[r][c] for r in range(h)]
+            if any(v != bg for v in col_vals):
+                tile_w = c + 1
+                break
+
+    if tile_w >= w:
+        return grid
+
+    # Tile the left block rightward
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg:
+                result[r][c] = grid[r][c % tile_w]
+    return result
+
+
+def tile_top_block_to_fill_v(grid: Grid) -> Grid:
+    """Tile the topmost non-bg block vertically to fill the full height.
+
+    Vertical counterpart of tile_left_block_to_fill_h.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    tile_h = h
+    for r in range(1, h):
+        row_vals = grid[r]
+        if all(v == bg for v in row_vals):
+            tile_h = r
+            break
+
+    if tile_h == h:
+        for r in range(h-1, 0, -1):
+            if any(v != bg for v in grid[r]):
+                tile_h = r + 1
+                break
+
+    if tile_h >= h:
+        return grid
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg:
+                result[r][c] = grid[r % tile_h][c]
+    return result
+
+
+def recolor_bg_at_row_col_intersection(grid: Grid) -> Grid:
+    """Fill bg cells at intersections where row and column colors agree.
+
+    For each bg cell at (r,c): find the most common non-bg color in row r
+    and the most common non-bg color in col c. If they match, fill the cell
+    with that color.
+    Useful for: grid/cross-pattern tasks where intersections get filled.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # Precompute dominant color per row and col
+    row_dom = []
+    for r in range(h):
+        non_bg = [grid[r][c] for c in range(w) if grid[r][c] != bg]
+        if non_bg:
+            row_dom.append(Counter(non_bg).most_common(1)[0][0])
+        else:
+            row_dom.append(None)
+
+    col_dom = []
+    for c in range(w):
+        non_bg = [grid[r][c] for r in range(h) if grid[r][c] != bg]
+        if non_bg:
+            col_dom.append(Counter(non_bg).most_common(1)[0][0])
+        else:
+            col_dom.append(None)
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != bg:
+                continue
+            rd = row_dom[r]
+            cd = col_dom[c]
+            if rd is not None and rd == cd:
+                result[r][c] = rd
+    return result
+
+
+def swap_row_pairs(grid: Grid) -> Grid:
+    """Swap adjacent row pairs: (0,1)→(1,0), (2,3)→(3,2), etc.
+
+    Swaps each pair of consecutive rows (row i and row i+1 where i is even).
+    Useful for: row reordering tasks with a "flip every pair" pattern.
+    """
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for r in range(0, h-1, 2):
+        result[r], result[r+1] = result[r+1][:], result[r][:]
+    return result
+
+
+def swap_col_pairs(grid: Grid) -> Grid:
+    """Swap adjacent column pairs: cols (0,1)→(1,0), (2,3)→(3,2), etc.
+
+    Column counterpart of swap_row_pairs.
+    """
+    h, w = _grid_dims(grid)
+    result = _deep_copy_grid(grid)
+    for c in range(0, w-1, 2):
+        for r in range(h):
+            result[r][c], result[r][c+1] = result[r][c+1], result[r][c]
+    return result
+
+
+def recolor_connector_to_neighbors(grid: Grid) -> Grid:
+    """Recolor cells of the 'thin connector' color to their surrounding colors.
+
+    Finds the color that acts as a connector (appears in linear/path patterns
+    but is surrounded by other colors). For each such cell, replaces it with
+    the most common non-connector color in its neighborhood.
+    Uses the least-common non-bg color as the connector color.
+    Useful for: dissolving thin color 1 separator lines into adjacent regions.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v, cnt) for v, cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+
+    # Connector = least common non-bg color (but not the absolute rarest if unique)
+    connector = non_bg[-1][0]
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != connector:
+                continue
+            # Get all non-connector, non-bg neighbors (including diagonals)
+            neighbor_colors = []
+            for dr in [-1, 0, 1]:
+                for dc in [-1, 0, 1]:
+                    if dr == 0 and dc == 0:
+                        continue
+                    nr, nc = r+dr, c+dc
+                    if 0<=nr<h and 0<=nc<w and grid[nr][nc] not in (bg, connector):
+                        neighbor_colors.append(grid[nr][nc])
+            if neighbor_colors:
+                result[r][c] = Counter(neighbor_colors).most_common(1)[0][0]
+    return result
+
+
+def reflect_pattern_to_fill(grid: Grid) -> Grid:
+    """Mirror the non-bg content across a detected axis of symmetry to fill bg.
+
+    Detects whether the grid has a half filled with content and half bg,
+    then mirrors the content half into the bg half.
+    Handles both left→right and top→bottom fills.
+    Useful for: completing partial patterns that have a clear axis.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    def count_nonbg(cells):
+        return sum(1 for v in cells if v != bg)
+
+    # Check if left half is denser than right half
+    left = [grid[r][c] for r in range(h) for c in range(w//2)]
+    right = [grid[r][c] for r in range(h) for c in range(w//2, w)]
+    top = [grid[r][c] for r in range(h//2) for c in range(w)]
+    bottom = [grid[r][c] for r in range(h//2, h) for c in range(w)]
+
+    result = _deep_copy_grid(grid)
+
+    if count_nonbg(left) > 3 * count_nonbg(right) + 1:
+        # Left is dense, fill right by mirroring left
+        for r in range(h):
+            for c in range(w//2, w):
+                if grid[r][c] == bg:
+                    mirror_c = w - 1 - c
+                    if 0 <= mirror_c < w:
+                        result[r][c] = grid[r][mirror_c]
+    elif count_nonbg(right) > 3 * count_nonbg(left) + 1:
+        for r in range(h):
+            for c in range(w//2):
+                if grid[r][c] == bg:
+                    mirror_c = w - 1 - c
+                    if 0 <= mirror_c < w:
+                        result[r][c] = grid[r][mirror_c]
+    elif count_nonbg(top) > 3 * count_nonbg(bottom) + 1:
+        for r in range(h//2, h):
+            for c in range(w):
+                if grid[r][c] == bg:
+                    mirror_r = h - 1 - r
+                    if 0 <= mirror_r < h:
+                        result[r][c] = grid[mirror_r][c]
+    elif count_nonbg(bottom) > 3 * count_nonbg(top) + 1:
+        for r in range(h//2):
+            for c in range(w):
+                if grid[r][c] == bg:
+                    mirror_r = h - 1 - r
+                    if 0 <= mirror_r < h:
+                        result[r][c] = grid[mirror_r][c]
+
+    return result
+
+
+def recolor_by_col_parity(grid: Grid) -> Grid:
+    """Recolor non-bg cells based on column parity (even/odd col index).
+
+    Even-col non-bg cells → most common non-bg color
+    Odd-col non-bg cells → second most common non-bg color
+    Useful for: alternating stripe recoloring patterns.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg_colors = [v for v, cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg_colors) < 2:
+        return grid
+    c1, c2 = non_bg_colors[0], non_bg_colors[1]
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != bg:
+                result[r][c] = c1 if c % 2 == 0 else c2
+    return result
+
+
+def recolor_by_row_parity(grid: Grid) -> Grid:
+    """Recolor non-bg cells based on row parity (even/odd row index).
+
+    Row counterpart of recolor_by_col_parity.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg_colors = [v for v, cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg_colors) < 2:
+        return grid
+    c1, c2 = non_bg_colors[0], non_bg_colors[1]
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] != bg:
+                result[r][c] = c1 if r % 2 == 0 else c2
+    return result
+
+
+# ============================================================
 # V16 NEW PRIMITIVES
 # ============================================================
 
@@ -3626,6 +4032,24 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("recolor_unique_in_row_col", recolor_unique_in_row_col),
         # V16: Snap isolated pixels to object
         ("snap_isolated_to_rect_boundary", snap_isolated_to_rect_boundary),
+        # V17: Hole filling
+        ("fill_largest_hole_with_8", fill_largest_hole_with_8),
+        ("fill_largest_hole_with_dominant", fill_largest_hole_with_dominant),
+        # V17: Tiling from partial pattern
+        ("tile_left_block_to_fill_h", tile_left_block_to_fill_h),
+        ("tile_top_block_to_fill_v", tile_top_block_to_fill_v),
+        # V17: Grid intersection fill
+        ("recolor_bg_at_row_col_intersection", recolor_bg_at_row_col_intersection),
+        # V17: Row/col swapping
+        ("swap_row_pairs", swap_row_pairs),
+        ("swap_col_pairs", swap_col_pairs),
+        # V17: Connector recoloring
+        ("recolor_connector_to_neighbors", recolor_connector_to_neighbors),
+        # V17: Reflect to fill
+        ("reflect_pattern_to_fill", reflect_pattern_to_fill),
+        # V17: Parity-based recoloring
+        ("recolor_by_col_parity", recolor_by_col_parity),
+        ("recolor_by_row_parity", recolor_by_row_parity),
         # V16: Recolor cells touching a specific color object
         ("recolor_touching_2nd_to_8", recolor_touching_2nd_to_8),
         ("recolor_touching_2nd_to_3", recolor_touching_2nd_to_3),
