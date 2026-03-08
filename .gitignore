@@ -14,5 +14,6 @@ data/
 logs/
 results/
 *.json
+*.log
 !arc_agent/sample_tasks.py
 .claude/worktrees/
