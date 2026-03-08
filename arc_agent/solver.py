@@ -180,6 +180,14 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(cell_result):
                 candidates.append((cell_result, "cell_rules"))
 
+        # Step 3.98: Cell program synthesis (enumeration-based DSL)
+        # Enumerate and score small cell-level transformation programs to discover
+        # task-specific conditional rules (e.g., context-dependent color mapping).
+        cell_synth_result = self._try_cell_synthesis(task, cache)
+        if cell_synth_result and cell_synth_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(cell_synth_result):
+                candidates.append((cell_synth_result, "cell_synth"))
+
         # Always run evolution to discover additional candidates,
         # even if deterministic search already found a solution.
         # Inject best candidates into seeds for evolution, best first.
@@ -191,6 +199,8 @@ class FourPillarsSolver:
             seed_programs.insert(0, triple_result)
         if pair_result and pair_result.fitness > 0.85:
             seed_programs.insert(0, pair_result)
+        if cell_synth_result and cell_synth_result.fitness > 0.85:
+            seed_programs.insert(0, cell_synth_result)
         if cell_result and cell_result.fitness > 0.85:
             seed_programs.insert(0, cell_result)
 
@@ -544,6 +554,58 @@ class FourPillarsSolver:
                   f"program={best_prog.name})")
 
         return best_prog
+
+    def _try_cell_synthesis(self, task: dict,
+                             cache: "TaskCache") -> Optional[Program]:
+        """Try to solve the task using cell program synthesis (enumeration-based DSL).
+
+        Enumerates small cell-level transformation programs using a compact DSL:
+          - Const(color): always output this color
+          - Self: keep current cell value
+          - NeighborMajority: majority color of 4-neighbors
+          - NeighborAt(dir): color of neighbor in direction
+          - MapColor(from, to): if cell==from, output to, else self
+          - IfColor(c, then, else): conditional on cell value
+          - IfNeighborHas(c, then, else): conditional on neighbor colors
+
+        For each candidate cell program, applies it to every cell of training inputs
+        and scores against expected outputs. Returns the best-scoring program found.
+
+        This enables discovery of task-specific color mappings and context-dependent
+        rules that fixed primitives cannot capture.
+
+        Returns a Program wrapping the best cell program, or None.
+        """
+        from .cell_synth import synthesize_cell_program, wrap_cell_expr_as_concept
+
+        train = task.get("train", [])
+        if not train:
+            return None
+
+        # Only apply cell synthesis to same-dims tasks
+        same_dims = all(
+            len(ex["input"]) == len(ex["output"])
+            and len(ex["input"][0]) == len(ex["output"][0])
+            for ex in train
+        )
+        if not same_dims:
+            return None
+
+        # Synthesize the best cell program
+        cell_expr, score = synthesize_cell_program(task, max_depth=2, verbose=False)
+        if not cell_expr or score < 0.5:
+            return None
+
+        # Wrap the cell expression as a Concept
+        concept = wrap_cell_expr_as_concept(cell_expr, name=f"cell_synth_{cell_expr}")
+        prog = Program([concept], name=f"cell_synth_{cell_expr}")
+        prog.fitness = score
+
+        if self.verbose and score >= 0.85:
+            print(f"  ◆ Cell synthesis discovered (score={score:.3f}, "
+                  f"program={cell_expr})")
+
+        return prog
 
     # ----------------------------------------------------------------
     # Example-parameterized concepts: learn transforms FROM the task
