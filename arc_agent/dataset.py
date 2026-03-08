@@ -470,44 +470,55 @@ def evaluate_dataset(
         _aggregate_and_save_culture(task_results, save_culture_path, verbose)
 
     # ── Final summary ────────────────────────────────────────────────────
-    solved_count  = sum(1 for r in task_results.values() if r["solved"])
-    partial_count = sum(1 for r in task_results.values()
-                        if not r["solved"] and r["score"] > 0.8)
-    test_correct  = sum(1 for r in task_results.values() if r.get("test_passed"))
-    completed     = len(task_results)
+    completed = len(task_results)
 
-    # Fluke tracking: pixel-perfect on training but failed test
+    # Core counts
+    pp_train  = sum(1 for r in task_results.values() if r["solved"])
+    tc        = sum(1 for r in task_results.values() if r.get("test_passed"))
+    partial   = sum(1 for r in task_results.values()
+                    if not r["solved"] and r["score"] > 0.8)
+
+    # The golden number: pixel-perfect on BOTH train AND test.
+    # This is our best estimate of private eval performance.
+    solved_exact = sum(1 for r in task_results.values()
+                       if r["solved"] and r.get("test_passed"))
+
+    # Flukes: passed test but NOT pixel-perfect on train.
+    # The program didn't truly understand the task — test success is luck.
     flukes = sum(1 for r in task_results.values()
-                 if r["solved"] and not r["test_passed"])
-    # Near-miss bonus: not pixel-perfect on train but passed test anyway
-    near_miss_tc = sum(1 for r in task_results.values()
-                       if not r["solved"] and r["test_passed"])
+                 if not r["solved"] and r.get("test_passed"))
+
+    # Overfits: pixel-perfect on train but failed test.
+    # The program memorized training examples but doesn't generalize.
+    overfits = sum(1 for r in task_results.values()
+                   if r["solved"] and not r.get("test_passed"))
 
     if verbose and completed > 0:
         scores = [r["score"] for r in task_results.values()]
         times  = [r["time_seconds"] for r in task_results.values()]
-        above80 = solved_count + partial_count
+        above80 = pp_train + partial
 
         print(f"\n{'='*60}")
         print(f"BENCHMARK RESULTS — {mode.upper()} MODE")
         print(f"{'='*60}")
         print(f"Tasks completed:    {completed}/{n_tasks}")
-        print(f"Solved (exact):     {solved_count}/{completed} "
-              f"({100*solved_count/max(completed,1):.1f}%)")
+        print(f"Solved (exact):     {solved_exact}/{completed} "
+              f"({100*solved_exact/max(completed,1):.1f}%)  "
+              f"← pixel-perfect on train AND test")
+        print(f"Test confirmed:     {tc}/{completed} "
+              f"({100*tc/max(completed,1):.1f}%)")
         if flukes > 0:
-            print(f"  ├─ Generalized:   {solved_count - flukes} "
-                  f"(pixel-perfect on train AND test)")
             print(f"  └─ Flukes:        {flukes} "
+                  f"(passed test but FAILED train → likely luck)")
+        print(f"Pixel-perfect train:{pp_train}/{completed} "
+              f"({100*pp_train/max(completed,1):.1f}%)")
+        if overfits > 0:
+            print(f"  └─ Overfits:      {overfits} "
                   f"(pixel-perfect on train, FAILED test)")
-        print(f"Partial (>80%):     {partial_count}/{completed} "
-              f"({100*partial_count/max(completed,1):.1f}%)")
+        print(f"Partial (>80%):     {partial}/{completed} "
+              f"({100*partial/max(completed,1):.1f}%)")
         print(f"Above 80% total:    {above80}/{completed} "
               f"({100*above80/max(completed,1):.1f}%)")
-        print(f"Test confirmed:     {test_correct}/{completed} "
-              f"({100*test_correct/max(completed,1):.1f}%)")
-        if near_miss_tc > 0:
-            print(f"  └─ Near-miss TC:  {near_miss_tc} "
-                  f"(not pixel-perfect on train, but passed test)")
         print(f"Mean score:         {statistics.mean(scores):.3f}")
         print(f"Median score:       {statistics.median(scores):.3f}")
         print(f"Score std-dev:      {statistics.stdev(scores) if len(scores)>1 else 0:.3f}")
@@ -522,15 +533,14 @@ def evaluate_dataset(
         "mode":               mode,
         "total_tasks":        n_tasks,
         "completed_tasks":    completed,
-        "solved_exact":       solved_count,
-        "solve_rate":         solved_count / max(completed, 1),
-        "solved_generalized": solved_count - flukes,
-        "solved_flukes":      flukes,
-        "partial_solved":     partial_count,
-        "above_80pct":        solved_count + partial_count,
-        "test_correct":       test_correct,
-        "test_rate":          test_correct / max(completed, 1),
-        "near_miss_tc":       near_miss_tc,
+        "solved_exact":       solved_exact,
+        "solve_rate":         solved_exact / max(completed, 1),
+        "test_confirmed":     tc,
+        "flukes":             flukes,
+        "pixel_perfect_train":pp_train,
+        "overfits":           overfits,
+        "partial_solved":     partial,
+        "above_80pct":        pp_train + partial,
         "mean_score":         statistics.mean(r["score"] for r in task_results.values())
                               if task_results else 0.0,
         "total_time_seconds": total_time,

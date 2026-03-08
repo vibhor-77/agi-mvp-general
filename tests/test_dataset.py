@@ -167,8 +167,9 @@ class TestEvaluationHarness(unittest.TestCase):
         self.assertIn("total_tasks", summary)
         self.assertIn("solved_exact", summary)
         self.assertIn("solve_rate", summary)
-        self.assertIn("test_correct", summary)
-        self.assertIn("test_rate", summary)
+        self.assertIn("test_confirmed", summary)
+        self.assertIn("flukes", summary)
+        self.assertIn("overfits", summary)
 
     def test_solves_simple_tasks(self):
         from arc_agent.dataset import load_dataset, evaluate_dataset
