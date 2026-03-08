@@ -134,15 +134,16 @@ python -m arc_agent.evaluate train \
 
 ## Results
 
-### ARC-AGI-1 v0.23 (current)
+### ARC-AGI-1 v0.25 (current)
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
-| **Solved (exact)** | 81/400 (20.2%) | 19/400 (4.8%) |
-| Test confirmed | 84/400 (21.0%) | 23/400 (5.8%) |
-| Flukes | 3 | 4 |
-| Overfits | 22 | 10 |
-| Mean score | 0.852 | 0.829 |
+| **Solved (exact)** | 92/400 (23.0%) | 25/400 (6.2%) |
+| Test confirmed | 96/400 (24.0%) | 30/400 (7.5%) |
+| Flukes | 4 | 5 |
+| Overfits | 26 | 9 |
+| Mean score | 0.868 | 0.834 |
+| Median score | 0.936 | 0.907 |
 | LLM used | None | None |
 
 **Metrics explained:**
@@ -151,7 +152,7 @@ python -m arc_agent.evaluate train \
 - **Flukes** = passed test but NOT pixel-perfect on train (likely luck)
 - **Overfits** = pixel-perfect on train but FAILED test (memorized, doesn't generalize)
 
-287 hand-crafted primitives, object-centric scene reasoning, neighbor-rule learning, color mapping, exhaustive pair + triple search, evolutionary synthesis with multiple restarts. Pure Four Pillars — no LLMs.
+287 hand-crafted primitives, object-centric scene reasoning, neighbor-rule learning, color mapping, per-object decomposition with conditional recolor, exhaustive pair + triple search, evolutionary synthesis with multiple restarts. Pure Four Pillars — no LLMs.
 
 ### Version history
 
@@ -162,6 +163,7 @@ python -m arc_agent.evaluate train \
 | v0.17 | 78/400 (19.5%) | 31/400 (7.8%) | Near-miss promotion |
 | v0.22 | 79/400 (19.8%) | 18/400 (4.5%) | Fixed metrics (exact = train AND test) |
 | v0.23 | 81/400 (20.2%) | 19/400 (4.8%) | Object-centric reasoning, no early exits |
+| v0.25 | 92/400 (23.0%) | 25/400 (6.2%) | Object decomposition, conditional recolor, Numba fix |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 

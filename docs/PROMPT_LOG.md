@@ -1497,3 +1497,51 @@ Total: 19 tests (16 perception + 3 conditional recolor)
 - Handle tasks where different source colors map to the same target (a5f85a15: {2,9,3}→4)
 - Investigate 810b9b61 test failure — the rule works on train but test has unseen sizes
 - Address scene.py background detection bug for tasks where foreground > 50%
+
+---
+
+## Session 20c — Numba Fix & v0.25 Benchmark (March 2026)
+
+### Bug Fix: Numba Flood Fill Stack Overflow
+
+Tests failed with Numba installed due to a stack overflow bug in `_flood_fill_labels`:
+- `max_stack = h * w` was too small — each cell can appear on the stack up to 4 times
+- Guard `if sp + 4 < max_stack` silently dropped neighbor pushes on small grids
+- Example: 3×2 L-shape `[[3,0],[3,0],[3,3]]` split into 2 objects instead of 1
+
+**Fix:** Changed `max_stack` from `h * w` to `4 * h * w`.
+
+This fixed 4 tests AND unlocked additional ARC task solves because many tasks depend on correct connected-component detection. The cascading effect was significant: +9 new solves on training (not just the +2 from conditional recolor).
+
+### v0.25 Full Benchmark Results
+
+**Training (400 tasks):**
+
+| Metric | v0.24 | v0.25 | Delta |
+|--------|-------|-------|-------|
+| Solved (exact) | 83 (20.8%) | 92 (23.0%) | **+9** |
+| Test confirmed | 86 (21.5%) | 96 (24.0%) | +10 |
+| Flukes | 3 | 4 | +1 |
+| Overfits | 22 | 26 | +4 |
+| PP train | 105 | 118 | +13 |
+| Mean score | 0.852 | 0.868 | +0.016 |
+| Median score | — | 0.936 | — |
+
+**Evaluation (400 tasks):**
+
+| Metric | v0.24 | v0.25 | Delta |
+|--------|-------|-------|-------|
+| Solved (exact) | 19 (4.8%) | 25 (6.2%) | **+6** |
+| Test confirmed | 23 (5.8%) | 30 (7.5%) | +7 |
+| Flukes | 4 | 5 | +1 |
+| Overfits | 10 | 9 | -1 |
+| PP train | 29 | 34 | +5 |
+| Mean score | 0.829 | 0.834 | +0.005 |
+| Median score | — | 0.907 | — |
+
+**Key observations:**
+- Training: +9 solves is the largest single-session improvement since v0.16
+- Eval: +6 solves shows the improvements generalize well (67% transfer rate)
+- Overfits on eval actually DECREASED (-1), suggesting better generalization
+- The Numba fix had a cascading effect: correct object segmentation improved many downstream operations (fill_rectangles, scene diffs, object rules)
+- Total time: 3m27s train, 4m39s eval (both under 5 minutes on 8 workers)
