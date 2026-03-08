@@ -23,10 +23,16 @@ def analyze(results_path: str) -> None:
     with open(results_path) as f:
         data = json.load(f)
 
-    task_results = data.get("task_results", [])
-    if not task_results:
+    task_results_raw = data.get("task_results", {})
+    if not task_results_raw:
         print("No task results found.")
         return
+
+    # task_results can be a dict (keyed by task_id) or a list
+    if isinstance(task_results_raw, dict):
+        task_results = list(task_results_raw.values())
+    else:
+        task_results = task_results_raw
 
     # ── Score distribution ─────────────────────────────────────────────
     solved = [r for r in task_results if r.get("solved")]
