@@ -14,6 +14,12 @@ from __future__ import annotations
 import copy
 from typing import Optional
 from .concepts import Concept, Grid, Toolkit
+from .spatial import (
+    extend_lines,
+    fill_rooms_with_new_color,
+    mirror_pattern_across_axis,
+    gravity_drop,
+)
 
 
 def _deep_copy_grid(grid: Grid) -> Grid:
@@ -4474,6 +4480,14 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("count_per_row", count_nonzero_per_row),
         ("inpaint_tiled", inpaint_tiled),
         ("inpaint_from_context", inpaint_from_context),
+        # Spatial primitives (V16)
+        ("extend_lines", extend_lines),
+        ("fill_rooms_with_new_color", fill_rooms_with_new_color),
+        ("mirror_pattern_across_axis", mirror_pattern_across_axis),
+        ("gravity_drop_down", lambda g: gravity_drop(g, direction='down', stop_color=0)),
+        ("gravity_drop_up", lambda g: gravity_drop(g, direction='up', stop_color=0)),
+        ("gravity_drop_left", lambda g: gravity_drop(g, direction='left', stop_color=0)),
+        ("gravity_drop_right", lambda g: gravity_drop(g, direction='right', stop_color=0)),
     ]
 
     for name, impl in operators:
