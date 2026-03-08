@@ -4665,48 +4665,6 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
             implementation=predicate_fn,
         ))
 
-    # Add cell rule concepts (per-cell conditional transformations)
-    from .cell_rules import (
-        CellRuleConcept,
-        is_color,
-        is_border,
-        has_neighbor_color,
-        set_color,
-        copy_neighbor_color,
-        copy_neighbor_matching,
-        make_border_color_rule,
-        make_swap_rule,
-        make_fill_from_neighbors_rule,
-    )
-
-    # Pre-built cell rules for common patterns
-    cell_rules_to_add = [
-        # Border coloring (common pattern)
-        ("cell_rule_border_1", make_border_color_rule(1)),
-        ("cell_rule_border_2", make_border_color_rule(2)),
-        ("cell_rule_border_3", make_border_color_rule(3)),
-        ("cell_rule_border_4", make_border_color_rule(4)),
-        ("cell_rule_border_5", make_border_color_rule(5)),
-        ("cell_rule_border_6", make_border_color_rule(6)),
-        ("cell_rule_border_7", make_border_color_rule(7)),
-        ("cell_rule_border_8", make_border_color_rule(8)),
-        ("cell_rule_border_9", make_border_color_rule(9)),
-        # Fill from neighbors (for 0s and other colors)
-        ("cell_rule_fill_0_from_1", make_fill_from_neighbors_rule(0, 1)),
-        ("cell_rule_fill_0_from_2", make_fill_from_neighbors_rule(0, 2)),
-        ("cell_rule_fill_0_from_3", make_fill_from_neighbors_rule(0, 3)),
-        ("cell_rule_fill_0_from_4", make_fill_from_neighbors_rule(0, 4)),
-        ("cell_rule_fill_0_from_5", make_fill_from_neighbors_rule(0, 5)),
-        ("cell_rule_fill_0_from_6", make_fill_from_neighbors_rule(0, 6)),
-        ("cell_rule_fill_0_from_7", make_fill_from_neighbors_rule(0, 7)),
-        ("cell_rule_fill_0_from_8", make_fill_from_neighbors_rule(0, 8)),
-        ("cell_rule_fill_0_from_9", make_fill_from_neighbors_rule(0, 9)),
-    ]
-
-    for name, rule in cell_rules_to_add:
-        concept = CellRuleConcept([rule], name=name)
-        toolkit.add_concept(concept)
-
     # Add object-level primitives
     if include_objects:
         from .objects import add_object_concepts

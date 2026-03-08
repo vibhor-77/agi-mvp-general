@@ -172,14 +172,6 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(object_result):
                 candidates.append((object_result, "object_rules"))
 
-        # Step 3.95: Cell-level rule synthesis (per-cell conditional transforms)
-        # Try cell rules that enable context-dependent transformations based on
-        # cell predicates (color, border, neighbors) and actions (set, copy).
-        cell_result = self._try_cell_rules(task, cache)
-        if cell_result and cell_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(cell_result):
-                candidates.append((cell_result, "cell_rules"))
-
         # Always run evolution to discover additional candidates,
         # even if deterministic search already found a solution.
         # Inject best candidates into seeds for evolution, best first.
@@ -191,9 +183,6 @@ class FourPillarsSolver:
             seed_programs.insert(0, triple_result)
         if pair_result and pair_result.fitness > 0.85:
             seed_programs.insert(0, pair_result)
-        if cell_result and cell_result.fitness > 0.85:
-            seed_programs.insert(0, cell_result)
-
         # Step 4: Evolutionary synthesis (FEEDBACK + APPROXIMABILITY + EXPLORATION)
         # Always run the FULL generation budget — no early exit on target_score.
         # We want to discover all viable candidates and alternative programs,
@@ -438,112 +427,6 @@ class FourPillarsSolver:
             print(f"  ◆ Object rules inferred (score={score:.3f})")
 
         return program
-
-    def _try_cell_rules(self, task: dict,
-                        cache: "TaskCache") -> Optional[Program]:
-        """Try to solve the task using cell-level rule synthesis.
-
-        Cell rules enable per-cell conditional transformations: apply an action
-        to each cell matching a predicate. This allows patterns like:
-          - Color all border cells with a specific color
-          - Fill empty (0) cells from neighbors
-          - Transform cells based on local context
-
-        Enumerates combinations of simple cell predicates + actions and tests
-        each as a single-step program. Returns the best-scoring one found.
-
-        Returns a Program wrapping the best cell rule, or None.
-        """
-        from .cell_rules import (
-            CellRuleConcept,
-            CellRule,
-            is_color,
-            is_border,
-            has_neighbor_color,
-            is_adjacent_to_nonzero,
-            set_color,
-            copy_neighbor_color,
-            copy_neighbor_matching,
-            make_border_color_rule,
-            make_swap_rule,
-            make_fill_from_neighbors_rule,
-        )
-
-        train = task.get("train", [])
-        if not train:
-            return None
-
-        # Only apply cell rules to same-dims tasks
-        # (input and output must have same dimensions)
-        same_dims = all(
-            len(ex["input"]) == len(ex["output"])
-            and len(ex["input"][0]) == len(ex["output"][0])
-            for ex in train
-        )
-        if not same_dims:
-            return None
-
-        # Collect all unique colors from training examples
-        colors_in = set()
-        colors_out = set()
-        for ex in train:
-            for row in ex["input"]:
-                colors_in.update(row)
-            for row in ex["output"]:
-                colors_out.update(row)
-
-        colors = sorted(colors_in | colors_out)
-
-        candidates: list[tuple[Program, float]] = []
-
-        # Strategy 1: Border coloring (very common pattern)
-        for c in colors:
-            rule = make_border_color_rule(c)
-            concept = CellRuleConcept([rule])
-            prog = Program([concept], name=f"cell_rule_border_{c}")
-            score = cache.score_program(prog)
-            prog.fitness = score
-            if score >= 0.85:
-                candidates.append((prog, score))
-
-        # Strategy 2: Single color swaps
-        for from_c in colors_in:
-            for to_c in colors_out:
-                if from_c != to_c:
-                    rule = make_swap_rule(from_c, to_c)
-                    concept = CellRuleConcept([rule])
-                    prog = Program([concept], name=f"cell_rule_swap_{from_c}→{to_c}")
-                    score = cache.score_program(prog)
-                    prog.fitness = score
-                    if score >= 0.85:
-                        candidates.append((prog, score))
-
-        # Strategy 3: Fill from neighbors (for 0s commonly)
-        for target in [0] + list(colors_in):
-            for source in colors:
-                if target != source:
-                    rule = make_fill_from_neighbors_rule(target, source)
-                    concept = CellRuleConcept([rule])
-                    prog = Program(
-                        [concept],
-                        name=f"cell_rule_fill_{target}_from_{source}"
-                    )
-                    score = cache.score_program(prog)
-                    prog.fitness = score
-                    if score >= 0.85:
-                        candidates.append((prog, score))
-
-        if not candidates:
-            return None
-
-        # Return the best cell rule program
-        best_prog, best_score = max(candidates, key=lambda x: x[1])
-
-        if self.verbose:
-            print(f"  ◆ Cell rules synthesized (score={best_score:.3f}, "
-                  f"program={best_prog.name})")
-
-        return best_prog
 
     # ----------------------------------------------------------------
     # Example-parameterized concepts: learn transforms FROM the task
