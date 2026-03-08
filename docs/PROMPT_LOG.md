@@ -1545,3 +1545,77 @@ This fixed 4 tests AND unlocked additional ARC task solves because many tasks de
 - Overfits on eval actually DECREASED (-1), suggesting better generalization
 - The Numba fix had a cascading effect: correct object segmentation improved many downstream operations (fill_rectangles, scene diffs, object rules)
 - Total time: 3m27s train, 4m39s eval (both under 5 minutes on 8 workers)
+
+---
+
+## Session 21 — DSL Synthesis Engine (March 2026)
+
+### Prompt
+
+> Continuation from Session 20c. v0.25 benchmarked (92 train, 25 eval). User said "done, go ahead."
+
+### Claude's Reasoning
+
+**Phase 1: Expanding conditional recolor (diminishing returns)**
+
+Added 3 new per-object conditional recolor strategies to `object_decompose.py`:
+- `by_input_color`: learns input_color→output_color mapping (handles many-to-one, e.g., colors {2,3,9}→5)
+- `by_position`: splits objects by vertical/horizontal midpoint
+- `by_shape`: uses translation/color-invariant shape signatures
+
+All tests pass (550 total). Benchmark result: **0 net new solves** — the existing pipeline already covers these patterns via `learned_color_map` and `by_size`. The strategies provide alternative solution paths but no new coverage.
+
+**Diagnosis**: We've hit diminishing returns from adding more pattern-specific strategies. The fundamental limitation is that 287 fixed primitives can only solve tasks that decompose into those primitives. Need to change the level of abstraction.
+
+**Phase 2: DSL synthesis engine (new architecture)**
+
+Built a program synthesis engine that constructs novel Grid→Grid transforms from sub-primitive operations:
+
+1. **`arc_agent/dsl.py`** (~250 lines) — Typed DSL with expression tree representation:
+   - Types: GRID, COLOR, INT, BOOL, COLOR_MAP, LAMBDA
+   - ~11 atomic operations: grid_height/width, most/least_common_color, count_color, replace_color, apply_color_map, transpose, flip_h/v, rotate_90
+   - Combinators: composition (nesting), map_objects (per-object transform)
+   - Recursive descent interpreter
+   - DSL_OPS registry for synthesis enumeration
+
+2. **`arc_agent/dsl_synth.py`** (~250 lines) — Bottom-up enumerative synthesis:
+   - Generates expressions bottom-up by depth (leaves → depth 1 → depth 2)
+   - Execution-guided pruning: discard expressions that fail on training inputs
+   - Observational equivalence: deduplicate via output hashing (MD5)
+   - Color map shortcut: extract pixel-level mapping from I/O pairs
+   - Type-driven enumeration: only compose where types match
+   - Time budget: 5 seconds per task
+
+3. **Solver integration** — Added as step 3.96 (after object decomposition, before evolution)
+
+### Results
+
+**v0.26 (with DSL synthesis)**:
+- Training: 92/400 (23.0%) — same as v0.25
+- DSL synthesis found 12 pixel-perfect candidates as alternatives to existing solutions
+- DSL correctly synthesizes: flip_h, flip_v, transpose, apply_color_map, and compositions like flip_h(flip_v(Input)), transpose(flip_h(Input))
+- No *new* solves because the current 11 DSL operations overlap with existing primitives
+- Mean time/task: 4.3s (5s DSL budget adds some overhead)
+- 579 tests all pass
+
+**Why no new solves yet**: The v1 DSL has only 11 operations that overlap with existing macro primitives. To unlock new solve categories, the DSL needs: neighborhood queries, flood fill, object-level manipulation, conditional branching. The foundation is in place.
+
+### Files Created/Modified
+
+| File | Action |
+|------|--------|
+| `arc_agent/dsl.py` | **NEW** — DSL expression tree + interpreter |
+| `arc_agent/dsl_synth.py` | **NEW** — Bottom-up synthesis engine |
+| `arc_agent/solver.py` | Added `_try_dsl_synthesis()` at step 3.96 |
+| `arc_agent/object_decompose.py` | Added by_input_color, by_position, by_shape strategies |
+| `tests/test_dsl.py` | **NEW** — 29 tests for DSL + synthesis |
+| `tests/test_object_decompose.py` | Updated: unittest.TestCase, new strategy tests |
+| `.gitignore` | Added `*.log` |
+
+### Next Steps
+
+1. **Extend DSL operations**: Add neighbors_4/8, flood_fill_component, find_objects, is_border — these are the sub-operations most existing primitives are built from
+2. **Cell-level iteration combinator**: `for_each_cell(grid, fn(cell, r, c, neighbors) -> color)` — this single combinator can express most local operations (outline, fill_enclosed, denoise, etc.)
+3. **Increase synthesis depth/budget**: Currently depth 2 with 5s; try depth 3 with 10s on unsolved tasks
+4. **Seed evolution with DSL**: Use DSL-synthesized programs as seeds for evolutionary search
+5. **Path to ARC-AGI-2 / Zork / robotics**: The synthesis engine is domain-agnostic; the specific DSL ops are domain-specific. Swap grid ops for action primitives → same engine works for planning

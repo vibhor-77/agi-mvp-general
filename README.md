@@ -188,11 +188,13 @@ agi-mvp-general/
 │   ├── scene.py                     # Object-centric reasoning (perceive→infer→apply)
 │   ├── decompose.py                 # Task decomposition (color-channel, spatial, diff)
 │   ├── object_decompose.py          # Per-object decomposition (perceive→transform→reassemble)
+│   ├── dsl.py                       # Typed DSL: expression trees + interpreter (~20 ops)
+│   ├── dsl_synth.py                 # Bottom-up program synthesis over DSL
 │   ├── culture.py                   # Culture save/load (cumulative knowledge transfer)
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 461 tests (~5,500 LOC)
+├── tests/                           # 579 tests
 │   ├── test_primitives.py           # Grid transforms (55 tests)
 │   ├── test_scene.py                # Object-centric reasoning (26 tests)
 │   ├── test_concepts.py             # Concept system (21 tests)
@@ -282,10 +284,12 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object decomposition (perceive → transform-per-object → reassemble)
 - [x] Parameterized primitives (structural parameter learning)
 - [x] Spatial primitives (line extension, room filling, mirror, gravity)
+- [x] DSL synthesis engine (typed expression trees + bottom-up enumeration)
+- [ ] Extend DSL: neighborhood queries, flood fill, cell-level iteration combinator
 - [ ] Richer object rules (movement, conditional, relational)
 - [x] Multiple candidate submission (top-k diverse predictions per task)
 - [ ] ARC-AGI-2 evaluation
-- [ ] Cross-domain transfer experiments
+- [ ] Cross-domain transfer (Zork, robotics)
 
 ## License
 

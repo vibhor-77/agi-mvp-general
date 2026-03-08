@@ -27,7 +27,7 @@ class TestDSLTypes(unittest.TestCase):
     def test_create_op_expr(self):
         from arc_agent.dsl import DSLExpr, DSLType
         grid_input = DSLExpr.input_grid()
-        expr = DSLExpr.op("grid_height", [grid_input], DSLType.INT)
+        expr = DSLExpr.make_op("grid_height", [grid_input], DSLType.INT)
         self.assertEqual(expr.op, "grid_height")
         self.assertEqual(expr.return_type, DSLType.INT)
         self.assertEqual(len(expr.args), 1)
@@ -45,7 +45,7 @@ class TestDSLTypes(unittest.TestCase):
         lit = DSLExpr.literal(3, DSLType.INT)
         self.assertEqual(lit.depth, 0)
         grid = DSLExpr.input_grid()
-        h = DSLExpr.op("grid_height", [grid], DSLType.INT)
+        h = DSLExpr.make_op("grid_height", [grid], DSLType.INT)
         self.assertEqual(h.depth, 1)
 
     def test_expr_size(self):
@@ -53,7 +53,7 @@ class TestDSLTypes(unittest.TestCase):
         from arc_agent.dsl import DSLExpr, DSLType
         grid = DSLExpr.input_grid()
         self.assertEqual(grid.size, 1)
-        h = DSLExpr.op("grid_height", [grid], DSLType.INT)
+        h = DSLExpr.make_op("grid_height", [grid], DSLType.INT)
         self.assertEqual(h.size, 2)
 
 
@@ -75,25 +75,25 @@ class TestDSLAtomicOps(unittest.TestCase):
 
     def test_grid_height(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("grid_height", [DSLExpr.input_grid()], DSLType.INT)
+        expr = DSLExpr.make_op("grid_height", [DSLExpr.input_grid()], DSLType.INT)
         result = self.interp.evaluate(expr, self.grid_3x3)
         self.assertEqual(result, 3)
 
     def test_grid_width(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("grid_width", [DSLExpr.input_grid()], DSLType.INT)
+        expr = DSLExpr.make_op("grid_width", [DSLExpr.input_grid()], DSLType.INT)
         result = self.interp.evaluate(expr, self.grid_3x3)
         self.assertEqual(result, 3)
 
     def test_most_common_color(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("most_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
+        expr = DSLExpr.make_op("most_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
         result = self.interp.evaluate(expr, self.grid_3x3)
         self.assertEqual(result, 0)  # 0 appears 5 times
 
     def test_least_common_color(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("least_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
+        expr = DSLExpr.make_op("least_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
         result = self.interp.evaluate(expr, self.grid_3x3)
         # color 2 and 3 each appear once; either is valid
         self.assertIn(result, [2, 3])
@@ -103,7 +103,7 @@ class TestDSLAtomicOps(unittest.TestCase):
         grid_in = DSLExpr.input_grid()
         old = DSLExpr.literal(1, DSLType.COLOR)
         new = DSLExpr.literal(5, DSLType.COLOR)
-        expr = DSLExpr.op("replace_color", [grid_in, old, new], DSLType.GRID)
+        expr = DSLExpr.make_op("replace_color", [grid_in, old, new], DSLType.GRID)
         result = self.interp.evaluate(expr, self.grid_3x3)
         expected = [
             [5, 0, 2],
@@ -114,28 +114,28 @@ class TestDSLAtomicOps(unittest.TestCase):
 
     def test_transpose(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("transpose", [DSLExpr.input_grid()], DSLType.GRID)
+        expr = DSLExpr.make_op("transpose", [DSLExpr.input_grid()], DSLType.GRID)
         grid_2x3 = [[1, 2, 3], [4, 5, 6]]
         result = self.interp.evaluate(expr, grid_2x3)
         self.assertEqual(result, [[1, 4], [2, 5], [3, 6]])
 
     def test_flip_h(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("flip_h", [DSLExpr.input_grid()], DSLType.GRID)
+        expr = DSLExpr.make_op("flip_h", [DSLExpr.input_grid()], DSLType.GRID)
         grid = [[1, 2, 3], [4, 5, 6]]
         result = self.interp.evaluate(expr, grid)
         self.assertEqual(result, [[3, 2, 1], [6, 5, 4]])
 
     def test_flip_v(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("flip_v", [DSLExpr.input_grid()], DSLType.GRID)
+        expr = DSLExpr.make_op("flip_v", [DSLExpr.input_grid()], DSLType.GRID)
         grid = [[1, 2], [3, 4]]
         result = self.interp.evaluate(expr, grid)
         self.assertEqual(result, [[3, 4], [1, 2]])
 
     def test_rotate_90(self):
         from arc_agent.dsl import DSLExpr, DSLType
-        expr = DSLExpr.op("rotate_90", [DSLExpr.input_grid()], DSLType.GRID)
+        expr = DSLExpr.make_op("rotate_90", [DSLExpr.input_grid()], DSLType.GRID)
         grid = [[1, 2], [3, 4]]
         result = self.interp.evaluate(expr, grid)
         self.assertEqual(result, [[3, 1], [4, 2]])
@@ -144,7 +144,7 @@ class TestDSLAtomicOps(unittest.TestCase):
         from arc_agent.dsl import DSLExpr, DSLType
         grid_in = DSLExpr.input_grid()
         color = DSLExpr.literal(1, DSLType.COLOR)
-        expr = DSLExpr.op("count_color", [grid_in, color], DSLType.INT)
+        expr = DSLExpr.make_op("count_color", [grid_in, color], DSLType.INT)
         result = self.interp.evaluate(expr, self.grid_3x3)
         self.assertEqual(result, 3)  # three 1s
 
@@ -154,7 +154,7 @@ class TestDSLAtomicOps(unittest.TestCase):
         grid_in = DSLExpr.input_grid()
         # Build a color map: 1→5, 2→5, 3→5 (all foreground → 5)
         cmap = DSLExpr.literal({1: 5, 2: 5, 3: 5}, DSLType.COLOR_MAP)
-        expr = DSLExpr.op("apply_color_map", [grid_in, cmap], DSLType.GRID)
+        expr = DSLExpr.make_op("apply_color_map", [grid_in, cmap], DSLType.GRID)
         result = self.interp.evaluate(expr, self.grid_3x3)
         expected = [
             [5, 0, 5],
@@ -179,8 +179,8 @@ class TestDSLCombinators(unittest.TestCase):
         """compose(flip_h, flip_v) = rotate 180."""
         from arc_agent.dsl import DSLExpr, DSLType
         grid_in = DSLExpr.input_grid()
-        flip_h = DSLExpr.op("flip_h", [grid_in], DSLType.GRID)
-        composed = DSLExpr.op("flip_v", [flip_h], DSLType.GRID)
+        flip_h = DSLExpr.make_op("flip_h", [grid_in], DSLType.GRID)
+        composed = DSLExpr.make_op("flip_v", [flip_h], DSLType.GRID)
 
         grid = [[1, 2], [3, 4]]
         result = self.interp.evaluate(composed, grid)
@@ -192,8 +192,8 @@ class TestDSLCombinators(unittest.TestCase):
         grid_in = DSLExpr.input_grid()
         old = DSLExpr.literal(1, DSLType.COLOR)
         new = DSLExpr.literal(5, DSLType.COLOR)
-        replaced = DSLExpr.op("replace_color", [grid_in, old, new], DSLType.GRID)
-        final = DSLExpr.op("flip_h", [replaced], DSLType.GRID)
+        replaced = DSLExpr.make_op("replace_color", [grid_in, old, new], DSLType.GRID)
+        final = DSLExpr.make_op("flip_h", [replaced], DSLType.GRID)
 
         grid = [[1, 0], [0, 1]]
         result = self.interp.evaluate(final, grid)
@@ -212,7 +212,7 @@ class TestDSLCombinators(unittest.TestCase):
         # map_objects should apply a transform to each object's subgrid
         # The transform: replace any non-zero color with 5
         grid_in = DSLExpr.input_grid()
-        expr = DSLExpr.op("map_objects", [
+        expr = DSLExpr.make_op("map_objects", [
             grid_in,
             DSLExpr.lambda_expr("replace_all_fg_with",
                                 [DSLExpr.literal(5, DSLType.COLOR)],
@@ -238,14 +238,14 @@ class TestDSLInterpreterEdgeCases(unittest.TestCase):
     def test_empty_grid(self):
         from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
         interp = DSLInterpreter()
-        expr = DSLExpr.op("grid_height", [DSLExpr.input_grid()], DSLType.INT)
+        expr = DSLExpr.make_op("grid_height", [DSLExpr.input_grid()], DSLType.INT)
         result = interp.evaluate(expr, [])
         self.assertEqual(result, 0)
 
     def test_single_cell_grid(self):
         from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
         interp = DSLInterpreter()
-        expr = DSLExpr.op("most_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
+        expr = DSLExpr.make_op("most_common_color", [DSLExpr.input_grid()], DSLType.COLOR)
         result = interp.evaluate(expr, [[7]])
         self.assertEqual(result, 7)
 
@@ -253,7 +253,7 @@ class TestDSLInterpreterEdgeCases(unittest.TestCase):
         """Unknown operations should raise or return None gracefully."""
         from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
         interp = DSLInterpreter()
-        expr = DSLExpr.op("nonexistent_op", [DSLExpr.input_grid()], DSLType.GRID)
+        expr = DSLExpr.make_op("nonexistent_op", [DSLExpr.input_grid()], DSLType.GRID)
         result = interp.evaluate(expr, [[1]])
         self.assertIsNone(result)
 
@@ -261,7 +261,7 @@ class TestDSLInterpreterEdgeCases(unittest.TestCase):
         from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
         interp = DSLInterpreter()
         grid_in = DSLExpr.input_grid()
-        expr = DSLExpr.op("replace_color", [
+        expr = DSLExpr.make_op("replace_color", [
             grid_in,
             DSLExpr.literal(0, DSLType.COLOR),
             DSLExpr.literal(9, DSLType.COLOR),
@@ -334,12 +334,14 @@ class TestDSLSynthesis(unittest.TestCase):
         self.assertTrue(cache.is_pixel_perfect(result))
 
     def test_synthesize_returns_none_for_impossible(self):
-        """Random-looking mapping should not be solved."""
+        """Contradictory mapping should not be solved."""
         from arc_agent.dsl_synth import synthesize_dsl_program
         from arc_agent.scorer import TaskCache
 
+        # Same pixel (1) maps to different values in different examples
         task = {"train": [
             {"input": [[1, 2], [3, 4]], "output": [[7, 8], [9, 0]]},
+            {"input": [[1, 2], [3, 4]], "output": [[0, 8], [9, 7]]},
         ]}
         cache = TaskCache(task)
         result = synthesize_dsl_program(task, cache, time_budget=1.0)

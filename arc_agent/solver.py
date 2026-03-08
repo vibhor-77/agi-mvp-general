@@ -187,6 +187,13 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(obj_decomp_result):
                 candidates.append((obj_decomp_result, "object_decompose"))
 
+        # Step 3.96: DSL synthesis (novel transform search)
+        # Synthesize Grid→Grid transforms from sub-primitive operations.
+        dsl_result = self._try_dsl_synthesis(task, cache)
+        if dsl_result and dsl_result.fitness >= 0.99:
+            if cache.is_pixel_perfect(dsl_result):
+                candidates.append((dsl_result, "dsl_synthesis"))
+
         # Always run evolution to discover additional candidates,
         # even if deterministic search already found a solution.
         # Inject best candidates into seeds for evolution, best first.
@@ -490,6 +497,23 @@ class FourPillarsSolver:
 
         if result and self.verbose:
             print(f"  ◆ Object decomposition (score={result.fitness:.3f})")
+
+        return result
+
+    def _try_dsl_synthesis(self, task: dict,
+                           cache: "TaskCache") -> Optional[Program]:
+        """Synthesize a novel Grid→Grid transform from DSL sub-primitives.
+
+        Uses bottom-up enumeration over a typed DSL to construct transforms
+        that may not exist in the primitive library. This enables solving
+        tasks that require novel compositions of basic operations.
+        """
+        from .dsl_synth import synthesize_dsl_program
+
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+
+        if result and self.verbose:
+            print(f"  ◇ DSL synthesis (score={result.fitness:.3f})")
 
         return result
 
