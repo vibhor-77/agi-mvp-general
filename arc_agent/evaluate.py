@@ -81,6 +81,13 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Evaluate only the first N tasks (0 = all; tasks are sorted by ID)",
     )
     parser.add_argument(
+        "--tasks", nargs="+", default=None,
+        help=(
+            "Run only specific task IDs (space-separated). "
+            "E.g.: --tasks 0b148d64 2204b7a8 3c9b0459"
+        ),
+    )
+    parser.add_argument(
         "--workers", type=int, default=0,
         help=(
             "Number of parallel worker processes. "
@@ -135,7 +142,17 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         print("No tasks found. Check the --data-dir path.", file=sys.stderr)
         return 1
 
-    if args.limit > 0:
+    # Filter tasks by specific IDs (--tasks) or by count (--limit)
+    if args.tasks:
+        requested = set(args.tasks)
+        matched = {tid: tasks[tid] for tid in args.tasks if tid in tasks}
+        missing = requested - set(matched.keys())
+        if missing:
+            print(f"Warning: task IDs not found: {', '.join(sorted(missing))}",
+                  file=sys.stderr)
+        tasks = matched
+        print(f"Selected {len(tasks)} specific tasks: {', '.join(sorted(tasks.keys()))}")
+    elif args.limit > 0:
         sorted_ids = sorted(tasks.keys())[: args.limit]
         tasks = {tid: tasks[tid] for tid in sorted_ids}
         print(f"Limited to first {args.limit} tasks (sorted by ID)")
