@@ -217,10 +217,12 @@ class _ProgressTracker:
 
         if r["solved"]:
             self.solved += 1
-            if r["test_passed"]:
-                self.test_ok += 1
         elif r["score"] > 0.80:
             self.partial += 1
+        # Count test_passed regardless of solved status — a near-miss
+        # on training might still pass test, and we want honest tracking.
+        if r["test_passed"]:
+            self.test_ok += 1
 
         self._print_task_line(r)
 
@@ -238,7 +240,11 @@ class _ProgressTracker:
         eta_sec  = remaining_tasks / rate if rate > 0 else 0
         eta_str  = _fmt_duration(eta_sec)
 
-        test_tag = f" test={'✓' if r['test_passed'] else '✗'}" if r["solved"] else ""
+        # Show test status for solved and near-miss programs alike
+        if r["solved"] or r.get("test_score", 0) > 0:
+            test_tag = f" test={'✓' if r['test_passed'] else '✗'}"
+        else:
+            test_tag = ""
         method   = r.get("method", "")[:12]
 
         print(
@@ -466,6 +472,16 @@ def evaluate_dataset(
     test_correct  = sum(1 for r in task_results.values() if r.get("test_passed"))
     completed     = len(task_results)
 
+    # Fluke tracking: pixel-perfect on training but failed test
+    solved_and_tested = sum(1 for r in task_results.values()
+                            if r["solved"] and r.get("test_score", 0) > 0)
+    flukes = sum(1 for r in task_results.values()
+                 if r["solved"] and not r["test_passed"]
+                 and r.get("test_score", -1) >= 0)
+    # Near-miss bonus: not pixel-perfect on train but passed test anyway
+    near_miss_tc = sum(1 for r in task_results.values()
+                       if not r["solved"] and r["test_passed"])
+
     if verbose and completed > 0:
         scores = [r["score"] for r in task_results.values()]
         times  = [r["time_seconds"] for r in task_results.values()]
@@ -477,12 +493,20 @@ def evaluate_dataset(
         print(f"Tasks completed:    {completed}/{n_tasks}")
         print(f"Solved (exact):     {solved_count}/{completed} "
               f"({100*solved_count/max(completed,1):.1f}%)")
+        if flukes > 0:
+            print(f"  ├─ Generalized:   {solved_count - flukes} "
+                  f"(pixel-perfect on train AND test)")
+            print(f"  └─ Flukes:        {flukes} "
+                  f"(pixel-perfect on train, FAILED test)")
         print(f"Partial (>80%):     {partial_count}/{completed} "
               f"({100*partial_count/max(completed,1):.1f}%)")
         print(f"Above 80% total:    {above80}/{completed} "
               f"({100*above80/max(completed,1):.1f}%)")
         print(f"Test confirmed:     {test_correct}/{completed} "
               f"({100*test_correct/max(completed,1):.1f}%)")
+        if near_miss_tc > 0:
+            print(f"  └─ Near-miss TC:  {near_miss_tc} "
+                  f"(not pixel-perfect on train, but passed test)")
         print(f"Mean score:         {statistics.mean(scores):.3f}")
         print(f"Median score:       {statistics.median(scores):.3f}")
         print(f"Score std-dev:      {statistics.stdev(scores) if len(scores)>1 else 0:.3f}")
@@ -498,10 +522,13 @@ def evaluate_dataset(
         "completed_tasks":    completed,
         "solved_exact":       solved_count,
         "solve_rate":         solved_count / max(completed, 1),
+        "solved_generalized": solved_count - flukes,
+        "solved_flukes":      flukes,
         "partial_solved":     partial_count,
         "above_80pct":        solved_count + partial_count,
         "test_correct":       test_correct,
         "test_rate":          test_correct / max(completed, 1),
+        "near_miss_tc":       near_miss_tc,
         "mean_score":         statistics.mean(r["score"] for r in task_results.values())
                               if task_results else 0.0,
         "total_time_seconds": total_time,
