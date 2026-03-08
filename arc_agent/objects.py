@@ -49,8 +49,10 @@ try:
         colors = np.zeros(h * w, dtype=np.int32)   # max possible objects
         n = 0
 
-        # Stack arrays — fixed max size (h*w is the absolute upper bound)
-        max_stack = h * w
+        # Stack arrays — each cell can be pushed up to 4 times (once per
+        # neighbor direction) before being labeled and skipped.  Use 4*h*w
+        # to guarantee we never silently drop neighbor pushes.
+        max_stack = 4 * h * w
         stack_r = np.empty(max_stack, dtype=np.int32)
         stack_c = np.empty(max_stack, dtype=np.int32)
 
