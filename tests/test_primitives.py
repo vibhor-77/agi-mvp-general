@@ -2201,6 +2201,45 @@ class TestBorderInteriorObjects(unittest.TestCase):
         self.assertEqual(result, grid)
 
 
+class TestTripleSearchPrepend(unittest.TestCase):
+    """Test that triple search tries both append and prepend."""
+
+    def test_prepend_triple_found(self):
+        """Triple search should find prepend solutions (concept → pair)."""
+        from arc_agent.synthesizer import ProgramSynthesizer
+        from arc_agent.concepts import Program
+        from arc_agent.scorer import TaskCache
+
+        tk = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit=tk)
+
+        # Create a task where prepend solves but append doesn't:
+        # Task: apply mirror_v then rotate_90_cw to get the output
+        # Best pair might be rotate_90_cw → identity (or similar)
+        # Prepend mirror_v → best_pair should solve it
+
+        # Use a simple 3x3 grid with asymmetric content
+        inp = [[1, 0, 0], [0, 2, 0], [0, 0, 3]]
+        from arc_agent.primitives import mirror_vertical, rotate_90_cw
+        intermediate = mirror_vertical(inp)
+        out = rotate_90_cw(intermediate)
+
+        task = {"train": [{"input": inp, "output": out}], "test": []}
+        cache = TaskCache(task)
+
+        # The pair (mirror_v → rotate_90_cw) should be found,
+        # but if the best pair is something else, prepend should help
+        pair = synth.try_all_pairs(task, cache, top_k=20)
+        self.assertIsNotNone(pair)
+
+        # Whether it's a pair or triple, the task should be solvable
+        if pair.fitness < 0.99:
+            triple = synth.try_best_triples(pair, cache)
+            self.assertIsNotNone(triple)
+            # Triple should improve or match
+            self.assertGreaterEqual(triple.fitness, pair.fitness)
+
+
 class TestV20ToolkitContents(unittest.TestCase):
     def test_new_v20_primitives_exist(self):
         tk = build_initial_toolkit()

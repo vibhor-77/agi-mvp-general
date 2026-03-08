@@ -138,12 +138,11 @@ class FourPillarsSolver:
                                       elapsed, "pair_exhaustion")
 
         # Step 3.7: Near-miss triple search.
-        # When the best pair scores ≥ 0.90 but < 0.99 it means one more step
-        # might close the gap. Try every concept as a third step — O(N) cost,
-        # only paid when pair_result is a strong near-miss. We pass pair_result
-        # directly to avoid re-running the O(N²) pair search a second time.
+        # When the best pair scores ≥ 0.80 but < 0.99 it means one more step
+        # might close the gap. Try every concept as append AND prepend — 2×N
+        # cost, only paid when pair_result is a strong near-miss.
         triple_result = self.synthesizer.try_best_triples(
-            pair_result, cache, pair_score_threshold=0.90
+            pair_result, cache, pair_score_threshold=0.80
         )
         if triple_result and triple_result.fitness >= 0.99:
             elapsed = time.time() - start_time

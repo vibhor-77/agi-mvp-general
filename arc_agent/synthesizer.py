@@ -351,17 +351,16 @@ class ProgramSynthesizer:
         self,
         best_pair: Optional[Program],
         cache: "TaskCache",
-        pair_score_threshold: float = 0.90,
+        pair_score_threshold: float = 0.80,
     ) -> Optional[Program]:
         """Targeted triple search: extend a near-miss pair with a third step.
 
         When pair exhaustion finds a pair that scores ≥ pair_score_threshold
-        but < 0.99, it means the program is close but missing one final
-        transformation. We try every concept in the toolkit as that third
-        step — O(N) scoring calls, only paid when concrete evidence exists.
+        but < 0.99, we try every concept as:
+          1. Appended third step:  pair_a → pair_b → concept
+          2. Prepended first step: concept → pair_a → pair_b
 
-        Accepts the already-computed best_pair to avoid re-running pair search
-        (which would double the O(N²) cost on every task).
+        This costs 2×N scoring calls, only paid when concrete evidence exists.
 
         Args:
             best_pair:            Best pair from try_all_pairs (may be None)
@@ -374,13 +373,26 @@ class ProgramSynthesizer:
         if best_pair is None or best_pair.fitness < pair_score_threshold:
             return None
 
-        # Extend with every non-predicate concept as a third step (~171 calls)
         best_triple = None
         best_score  = 0.0
+        pair_steps  = list(best_pair.steps)
+
         for concept in self.toolkit.concepts.values():
             if concept.kind == "predicate":
                 continue
-            prog  = Program(list(best_pair.steps) + [concept])
+
+            # Try appending: pair → concept
+            prog  = Program(pair_steps + [concept])
+            score = cache.score_program(prog)
+            if score > best_score:
+                best_score  = score
+                best_triple = prog
+                best_triple.fitness = score
+                if score >= 0.99:
+                    return best_triple
+
+            # Try prepending: concept → pair
+            prog  = Program([concept] + pair_steps)
             score = cache.score_program(prog)
             if score > best_score:
                 best_score  = score
