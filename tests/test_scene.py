@@ -321,5 +321,136 @@ class TestEndToEnd(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestGlobalColorMap(unittest.TestCase):
+    """Test global pixel-level color mapping."""
+
+    def test_simple_color_swap(self):
+        """Global color mapping: 1→2, 3→4."""
+        from arc_agent.scene import solve_with_object_rules
+        task = {
+            "train": [
+                {"input": [[1, 3, 0], [0, 1, 3]], "output": [[2, 4, 0], [0, 2, 4]]},
+                {"input": [[3, 0, 1], [1, 3, 0]], "output": [[4, 0, 2], [2, 4, 0]]},
+            ],
+            "test": [
+                {"input": [[0, 1, 3], [3, 0, 1]], "output": [[0, 2, 4], [4, 0, 2]]},
+            ],
+        }
+        result = solve_with_object_rules(task)
+        self.assertIsNotNone(result)
+        test_output = result(task["test"][0]["input"])
+        self.assertEqual(test_output, task["test"][0]["output"])
+
+    def test_non_deterministic_rejected(self):
+        """Non-deterministic mapping is rejected."""
+        from arc_agent.scene import solve_with_object_rules
+        task = {
+            "train": [
+                {"input": [[1, 0], [0, 0]], "output": [[2, 0], [0, 0]]},
+                {"input": [[1, 0], [0, 0]], "output": [[3, 0], [0, 0]]},  # 1→2 and 1→3
+            ],
+            "test": [{"input": [[1, 0], [0, 0]], "output": [[2, 0], [0, 0]]}],
+        }
+        result = solve_with_object_rules(task)
+        self.assertIsNone(result)
+
+
+class TestSizeConditionalRecolor(unittest.TestCase):
+    """Test recoloring objects based on their size."""
+
+    def test_size_determines_color(self):
+        """Objects of same color get different colors based on size."""
+        from arc_agent.scene import solve_with_object_rules
+        # size=1 → color 2, size=2 → color 3
+        task = {
+            "train": [
+                {
+                    "input": [[5, 0, 0], [0, 5, 5], [0, 0, 0]],
+                    "output": [[2, 0, 0], [0, 3, 3], [0, 0, 0]],
+                },
+                {
+                    "input": [[0, 5, 0], [5, 5, 0], [0, 0, 5]],
+                    "output": [[0, 3, 0], [3, 3, 0], [0, 0, 2]],  # size-3 obj → 3? No...
+                },
+            ],
+            "test": [
+                {
+                    "input": [[5, 0, 5], [0, 0, 5], [0, 0, 0]],
+                    "output": [[2, 0, 3], [0, 0, 3], [0, 0, 0]],
+                },
+            ],
+        }
+        result = solve_with_object_rules(task)
+        self.assertIsNotNone(result)
+        test_output = result(task["test"][0]["input"])
+        self.assertEqual(test_output, task["test"][0]["output"])
+
+    def test_real_size_pattern(self):
+        """Pattern: size 4→1, size 3→2, size 2→3 (objects well-separated)."""
+        from arc_agent.scene import solve_with_object_rules
+        # Objects of color 5 get recolored based on size:
+        # size 4 → color 1, size 3 → color 2, size 2 → color 3
+        task = {
+            "train": [
+                {
+                    # size-4 block (2x2), size-2 bar, size-3 bar (all separated)
+                    "input": [
+                        [5, 5, 0, 0, 0, 0],
+                        [5, 5, 0, 0, 0, 0],
+                        [0, 0, 0, 5, 5, 0],
+                        [0, 0, 0, 0, 0, 0],
+                        [0, 5, 5, 5, 0, 0],
+                        [0, 0, 0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [1, 1, 0, 0, 0, 0],
+                        [1, 1, 0, 0, 0, 0],
+                        [0, 0, 0, 3, 3, 0],
+                        [0, 0, 0, 0, 0, 0],
+                        [0, 2, 2, 2, 0, 0],
+                        [0, 0, 0, 0, 0, 0],
+                    ],
+                },
+                {
+                    # size-3 bar, size-4 row, size-2 bar
+                    "input": [
+                        [5, 5, 5, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [5, 5, 5, 5, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 5, 5, 0],
+                    ],
+                    "output": [
+                        [2, 2, 2, 0, 0],
+                        [0, 0, 0, 0, 0],
+                        [1, 1, 1, 1, 0],
+                        [0, 0, 0, 0, 0],
+                        [0, 0, 3, 3, 0],
+                    ],
+                },
+            ],
+            "test": [
+                {
+                    "input": [
+                        [5, 5, 0, 0],
+                        [0, 0, 0, 0],
+                        [5, 5, 5, 0],
+                        [0, 0, 0, 0],
+                    ],
+                    "output": [
+                        [3, 3, 0, 0],
+                        [0, 0, 0, 0],
+                        [2, 2, 2, 0],
+                        [0, 0, 0, 0],
+                    ],
+                },
+            ],
+        }
+        result = solve_with_object_rules(task)
+        self.assertIsNotNone(result)
+        test_output = result(task["test"][0]["input"])
+        self.assertEqual(test_output, task["test"][0]["output"])
+
+
 if __name__ == "__main__":
     unittest.main()

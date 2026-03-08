@@ -227,10 +227,11 @@ def diff_scenes(src: SceneGraph, dst: SceneGraph) -> SceneDiff:
 @dataclass
 class ObjectRule:
     """A simple object-level transformation rule."""
-    kind: str  # "recolor", "remove", "move"
+    kind: str  # "recolor", "remove", "move", "recolor_by_size"
     src_color: int = 0
     dst_color: int = 0
     movement: tuple[int, int] = (0, 0)
+    size_map: Optional[dict[int, int]] = None  # size → dst_color (for recolor_by_size)
 
 
 def find_consistent_rules(diffs: list[SceneDiff]) -> list[ObjectRule]:
@@ -275,6 +276,32 @@ def find_consistent_rules(diffs: list[SceneDiff]) -> list[ObjectRule]:
                 rules.append(ObjectRule(kind="recolor", src_color=src_c,
                                         dst_color=dst_c))
 
+    # --- Size-conditional recolor: color X with size S → color Y ---
+    # For colors that have multiple dst_colors, check if size determines the mapping
+    for src_c, dst_set in recolor_map.items():
+        if len(dst_set) > 1:
+            # Collect (size → dst_color) observations across all diffs
+            size_to_color: dict[int, set[int]] = {}
+            for diff in diffs:
+                for m in diff.matched:
+                    if m.src.color == src_c and m.new_color is not None:
+                        size_to_color.setdefault(m.src.size, set()).add(m.new_color)
+            # Check if size uniquely determines dst_color
+            if size_to_color and all(len(v) == 1 for v in size_to_color.values()):
+                smap = {sz: next(iter(cs)) for sz, cs in size_to_color.items()}
+                # Verify: no unchanged objects of this color
+                consistent = True
+                for diff in diffs:
+                    for m in diff.matched:
+                        if m.src.color == src_c and m.new_color is None:
+                            consistent = False
+                            break
+                    if not consistent:
+                        break
+                if consistent:
+                    rules.append(ObjectRule(kind="recolor_by_size", src_color=src_c,
+                                            size_map=smap))
+
     # --- Removal rules: color X always removed ---
     removal_candidates: dict[int, int] = {}  # color → count of examples
     removal_presence: dict[int, int] = {}  # color → examples where it exists in input
@@ -313,8 +340,21 @@ def apply_rules(grid: Grid, rules: list[ObjectRule], bg_color: int = 0) -> Grid:
     """Apply a set of object rules to produce an output grid."""
     result = [row[:] for row in grid]
 
+    # For size-based rules, we need object segmentation
+    scene = None
     for rule in rules:
-        if rule.kind == "recolor":
+        if rule.kind == "recolor_by_size":
+            if scene is None:
+                scene = build_scene(grid)
+            # Apply per-object: recolor each object based on its size
+            for obj in scene.objects:
+                if obj.color == rule.src_color and rule.size_map is not None:
+                    new_color = rule.size_map.get(obj.size)
+                    if new_color is not None:
+                        for r, c in obj.pixels:
+                            result[r][c] = new_color
+
+        elif rule.kind == "recolor":
             for r in range(len(result)):
                 for c in range(len(result[0])):
                     if result[r][c] == rule.src_color:
@@ -331,12 +371,74 @@ def apply_rules(grid: Grid, rules: list[ObjectRule], bg_color: int = 0) -> Grid:
 
 # ── End-to-end pipeline ───────────────────────────────────────────────────
 
+def _try_global_color_map(task: dict) -> Optional[Callable[[Grid], Grid]]:
+    """Try to solve a task with a simple global color mapping.
+
+    Checks if every input→output pair can be explained by a pixel-level
+    color substitution: color A → color B for all pixels. This is simpler
+    than object-level reasoning and catches tasks where every pixel of a
+    color changes uniformly.
+    """
+    train = task.get("train", [])
+    if not train:
+        return None
+
+    # Same dims required
+    if not all(
+        len(ex["input"]) == len(ex["output"])
+        and len(ex["input"][0]) == len(ex["output"][0])
+        for ex in train
+    ):
+        return None
+
+    # Build the mapping: for each input color, what output color(s) do we see?
+    color_map: dict[int, set[int]] = {}
+    for ex in train:
+        for r in range(len(ex["input"])):
+            for c in range(len(ex["input"][0])):
+                ic = ex["input"][r][c]
+                oc = ex["output"][r][c]
+                color_map.setdefault(ic, set()).add(oc)
+
+    # Check: is the mapping deterministic? (each input color → exactly one output color)
+    if not all(len(v) == 1 for v in color_map.values()):
+        return None
+
+    mapping = {k: next(iter(v)) for k, v in color_map.items()}
+
+    # Check it's not identity
+    if all(k == v for k, v in mapping.items()):
+        return None
+
+    # Validate pixel-perfect on all training examples
+    for ex in train:
+        for r in range(len(ex["input"])):
+            for c in range(len(ex["input"][0])):
+                if mapping.get(ex["input"][r][c], ex["input"][r][c]) != ex["output"][r][c]:
+                    return None
+
+    def transform(grid: Grid) -> Grid:
+        return [[mapping.get(cell, cell) for cell in row] for row in grid]
+
+    return transform
+
+
 def solve_with_object_rules(task: dict) -> Optional[Callable[[Grid], Grid]]:
     """Try to solve an ARC task using object-level rule inference.
+
+    Tries multiple strategies in order of simplicity:
+      1. Global color mapping (pixel-level, no objects needed)
+      2. Object-level rules (recolor, recolor_by_size, removal)
 
     Returns a callable (grid → grid) if a consistent rule set is found
     that is pixel-perfect on all training examples. Returns None otherwise.
     """
+    # Strategy 1: Global color mapping (simplest, most robust)
+    result = _try_global_color_map(task)
+    if result is not None:
+        return result
+
+    # Strategy 2: Object-level rules
     train = task.get("train", [])
     if len(train) < 1:
         return None
