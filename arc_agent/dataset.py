@@ -137,6 +137,7 @@ def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
         "method":         result["method"],
         "time_seconds":   result["time_seconds"],
         "toolkit_size":   result["toolkit_size"],
+        "n_candidates":   result.get("n_candidates", 0),
         "worker_seed":    seed,
         # Culture data for cross-worker aggregation
         "_learned_concepts": learned_concepts,
@@ -154,8 +155,9 @@ def _solve_one(args: tuple) -> dict:
 
     Args:
         args: (task_id, task_dict, population_size, max_generations, seed,
-               culture_path)
+               culture_path, mode)
               culture_path can be "" if no pre-trained culture to load.
+              mode is "train" or "eval".
               The solver is created fresh per worker call so there is no
               shared mutable state between workers.
 
@@ -163,7 +165,7 @@ def _solve_one(args: tuple) -> dict:
         Dict with task_id and all per-task metrics, plus a worker_seed
         for reproducibility bookkeeping and culture data for aggregation.
     """
-    task_id, task, population_size, max_generations, seed, culture_path = args
+    task_id, task, population_size, max_generations, seed, culture_path, mode = args
 
     random.seed(seed)
 
@@ -180,7 +182,7 @@ def _solve_one(args: tuple) -> dict:
         except Exception:
             pass  # Gracefully degrade — run without culture
 
-    result = solver.solve_task(task, task_id)
+    result = solver.solve_task(task, task_id, mode=mode)
     return _collect_result(solver, result, task_id, task, seed)
 
 
@@ -433,7 +435,7 @@ def evaluate_dataset(
     # sorted list, so (seed, workers) always gives identical results.
     worker_args = [
         (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000, load_culture_path)
+         seed + i * 1000, load_culture_path, mode)
         for i, task_id in enumerate(sorted_ids)
     ]
 
@@ -527,6 +529,15 @@ def evaluate_dataset(
         print(f"Wall-clock rate:    "
               f"{completed/max(total_time,0.001):.2f} tasks/s  "
               f"({n_workers} workers)")
+
+        # Candidate diversity: tasks with multiple pixel-perfect candidates
+        n_cands = [r.get("n_candidates", 0) for r in task_results.values()]
+        multi_cand = sum(1 for c in n_cands if c > 1)
+        total_cands = sum(n_cands)
+        if total_cands > 0:
+            print(f"Total candidates:   {total_cands} across {sum(1 for c in n_cands if c > 0)} tasks")
+            if multi_cand > 0:
+                print(f"  └─ Multi-cand:    {multi_cand} tasks had >1 pixel-perfect candidate")
         print(f"{'='*60}")
 
     summary = {

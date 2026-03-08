@@ -70,8 +70,18 @@ class FourPillarsSolver:
         self.solve_times: list[float] = []
         self.concept_growth: list[int] = []
 
-    def solve_task(self, task: dict, task_id: str = "unknown") -> dict:
+    def solve_task(self, task: dict, task_id: str = "unknown",
+                   mode: str = "train") -> dict:
         """Solve a single ARC task using all 4 pillars.
+
+        Args:
+            task: The ARC task dict with 'train' and optionally 'test'.
+            task_id: Identifier for this task.
+            mode: "train" or "eval".
+                  Train mode: exhaustive search — keeps searching after first
+                  pixel-perfect to find ALL candidates and learn more concepts.
+                  Eval mode: lean inference — exits as soon as a pixel-perfect
+                  candidate is found, leveraging culture from training.
 
         Returns:
             Dict with solve status, best program, score, and metadata.
@@ -137,9 +147,9 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(culture_result):
                     candidates.append((culture_result, "culture_transfer"))
 
-        # Early exit: if we already have a 1-step solution, skip expensive search.
-        # A single primitive pixel-perfect solve is the simplest possible (MDL).
-        if candidates and any(len(p.steps) == 1 for p, _ in candidates):
+        # Early exit: in EVAL mode, a 1-step solution is optimal (MDL) — skip search.
+        # In TRAIN mode, keep going to discover more candidates and learn concepts.
+        if mode == "eval" and candidates and any(len(p.steps) == 1 for p, _ in candidates):
             winner, method = min(candidates, key=lambda x: len(x[0].steps))
             elapsed = time.time() - start_time
             self._record_success(task_id, winner, winner.fitness, elapsed)
@@ -171,9 +181,11 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(object_result):
                 candidates.append((object_result, "object_rules"))
 
-        # If we have pixel-perfect candidates from deterministic search,
-        # skip expensive evolution — pick the simplest (MDL).
-        if candidates:
+        # In EVAL mode: if we have pixel-perfect candidates from deterministic
+        # search, skip expensive evolution — pick the simplest (MDL).
+        # In TRAIN mode: still run evolution to discover more concepts and
+        # potentially find additional candidates (even if we already have one).
+        if mode == "eval" and candidates:
             winner, method = min(candidates, key=lambda x: len(x[0].steps))
             elapsed = time.time() - start_time
             self._record_success(task_id, winner, winner.fitness, elapsed)
@@ -223,18 +235,25 @@ class FourPillarsSolver:
                 if self.verbose:
                     print(f"  ◆ Decomposition improved score to {best_score:.3f}")
 
-        # Step 5: Check if evolved/decomposed solution is pixel-perfect.
-        # Only pixel-perfect programs on ALL training examples count as solved.
-        solved = False
+        # Step 5: Add evolved/decomposed result to candidates if pixel-perfect.
         if best_score >= 0.99 and best_program and cache.is_pixel_perfect(best_program):
+            candidates.append((best_program, "evolved"))
+
+        # Step 5.5: Also check if best_single beats evolved (even if not pixel-perfect)
+        if best_single and best_single.fitness >= best_score:
+            if cache.is_pixel_perfect(best_single) and (
+                not best_program or len(best_single) <= len(best_program)
+            ):
+                candidates.append((best_single, "single_primitive"))
+
+        # Step 6: Pick the winner from ALL candidates (MDL: simplest first).
+        solved = False
+        method = "evolved"
+        if candidates:
+            winner, method = min(candidates, key=lambda x: len(x[0].steps))
+            best_program = winner
+            best_score = winner.fitness
             solved = True
-            method = "evolved"
-            # Check if best_single was actually better (shorter)
-            if best_single and best_single.fitness >= best_score:
-                if cache.is_pixel_perfect(best_single) and len(best_single) <= len(best_program):
-                    best_program = best_single
-                    best_score = best_single.fitness
-                    method = "single_primitive"
             self._record_success(task_id, best_program, best_score, elapsed)
         elif best_score >= 0.95:
             # Near-miss: promote as concept but don't count as "solved"
@@ -246,16 +265,12 @@ class FourPillarsSolver:
                 if self.verbose:
                     print(f"  ◆ Near-miss concept promoted: {new_concept.name} "
                           f"(score={best_score:.3f})")
-            method = "evolved"
         elif best_score > 0.8:
             self.tasks_partially_solved += 1
             self.archive.record_solution(task_id, best_program, best_score)
-            method = "evolved"
-        else:
-            method = "evolved"
 
         # Also check if best_single was the best (even if not solved)
-        if not solved and best_single and best_single.fitness >= best_score:
+        if not solved and best_single and best_single.fitness >= (best_score or 0):
             best_program = best_single
             best_score = best_single.fitness
             method = "single_primitive"
@@ -272,7 +287,8 @@ class FourPillarsSolver:
         self.explorer.decay_epsilon()
 
         return self._make_result(task_id, best_program, best_score, elapsed, method,
-                                  pixel_perfect=solved)
+                                  pixel_perfect=solved,
+                                  n_candidates=len(candidates))
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -683,7 +699,7 @@ class FourPillarsSolver:
         return result if result else None
 
     def _make_result(self, task_id, program, score, elapsed, method,
-                      pixel_perfect: bool = False):
+                      pixel_perfect: bool = False, n_candidates: int = 0):
         return {
             "task_id": task_id,
             "solved": pixel_perfect,
@@ -693,6 +709,7 @@ class FourPillarsSolver:
             "time_seconds": elapsed,
             "method": method,
             "toolkit_size": self.toolkit.size,
+            "n_candidates": n_candidates,
         }
 
     def solve_batch(self, tasks: dict[str, dict]) -> dict:
