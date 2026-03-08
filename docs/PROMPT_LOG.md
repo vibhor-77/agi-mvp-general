@@ -939,3 +939,26 @@ Speed fix cost ~4 train / 1 eval solve (from ESSENTIAL pruning), but essential t
 | **v0.16** | **77/400 (19.2%)** | **30/400 (7.5%)** | **+1.0pp** |
 
 Eval 30/400 = **7.5%** — best result yet. +9 train solves, +4 eval solves vs speed-fix baseline.
+
+---
+
+## Session 14 — v0.17 Results & Deep Near-Miss Analysis
+
+### v0.17 Full Benchmark Results (Mac, 8 workers)
+
+| Metric | Train | Eval |
+|--------|-------|------|
+| Solved (exact) | **78/400 (19.5%)** | **31/400 (7.8%)** |
+| Partial (>80%) | 231/400 (57.8%) | 256/400 (64.0%) |
+| Test confirmed | 62/400 (15.5%) | 20/400 (5.0%) |
+| Mean score | 0.846 | 0.820 |
+| Wall-clock | 4.38 tasks/s | 1.94 tasks/s |
+
+| Version | Train | Eval | Δ Eval |
+|---------|-------|------|--------|
+| v0.15 fix | 68/400 (17.0%) | 26/400 (6.5%) | — |
+| v0.16 | 77/400 (19.2%) | 30/400 (7.5%) | +1.0pp |
+| **v0.17** | **78/400 (19.5%)** | **31/400 (7.8%)** | **+0.3pp** |
+
+Note: Diminishing returns appearing — each new batch adds fewer solves.
+Marginal gains suggest we need to look beyond simple primitives.

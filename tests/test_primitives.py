@@ -1792,3 +1792,172 @@ class TestV17ToolkitContents(unittest.TestCase):
     def test_toolkit_size_v17(self):
         tk = build_initial_toolkit()
         self.assertGreaterEqual(tk.size, 253)
+
+
+class TestRecolorDominantTouchingAccent(unittest.TestCase):
+    def test_recolor_dominant_touching_accent_to_4(self):
+        from arc_agent.primitives import recolor_dominant_touching_accent_to_4
+        # bg=0 (most common=16), dominant non-bg=5 (8 cells), accent=2 (1 cell)
+        # dominant (5) cells touching accent (2) -> 4
+        grid = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 5, 5, 2, 5, 0],
+            [0, 5, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+        result = recolor_dominant_touching_accent_to_4(grid)
+        # 5s adjacent to 2 at (2,3) should become 4
+        self.assertEqual(result[1][3], 4)  # above
+        self.assertEqual(result[2][2], 4)  # left
+        self.assertEqual(result[2][4], 4)  # right
+        self.assertEqual(result[3][3], 4)  # below
+        # accent cell unchanged
+        self.assertEqual(result[2][3], 2)
+        # non-touching dominant unchanged
+        self.assertEqual(result[1][1], 5)
+
+    def test_recolor_dominant_touching_accent_to_8(self):
+        from arc_agent.primitives import recolor_dominant_touching_accent_to_8
+        # bg=0 (most common=12), dominant=5 (8 cells), accent=3 (1 cell)
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 0],
+            [0, 5, 3, 5, 0],
+            [0, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = recolor_dominant_touching_accent_to_8(grid)
+        # 5s touching 3 at (2,2) should become 8
+        self.assertEqual(result[1][2], 8)  # above
+        self.assertEqual(result[2][1], 8)  # left
+        self.assertEqual(result[2][3], 8)  # right
+        self.assertEqual(result[3][2], 8)  # below
+        # bg cells unchanged
+        self.assertEqual(result[0][0], 0)
+        # non-touching dominant unchanged
+        self.assertEqual(result[1][1], 5)
+
+
+class TestFillSmallestRectHole(unittest.TestCase):
+    def test_fill_smallest_rect_hole_with_1(self):
+        from arc_agent.primitives import fill_smallest_rect_hole_with_1
+        # bg=0 (most common), 5s form an enclosure with a 2-cell interior hole
+        # Use a large enough grid so 0 is clearly most common
+        grid = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 5, 5, 5, 5, 5, 0],
+            [0, 5, 0, 0, 5, 5, 0],
+            [0, 5, 0, 0, 5, 5, 0],
+            [0, 5, 5, 5, 5, 5, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_smallest_rect_hole_with_1(grid)
+        self.assertEqual(result[2][2], 1)
+        self.assertEqual(result[2][3], 1)
+        self.assertEqual(result[3][2], 1)
+        self.assertEqual(result[3][3], 1)
+        self.assertEqual(result[0][0], 0)
+
+    def test_fill_smallest_rect_hole_with_8(self):
+        from arc_agent.primitives import fill_smallest_rect_hole_with_8
+        # bg=0 (most common), 3s enclose a 2x2 hole
+        grid = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 3, 3, 3, 3, 3, 0],
+            [0, 3, 0, 0, 3, 3, 0],
+            [0, 3, 0, 0, 3, 3, 0],
+            [0, 3, 3, 3, 3, 3, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_smallest_rect_hole_with_8(grid)
+        self.assertEqual(result[2][2], 8)
+        self.assertEqual(result[2][3], 8)
+        self.assertEqual(result[3][2], 8)
+        self.assertEqual(result[3][3], 8)
+
+
+class TestSortBySum(unittest.TestCase):
+    def test_sort_rows_by_sum(self):
+        from arc_agent.primitives import sort_rows_by_sum
+        grid = [
+            [3, 1, 1],  # sum=5
+            [0, 0, 0],  # sum=0
+            [2, 2, 1],  # sum=5
+        ]
+        result = sort_rows_by_sum(grid)
+        # row with sum=0 should be first
+        self.assertEqual(result[0], [0, 0, 0])
+
+    def test_sort_cols_by_sum(self):
+        from arc_agent.primitives import sort_cols_by_sum
+        grid = [
+            [3, 0, 2],
+            [3, 0, 2],
+            [3, 0, 2],
+        ]
+        result = sort_cols_by_sum(grid)
+        # col with sum=0 should be first
+        self.assertEqual([result[r][0] for r in range(3)], [0, 0, 0])
+
+
+class TestRecolor2ndColorToDominant(unittest.TestCase):
+    def test_recolor_2nd_color_to_dominant(self):
+        from arc_agent.primitives import recolor_2nd_color_to_dominant
+        # bg=0 (most common=8), dominant=5 (5 cells), accent=3 (2 cells)
+        # accent (3) -> dominant (5)
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 5, 5, 3, 0],
+            [0, 5, 5, 3, 0],
+            [0, 5, 0, 0, 0],
+        ]
+        result = recolor_2nd_color_to_dominant(grid)
+        # 3s should become 5
+        self.assertEqual(result[1][3], 5)
+        self.assertEqual(result[2][3], 5)
+        # existing 5s unchanged
+        self.assertEqual(result[1][1], 5)
+
+    def test_erase_2nd_color(self):
+        from arc_agent.primitives import erase_2nd_color
+        # bg=0 (most common=8), dominant=5 (5 cells), accent=3 (2 cells)
+        grid = [
+            [0, 0, 0, 0, 0],
+            [0, 5, 5, 3, 0],
+            [0, 5, 5, 3, 0],
+            [0, 5, 0, 0, 0],
+        ]
+        result = erase_2nd_color(grid)
+        # 3s should be replaced with bg (0)
+        self.assertEqual(result[1][3], 0)
+        self.assertEqual(result[2][3], 0)
+        # 5s unchanged
+        self.assertEqual(result[1][1], 5)
+
+
+class TestV18ToolkitContents(unittest.TestCase):
+    def test_new_v18_primitives_exist(self):
+        tk = build_initial_toolkit()
+        new_names = [
+            "recolor_dominant_touching_accent_to_4",
+            "recolor_dominant_touching_accent_to_6",
+            "recolor_dominant_touching_accent_to_7",
+            "recolor_dominant_touching_accent_to_8",
+            "recolor_dominant_touching_accent_to_2",
+            "recolor_dominant_touching_accent_to_3",
+            "fill_smallest_rect_hole_with_1",
+            "fill_smallest_rect_hole_with_4",
+            "fill_smallest_rect_hole_with_8",
+            "recolor_bg_enclosed_by_dominant",
+            "sort_rows_by_sum",
+            "sort_cols_by_sum",
+            "recolor_2nd_color_to_dominant",
+            "erase_2nd_color",
+        ]
+        for name in new_names:
+            self.assertIn(name, tk.concepts, f"Missing v0.18 primitive: {name}")
+
+    def test_toolkit_size_v18(self):
+        tk = build_initial_toolkit()
+        self.assertGreaterEqual(tk.size, 267)

@@ -3283,6 +3283,223 @@ def recolor_by_row_parity(grid: Grid) -> Grid:
 
 
 # ============================================================
+# V18 NEW PRIMITIVES
+# ============================================================
+
+def _make_recolor_dominant_touching_accent(new_color: int):
+    """Factory: recolor dominant-color cells adjacent to the accent (2nd) color."""
+    def _fn(grid):
+        from collections import Counter
+        h, w = _grid_dims(grid)
+        all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+        bg = Counter(all_vals).most_common(1)[0][0]
+        non_bg = [(v, cnt) for v, cnt in Counter(all_vals).most_common() if v != bg]
+        if len(non_bg) < 2:
+            return grid
+        dominant = non_bg[0][0]
+        accent = non_bg[1][0]
+        # Find cells of dominant color adjacent (4-way) to accent
+        result = _deep_copy_grid(grid)
+        for r in range(h):
+            for c in range(w):
+                if grid[r][c] != dominant:
+                    continue
+                for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                    nr, nc = r+dr, c+dc
+                    if 0<=nr<h and 0<=nc<w and grid[nr][nc] == accent:
+                        result[r][c] = new_color
+                        break
+        return result
+    return _fn
+
+
+# Factory-generated: recolor dominant-color cells touching accent → target color
+recolor_dominant_touching_accent_to_4 = _make_recolor_dominant_touching_accent(4)
+recolor_dominant_touching_accent_to_6 = _make_recolor_dominant_touching_accent(6)
+recolor_dominant_touching_accent_to_7 = _make_recolor_dominant_touching_accent(7)
+recolor_dominant_touching_accent_to_8 = _make_recolor_dominant_touching_accent(8)
+recolor_dominant_touching_accent_to_2 = _make_recolor_dominant_touching_accent(2)
+recolor_dominant_touching_accent_to_3 = _make_recolor_dominant_touching_accent(3)
+
+
+def fill_smallest_rect_hole_with_1(grid):
+    """Fill the smallest enclosed rectangular bg region with color 1.
+
+    Finds enclosed bg regions (not reachable from border), picks the
+    smallest one whose cells form a compact rectangular cluster,
+    and fills it with color 1.
+    Useful for: filling small rectangular voids in scattered-dot patterns.
+    """
+    return _fill_smallest_hole(grid, new_color=1)
+
+
+def fill_smallest_rect_hole_with_4(grid):
+    """Fill the smallest enclosed rectangular bg region with color 4."""
+    return _fill_smallest_hole(grid, new_color=4)
+
+
+def fill_smallest_rect_hole_with_8(grid):
+    """Fill the smallest enclosed rectangular bg region with color 8."""
+    return _fill_smallest_hole(grid, new_color=8)
+
+
+def _fill_smallest_hole(grid, new_color):
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # BFS from border
+    reachable = set()
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r==0 or r==h-1 or c==0 or c==w-1) and grid[r][c] == bg:
+                if (r,c) not in reachable:
+                    reachable.add((r,c))
+                    queue.append((r,c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0<=nr<h and 0<=nc<w and (nr,nc) not in reachable and grid[nr][nc] == bg:
+                reachable.add((nr,nc))
+                queue.append((nr,nc))
+
+    # Find enclosed holes
+    visited = set()
+    holes = []
+    for sr in range(h):
+        for sc in range(w):
+            if grid[sr][sc] == bg and (sr,sc) not in reachable and (sr,sc) not in visited:
+                hole = []
+                q = [(sr,sc)]
+                visited.add((sr,sc))
+                while q:
+                    r, c = q.pop()
+                    hole.append((r,c))
+                    for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        nr, nc = r+dr, c+dc
+                        if 0<=nr<h and 0<=nc<w and (nr,nc) not in visited and grid[nr][nc] == bg:
+                            visited.add((nr,nc))
+                            q.append((nr,nc))
+                holes.append(hole)
+
+    if not holes:
+        return grid
+
+    # Pick smallest hole
+    smallest = min(holes, key=len)
+    result = _deep_copy_grid(grid)
+    for r, c in smallest:
+        result[r][c] = new_color
+    return result
+
+
+def recolor_bg_enclosed_by_dominant(grid):
+    """Fill enclosed bg regions with the dominant non-bg color.
+
+    Finds all bg cells not reachable from the border (enclosed),
+    then fills them with the most common non-bg color.
+    Useful for: filling interior voids in large object grids.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v,cnt) for v,cnt in Counter(all_vals).most_common() if v != bg]
+    if not non_bg:
+        return grid
+    fill_color = non_bg[0][0]
+
+    reachable = set()
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r==0 or r==h-1 or c==0 or c==w-1) and grid[r][c] == bg:
+                if (r,c) not in reachable:
+                    reachable.add((r,c))
+                    queue.append((r,c))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0<=nr<h and 0<=nc<w and (nr,nc) not in reachable and grid[nr][nc] == bg:
+                reachable.add((nr,nc))
+                queue.append((nr,nc))
+
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if grid[r][c] == bg and (r,c) not in reachable:
+                result[r][c] = fill_color
+    return result
+
+
+def sort_rows_by_sum(grid):
+    """Sort rows by their sum of values (ascending).
+
+    Rows with smaller total color values come first.
+    Useful for: canonical row ordering tasks.
+    """
+    return sorted(grid, key=lambda row: sum(row))
+
+
+def sort_cols_by_sum(grid):
+    """Sort columns by their sum of values (ascending)."""
+    h, w = _grid_dims(grid)
+    if h == 0:
+        return grid
+    col_sums = [sum(grid[r][c] for r in range(h)) for c in range(w)]
+    order = sorted(range(w), key=lambda c: col_sums[c])
+    return [[grid[r][order[c]] for c in range(w)] for r in range(h)]
+
+
+def recolor_2nd_color_to_dominant(grid):
+    """Recolor the 2nd most common non-bg color to the dominant non-bg color.
+
+    Merges the secondary color into the primary, keeping only one non-bg color.
+    Useful for: unifying two similar colored regions.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v,cnt) for v,cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+    dominant, accent = non_bg[0][0], non_bg[1][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if result[r][c] == accent:
+                result[r][c] = dominant
+    return result
+
+
+def erase_2nd_color(grid):
+    """Erase (→ bg) the 2nd most common non-bg color.
+
+    Removes the secondary color, leaving only bg and the dominant color.
+    Useful for: cleaning up noise/accent from predominantly single-color grids.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+    non_bg = [(v,cnt) for v,cnt in Counter(all_vals).most_common() if v != bg]
+    if len(non_bg) < 2:
+        return grid
+    accent = non_bg[1][0]
+    result = _deep_copy_grid(grid)
+    for r in range(h):
+        for c in range(w):
+            if result[r][c] == accent:
+                result[r][c] = bg
+    return result
+
+
+# ============================================================
 # V16 NEW PRIMITIVES
 # ============================================================
 
@@ -4057,6 +4274,24 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         # V16: Extend color to fill column/row within object bounds
         ("extend_color_within_col_bounds", extend_color_within_col_bounds),
         ("extend_color_within_row_bounds", extend_color_within_row_bounds),
+        # V18: dominant-touching-accent recoloring (factory variants)
+        ("recolor_dominant_touching_accent_to_4", recolor_dominant_touching_accent_to_4),
+        ("recolor_dominant_touching_accent_to_6", recolor_dominant_touching_accent_to_6),
+        ("recolor_dominant_touching_accent_to_7", recolor_dominant_touching_accent_to_7),
+        ("recolor_dominant_touching_accent_to_8", recolor_dominant_touching_accent_to_8),
+        ("recolor_dominant_touching_accent_to_2", recolor_dominant_touching_accent_to_2),
+        ("recolor_dominant_touching_accent_to_3", recolor_dominant_touching_accent_to_3),
+        # V18: hole filling variants
+        ("fill_smallest_rect_hole_with_1", fill_smallest_rect_hole_with_1),
+        ("fill_smallest_rect_hole_with_4", fill_smallest_rect_hole_with_4),
+        ("fill_smallest_rect_hole_with_8", fill_smallest_rect_hole_with_8),
+        ("recolor_bg_enclosed_by_dominant", recolor_bg_enclosed_by_dominant),
+        # V18: sorting
+        ("sort_rows_by_sum", sort_rows_by_sum),
+        ("sort_cols_by_sum", sort_cols_by_sum),
+        # V18: color merging
+        ("recolor_2nd_color_to_dominant", recolor_2nd_color_to_dominant),
+        ("erase_2nd_color", erase_2nd_color),
     ]
 
     for name, impl in partitioning_ops:
