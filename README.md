@@ -258,6 +258,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 | [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Design decisions, rationale, known limitations |
 | [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | Research plan with metrics and protocols |
 | [docs/PROMPT_LOG.md](docs/PROMPT_LOG.md) | Full session history: prompts, reasoning, results |
+| [docs/CELL_RULES.md](docs/CELL_RULES.md) | Cell Rule DSL for per-cell conditional transformations |
 
 ## Roadmap
 
@@ -274,6 +275,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Multiprocessing parallel evaluation
 - [x] Multiple evolution restarts (3x during training)
 - [x] Consistent metric definitions (solved exact = train AND test)
+- [x] Cell-level rule synthesis (per-cell conditional transformations)
 - [ ] Richer object rules (movement, conditional, relational)
 - [x] Multiple candidate submission (top-k diverse predictions per task)
 - [ ] ARC-AGI-2 evaluation
