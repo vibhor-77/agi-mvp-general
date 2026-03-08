@@ -74,14 +74,14 @@ class FourPillarsSolver:
                    mode: str = "train") -> dict:
         """Solve a single ARC task using all 4 pillars.
 
+        Runs all search strategies exhaustively and collects all pixel-perfect
+        candidates. No early exits — we always want the full picture.
+
         Args:
             task: The ARC task dict with 'train' and optionally 'test'.
             task_id: Identifier for this task.
-            mode: "train" or "eval".
-                  Train mode: exhaustive search — keeps searching after first
-                  pixel-perfect to find ALL candidates and learn more concepts.
-                  Eval mode: lean inference — exits as soon as a pixel-perfect
-                  candidate is found, leveraging culture from training.
+            mode: Passed through for metadata only. The solver runs
+                  identically in all modes.
 
         Returns:
             Dict with solve status, best program, score, and metadata.
@@ -147,17 +147,8 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(culture_result):
                     candidates.append((culture_result, "culture_transfer"))
 
-        # Early exit: in EVAL mode, a 1-step solution is optimal (MDL) — skip search.
-        # In TRAIN mode, keep going to discover more candidates and learn concepts.
-        if mode == "eval" and candidates and any(len(p.steps) == 1 for p, _ in candidates):
-            winner, method = min(candidates, key=lambda x: len(x[0].steps))
-            elapsed = time.time() - start_time
-            self._record_success(task_id, winner, winner.fitness, elapsed)
-            # Clean up learned concepts before returning
-            for lc in learned_concepts:
-                self.toolkit.concepts.pop(lc.name, None)
-            return self._make_result(task_id, winner, winner.fitness,
-                                      elapsed, method, pixel_perfect=True)
+        # No early exit — always try all search strategies to find
+        # the best and most diverse set of candidates.
 
         # Step 3.5: Try all pairs of top primitives (fast, high-yield)
         pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=20)
@@ -181,19 +172,8 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(object_result):
                 candidates.append((object_result, "object_rules"))
 
-        # In EVAL mode: if we have pixel-perfect candidates from deterministic
-        # search, skip expensive evolution — pick the simplest (MDL).
-        # In TRAIN mode: still run evolution to discover more concepts and
-        # potentially find additional candidates (even if we already have one).
-        if mode == "eval" and candidates:
-            winner, method = min(candidates, key=lambda x: len(x[0].steps))
-            elapsed = time.time() - start_time
-            self._record_success(task_id, winner, winner.fitness, elapsed)
-            for lc in learned_concepts:
-                self.toolkit.concepts.pop(lc.name, None)
-            return self._make_result(task_id, winner, winner.fitness,
-                                      elapsed, method, pixel_perfect=True)
-
+        # Always run evolution to discover additional candidates,
+        # even if deterministic search already found a solution.
         # Inject best candidates into seeds for evolution, best first.
         # Use high threshold (0.85) to avoid polluting evolution with noise.
         seed_programs = list(seed_programs) if seed_programs else []

@@ -76,7 +76,7 @@ def load_dataset(directory: str) -> dict[str, dict]:
 # ── Worker ─────────────────────────────────────────────────────────────────
 
 def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
-                     task: dict, seed: int) -> dict:
+                     task: dict, seed: int, mode: str = "train") -> dict:
     """Package a per-task result with culture data for aggregation.
 
     Shared by the single-process (shared-solver) path and the per-process
@@ -86,16 +86,12 @@ def _collect_result(solver: "FourPillarsSolver", result: dict, task_id: str,
     test_passed = False
     test_score  = 0.0
 
-    # Always validate the best program against test when we have a
-    # candidate worth checking. This is critical because:
-    # (1) A program that is pixel-perfect on training might not generalize
-    # (2) A program that is 1 pixel off on training might still be correct
-    #     on test (different examples, different grid sizes)
-    # In a competition, we'd submit the best program regardless, so we
-    # should always measure its test performance for honest reporting.
-    programs = solver.archive.task_solutions.get(task_id, [])
-    if programs:
-        test_passed, test_score = validate_on_test(programs[0], task)
+    # In infer mode, we NEVER look at test output — that's the whole point.
+    # In train/eval modes, validate against test for honest reporting.
+    if mode != "infer":
+        programs = solver.archive.task_solutions.get(task_id, [])
+        if programs:
+            test_passed, test_score = validate_on_test(programs[0], task)
 
     # Collect learned concepts and programs for culture saving
     learned_concepts = []
@@ -183,7 +179,7 @@ def _solve_one(args: tuple) -> dict:
             pass  # Gracefully degrade — run without culture
 
     result = solver.solve_task(task, task_id, mode=mode)
-    return _collect_result(solver, result, task_id, task, seed)
+    return _collect_result(solver, result, task_id, task, seed, mode=mode)
 
 
 # ── Progress display ────────────────────────────────────────────────────────
@@ -198,16 +194,21 @@ class _ProgressTracker:
       [idx/total] symbol task_id   score=X.XXX  Xs  method  |  running stats
     """
 
-    def __init__(self, n_tasks: int, n_workers: int, start_time: float):
+    def __init__(self, n_tasks: int, n_workers: int, start_time: float,
+                 mode: str = "train"):
         self.n_tasks    = n_tasks
         self.n_workers  = n_workers
         self.start_time = start_time
+        self.mode       = mode
 
         # Accumulators
         self.done       = 0
-        self.solved     = 0
-        self.partial    = 0   # score > 0.80
+        self.solved_exact = 0  # pixel-perfect on train AND test (golden metric)
+        self.pp_train   = 0    # pixel-perfect on train only
+        self.partial    = 0    # score > 0.80
         self.test_ok    = 0
+        self.flukes     = 0
+        self.overfits   = 0
         self.scores:    list[float] = []
         self.times:     list[float] = []
 
@@ -217,13 +218,17 @@ class _ProgressTracker:
         self.scores.append(r["score"])
         self.times.append(r["time_seconds"])
 
+        if r["solved"] and r.get("test_passed"):
+            self.solved_exact += 1
         if r["solved"]:
-            self.solved += 1
-        elif r["score"] > 0.80:
+            self.pp_train += 1
+        if r["solved"] and not r.get("test_passed"):
+            self.overfits += 1
+        if not r["solved"] and r.get("test_passed"):
+            self.flukes += 1
+        if not r["solved"] and r["score"] > 0.80:
             self.partial += 1
-        # Count test_passed regardless of solved status — a near-miss
-        # on training might still pass test, and we want honest tracking.
-        if r["test_passed"]:
+        if r.get("test_passed"):
             self.test_ok += 1
 
         self._print_task_line(r)
@@ -234,7 +239,21 @@ class _ProgressTracker:
 
     def _print_task_line(self, r: dict) -> None:
         """Print one line per completed task with all relevant metrics."""
-        status   = "✓" if r["solved"] else ("~" if r["score"] > 0.80 else "✗")
+        if self.mode == "infer":
+            # No test info — show train-only status
+            status = "✓" if r["solved"] else ("~" if r["score"] > 0.80 else "✗")
+        else:
+            # ✓=solved exact, ◇=overfit, △=fluke, ~=partial, ✗=low
+            if r["solved"] and r.get("test_passed"):
+                status = "✓"  # solved exact
+            elif r["solved"] and not r.get("test_passed"):
+                status = "◇"  # overfit
+            elif not r["solved"] and r.get("test_passed"):
+                status = "△"  # fluke
+            elif r["score"] > 0.80:
+                status = "~"  # partial
+            else:
+                status = "✗"  # low score
         elapsed  = time.time() - self.start_time
         # Projected finish time
         rate     = self.done / max(elapsed, 0.001)          # tasks/s wall-clock
@@ -243,7 +262,8 @@ class _ProgressTracker:
         eta_str  = _fmt_duration(eta_sec)
 
         # Show test status for solved and near-miss programs alike
-        if r["solved"] or r.get("test_score", 0) > 0:
+        # In infer mode, test was not checked, so skip test_tag
+        if self.mode != "infer" and (r["solved"] or r.get("test_score", 0) > 0):
             test_tag = f" test={'✓' if r['test_passed'] else '✗'}"
         else:
             test_tag = ""
@@ -265,9 +285,8 @@ class _ProgressTracker:
         mean_score = statistics.mean(self.scores)
         med_score  = statistics.median(self.scores)
         mean_time  = statistics.mean(self.times)
-        solve_pct  = 100 * self.solved  / self.done
-        partial_pct= 100 * self.partial / self.done
-        above80    = self.solved + self.partial
+        solve_pct  = 100 * self.solved_exact / self.done
+        above80    = self.pp_train + self.partial
 
         # Rolling score distribution buckets
         buckets = {"≥0.99": 0, "0.80-0.99": 0, "0.50-0.80": 0, "<0.50": 0}
@@ -278,9 +297,18 @@ class _ProgressTracker:
             else:           buckets["<0.50"]      += 1
 
         print(f"\n  ┌─ [{self.done}/{self.n_tasks} done  {_fmt_duration(elapsed)} elapsed] ─────────────────")
-        print(f"  │  Solved (exact):     {self.solved:3d}  ({solve_pct:.1f}%)")
-        print(f"  │  Partial (>80%):     {self.partial:3d}  ({partial_pct:.1f}%)   above 80%: {above80} ({100*above80/self.done:.0f}%)")
-        print(f"  │  Test confirmed:     {self.test_ok:3d}")
+        if self.mode == "infer":
+            print(f"  │  PP train:           {self.pp_train:3d}  ({100*self.pp_train/self.done:.1f}%)")
+            print(f"  │  Partial (>80%):     {self.partial:3d}   "
+                  f"above 80%: {above80} ({100*above80/self.done:.0f}%)")
+        else:
+            print(f"  │  ✓ Solved (exact):   {self.solved_exact:3d}  ({solve_pct:.1f}%)")
+            print(f"  │  ◇ Overfits:         {self.overfits:3d}  "
+                  f"(PP train: {self.pp_train})")
+            print(f"  │  △ Flukes:           {self.flukes:3d}  "
+                  f"(TC: {self.test_ok})")
+            print(f"  │  ~ Partial (>80%):   {self.partial:3d}   "
+                  f"above 80%: {above80} ({100*above80/self.done:.0f}%)")
         print(f"  │  Mean / median score:  {mean_score:.3f} / {med_score:.3f}")
         print(f"  │  Score dist:  "
               f"✓{buckets['≥0.99']}  "
@@ -440,7 +468,7 @@ def evaluate_dataset(
     ]
 
     start_time = time.time()
-    tracker    = _ProgressTracker(n_tasks, n_workers, start_time)
+    tracker    = _ProgressTracker(n_tasks, n_workers, start_time, mode=mode)
     task_results: dict[str, dict] = {}
 
     try:
@@ -504,23 +532,35 @@ def evaluate_dataset(
         print(f"BENCHMARK RESULTS — {mode.upper()} MODE")
         print(f"{'='*60}")
         print(f"Tasks completed:    {completed}/{n_tasks}")
-        print(f"Solved (exact):     {solved_exact}/{completed} "
-              f"({100*solved_exact/max(completed,1):.1f}%)  "
-              f"← pixel-perfect on train AND test")
-        print(f"Test confirmed:     {tc}/{completed} "
-              f"({100*tc/max(completed,1):.1f}%)")
-        if flukes > 0:
-            print(f"  └─ Flukes:        {flukes} "
-                  f"(passed test but FAILED train → likely luck)")
-        print(f"Pixel-perfect train:{pp_train}/{completed} "
-              f"({100*pp_train/max(completed,1):.1f}%)")
-        if overfits > 0:
-            print(f"  └─ Overfits:      {overfits} "
-                  f"(pixel-perfect on train, FAILED test)")
-        print(f"Partial (>80%):     {partial}/{completed} "
-              f"({100*partial/max(completed,1):.1f}%)")
-        print(f"Above 80% total:    {above80}/{completed} "
-              f"({100*above80/max(completed,1):.1f}%)")
+
+        if mode == "infer":
+            # Infer mode: no test output was examined, show train-only metrics
+            print(f"Pixel-perfect train:{pp_train}/{completed} "
+                  f"({100*pp_train/max(completed,1):.1f}%)")
+            print(f"Partial (>80%):     {partial}/{completed} "
+                  f"({100*partial/max(completed,1):.1f}%)")
+            print(f"Above 80% total:    {above80}/{completed} "
+                  f"({100*above80/max(completed,1):.1f}%)")
+        else:
+            # Train/eval: full scoreboard with test validation
+            print(f"Solved (exact):     {solved_exact}/{completed} "
+                  f"({100*solved_exact/max(completed,1):.1f}%)  "
+                  f"← pixel-perfect on train AND test")
+            print(f"Test confirmed:     {tc}/{completed} "
+                  f"({100*tc/max(completed,1):.1f}%)")
+            if flukes > 0:
+                print(f"  └─ Flukes:        {flukes} "
+                      f"(passed test but FAILED train → likely luck)")
+            print(f"Pixel-perfect train:{pp_train}/{completed} "
+                  f"({100*pp_train/max(completed,1):.1f}%)")
+            if overfits > 0:
+                print(f"  └─ Overfits:      {overfits} "
+                      f"(pixel-perfect on train, FAILED test)")
+            print(f"Partial (>80%):     {partial}/{completed} "
+                  f"({100*partial/max(completed,1):.1f}%)")
+            print(f"Above 80% total:    {above80}/{completed} "
+                  f"({100*above80/max(completed,1):.1f}%)")
+
         print(f"Mean score:         {statistics.mean(scores):.3f}")
         print(f"Median score:       {statistics.median(scores):.3f}")
         print(f"Score std-dev:      {statistics.stdev(scores) if len(scores)>1 else 0:.3f}")

@@ -1,23 +1,38 @@
 #!/usr/bin/env python3
 """
-ARC-AGI Full Benchmark Evaluation CLI
+ARC-AGI Benchmark CLI — Train, Infer, Eval
 
-Two modes:
-  train — Full access to answers. Learns culture (concepts, programs) and
-          saves it to a culture file for later use during eval.
-  eval  — Uses answers ONLY for scoring/reporting. Loads culture from
-          a previously saved culture file but does NOT learn from answers.
+Three modes with clean separation of concerns:
 
-Quick start:
+  train — Full access to training answers. Learns culture (concepts,
+          programs) and saves to a culture file. Runs exhaustive search.
+          Use on the training set to build up knowledge.
+
+  infer — Runs the solver and outputs ranked candidates per task.
+          Never looks at test output. Loads culture from training.
+          Output is a JSON file with candidates + programs that can
+          be submitted to private eval or scored locally with `eval`.
+
+  eval  — Scores inference results against expected test output.
+          Produces the final scoreboard. Can run inline (solver + score)
+          or score a previously saved inference output file.
+
+Typical workflow:
     git clone https://github.com/fchollet/ARC-AGI.git
 
-    # Train: learn culture from training set
+    # 1. Train: learn culture from training set
     python -m arc_agent.evaluate train \\
         --data-dir ARC-AGI/data/training \\
         --culture-file culture.json \\
         --output results_train.json
 
-    # Eval: apply culture to held-out evaluation set
+    # 2. Infer: generate candidates for eval set (no peeking at answers)
+    python -m arc_agent.evaluate infer \\
+        --data-dir ARC-AGI/data/evaluation \\
+        --culture-file culture.json \\
+        --output predictions_eval.json
+
+    # 3. Eval: score predictions against answers
     python -m arc_agent.evaluate eval \\
         --data-dir ARC-AGI/data/evaluation \\
         --culture-file culture.json \\
@@ -43,7 +58,7 @@ from .cpu_utils import default_workers, describe_cpu
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    """Add arguments shared by both train and eval subcommands."""
+    """Add arguments shared by all subcommands."""
     parser.add_argument(
         "--data-dir", required=True,
         help="Path to directory containing ARC-AGI task JSON files",
@@ -53,7 +68,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Path to culture JSON file. "
             "Train mode: saves learned culture here after run. "
-            "Eval mode: loads pre-trained culture from here before run."
+            "Infer/Eval mode: loads pre-trained culture from here."
         ),
     )
     parser.add_argument(
@@ -95,7 +110,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _run(args: argparse.Namespace, mode: str) -> int:
-    """Shared run logic for both train and eval modes."""
+    """Shared run logic for train, infer, and eval modes."""
     if not os.path.isdir(args.data_dir):
         print(f"Error: {args.data_dir!r} is not a directory", file=sys.stderr)
         return 1
@@ -114,8 +129,10 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         tasks = {tid: tasks[tid] for tid in sorted_ids}
         print(f"Limited to first {args.limit} tasks (sorted by ID)")
 
-    # In train mode: culture-file is where we SAVE culture after the run.
-    # In eval mode:  culture-file is where we LOAD culture from before the run.
+    # Culture file handling depends on mode:
+    #   train: saves culture after run
+    #   infer: loads culture before run (read-only)
+    #   eval:  loads culture before run (read-only)
     load_culture_path = ""
     save_culture_path = ""
 
@@ -123,13 +140,14 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         save_culture_path = args.culture_file
         if save_culture_path:
             print(f"Will save culture to: {save_culture_path}")
-    elif mode == "eval":
+    else:
+        # infer and eval both load culture
         load_culture_path = args.culture_file
         if load_culture_path:
             if not os.path.isfile(load_culture_path):
                 print(
                     f"Warning: culture file {load_culture_path!r} not found. "
-                    f"Running eval without culture transfer.",
+                    f"Running {mode} without culture transfer.",
                     file=sys.stderr,
                 )
                 load_culture_path = ""
@@ -155,7 +173,7 @@ def _run(args: argparse.Namespace, mode: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Four Pillars AGI Agent — ARC-AGI Benchmark Evaluation",
+        description="Four Pillars AGI Agent — ARC-AGI Benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -166,17 +184,27 @@ def main() -> int:
         "train",
         help=(
             "Train mode: full access to answers. Learns culture and "
-            "saves it to --culture-file for later eval use."
+            "saves it to --culture-file for later use."
         ),
     )
     _add_common_args(train_parser)
+
+    # Infer subcommand
+    infer_parser = subparsers.add_parser(
+        "infer",
+        help=(
+            "Inference mode: runs solver, outputs ranked candidates per task. "
+            "Never looks at test output. Loads culture from --culture-file."
+        ),
+    )
+    _add_common_args(infer_parser)
 
     # Eval subcommand
     eval_parser = subparsers.add_parser(
         "eval",
         help=(
-            "Eval mode: answers used ONLY for scoring/reporting. "
-            "Loads culture from --culture-file but does NOT learn from answers."
+            "Eval mode: runs solver and scores against expected test output. "
+            "Loads culture from --culture-file. Produces final scoreboard."
         ),
     )
     _add_common_args(eval_parser)
@@ -184,7 +212,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.mode:
-        parser.error("please specify a mode: 'train' or 'eval'")
+        parser.error("please specify a mode: 'train', 'infer', or 'eval'")
         return 1  # unreachable, parser.error exits
 
     return _run(args, args.mode)
