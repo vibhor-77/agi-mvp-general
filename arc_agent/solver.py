@@ -166,38 +166,49 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(param_result):
                 candidates.append((param_result, "parameterized"))
 
-        # No early exit — always try all search strategies to find
-        # the best and most diverse set of candidates.
+        # No early exit — try all search strategies within budget to find
+        # the best and most diverse set of candidates. Each expensive phase
+        # is gated by the evals budget so --compute-cap actually limits work.
+
+        # Helper: check whether we've exceeded the budget.
+        def _budget_ok() -> bool:
+            return cache.n_evals < evals_budget
 
         # Step 3c: Conditional search — single conditionals (if-then-else)
         # Exhaustive: try every predicate × top primitive pairs as branches.
-        cond_single = self.synthesizer.try_conditional_singles(task, cache, top_k=15)
-        if cond_single and cond_single.fitness >= 0.99:
-            if cache.is_pixel_perfect(cond_single):
-                candidates.append((cond_single, "conditional_single"))
+        cond_single: Optional[Program] = None
+        if _budget_ok():
+            cond_single = self.synthesizer.try_conditional_singles(task, cache, top_k=15)
+            if cond_single and cond_single.fitness >= 0.99:
+                if cache.is_pixel_perfect(cond_single):
+                    candidates.append((cond_single, "conditional_single"))
 
         # Step 3d: Try all pairs of top primitives (wider search: top-40)
-        pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=40)
-        if pair_result and pair_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(pair_result):
-                candidates.append((pair_result, "pair_exhaustion"))
-        if pair_result and pair_result.fitness >= 0.80 and not cache.is_pixel_perfect(pair_result):
-            near_miss_pool.append((pair_result, "pair_near_miss"))
+        pair_result: Optional[Program] = None
+        if _budget_ok():
+            pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=40)
+            if pair_result and pair_result.fitness >= 0.99:
+                if cache.is_pixel_perfect(pair_result):
+                    candidates.append((pair_result, "pair_exhaustion"))
+            if pair_result and pair_result.fitness >= 0.80 and not cache.is_pixel_perfect(pair_result):
+                near_miss_pool.append((pair_result, "pair_near_miss"))
 
         # Step 3e: Exhaustive triple search (top-15³ = 3,375 combinations)
         # This is the key unlocking step: ~15% of tasks need exactly 3 steps.
         # Exhaustive search guarantees finding all L=3 solutions in top-15.
-        triple_result = self.synthesizer.try_all_triples(task, cache, top_k=15)
-        if triple_result and triple_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(triple_result):
-                candidates.append((triple_result, "triple_exhaustion"))
-        if triple_result and triple_result.fitness >= 0.80 and not cache.is_pixel_perfect(triple_result):
-            near_miss_pool.append((triple_result, "triple_near_miss"))
+        triple_result: Optional[Program] = None
+        if _budget_ok():
+            triple_result = self.synthesizer.try_all_triples(task, cache, top_k=15)
+            if triple_result and triple_result.fitness >= 0.99:
+                if cache.is_pixel_perfect(triple_result):
+                    candidates.append((triple_result, "triple_exhaustion"))
+            if triple_result and triple_result.fitness >= 0.80 and not cache.is_pixel_perfect(triple_result):
+                near_miss_pool.append((triple_result, "triple_near_miss"))
 
         # Step 3f: Near-miss triple extension (extend best pair with a third step)
         # Cheaper than exhaustive: only ~600 evals, catches cases where the
         # near-miss pair is just missing one step.
-        if not triple_result or triple_result.fitness < 0.99:
+        if _budget_ok() and (not triple_result or triple_result.fitness < 0.99):
             triple_ext = self.synthesizer.try_best_triples(
                 pair_result, cache, pair_score_threshold=0.80
             )
@@ -206,64 +217,73 @@ class FourPillarsSolver:
                     candidates.append((triple_ext, "triple_extension"))
 
         # Step 3g: Conditional pairs
-        cond_pair = self.synthesizer.try_conditional_pairs(task, cache, top_k=10)
-        if cond_pair and cond_pair.fitness >= 0.99:
-            if cache.is_pixel_perfect(cond_pair):
-                candidates.append((cond_pair, "conditional_pair"))
+        cond_pair: Optional[Program] = None
+        if _budget_ok():
+            cond_pair = self.synthesizer.try_conditional_pairs(task, cache, top_k=10)
+            if cond_pair and cond_pair.fitness >= 0.99:
+                if cache.is_pixel_perfect(cond_pair):
+                    candidates.append((cond_pair, "conditional_pair"))
 
         # Step 3h: Object-centric reasoning
         # Only for same-dims tasks. Runs even if we have pair/triple candidates
         # since object rules may provide a better (more generalizable) solution.
-        object_result = self._try_object_rules(task, cache)
-        if object_result and object_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(object_result):
-                candidates.append((object_result, "object_rules"))
+        object_result: Optional[Program] = None
+        if _budget_ok():
+            object_result = self._try_object_rules(task, cache)
+            if object_result and object_result.fitness >= 0.99:
+                if cache.is_pixel_perfect(object_result):
+                    candidates.append((object_result, "object_rules"))
 
         # Step 3i: Object decomposition (per-object transform search)
         # Apply each toolkit primitive to each object independently, reassemble.
-        obj_decomp_result = self._try_object_decomposition(task, cache)
-        if obj_decomp_result and obj_decomp_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(obj_decomp_result):
-                candidates.append((obj_decomp_result, "object_decompose"))
+        obj_decomp_result: Optional[Program] = None
+        if _budget_ok():
+            obj_decomp_result = self._try_object_decomposition(task, cache)
+            if obj_decomp_result and obj_decomp_result.fitness >= 0.99:
+                if cache.is_pixel_perfect(obj_decomp_result):
+                    candidates.append((obj_decomp_result, "object_decompose"))
 
         # Step 3j: DSL synthesis (novel transform search)
         # Synthesize Grid→Grid transforms from sub-primitive operations.
-        dsl_result = self._try_dsl_synthesis(task, cache)
-        if dsl_result and dsl_result.fitness >= 0.99:
-            if cache.is_pixel_perfect(dsl_result):
-                candidates.append((dsl_result, "dsl_synthesis"))
-        if dsl_result and dsl_result.fitness >= 0.80 and not cache.is_pixel_perfect(dsl_result):
-            near_miss_pool.append((dsl_result, "dsl_near_miss"))
+        dsl_result: Optional[Program] = None
+        if _budget_ok():
+            dsl_result = self._try_dsl_synthesis(task, cache)
+            if dsl_result and dsl_result.fitness >= 0.99:
+                if cache.is_pixel_perfect(dsl_result):
+                    candidates.append((dsl_result, "dsl_synthesis"))
+            if dsl_result and dsl_result.fitness >= 0.80 and not cache.is_pixel_perfect(dsl_result):
+                near_miss_pool.append((dsl_result, "dsl_near_miss"))
 
         # Step 3k: Near-miss refinement (fix-up pass)
         # For programs scoring 0.8+ but not pixel-perfect, try single-step
         # fixes: append, prepend, or replace one step. Collects all high-
         # scoring programs from every search strategy above, deduplicates,
         # and tries each as a refinement base.
-        near_miss_inputs: list[tuple[Program, str]] = list(candidates)
-        all_near_miss_sources = [
-            (pair_result, "pair"), (triple_result, "triple"),
-            (dsl_result, "dsl"), (cond_single, "cond"),
-            (cond_pair, "cond_pair"), (best_single, "single"),
-            (param_result, "param"), (culture_result, "culture"),
-            (object_result, "object_rules"),
-            (obj_decomp_result, "object_decompose"),
-        ]
-        seen_keys: set[tuple[str, ...]] = set()
-        for prog, label in all_near_miss_sources:
-            if prog and prog.fitness >= 0.80 and not cache.is_pixel_perfect(prog):
-                key = tuple(s.name for s in prog.steps)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    near_miss_inputs.append((prog, label))
-        # Sort by fitness (highest first) for better early-exit
-        near_miss_inputs.sort(key=lambda x: x[0].fitness, reverse=True)
-        refined = self.synthesizer.try_near_miss_refinement(
-            near_miss_inputs, cache, score_threshold=0.80
-        )
-        if refined and refined.fitness >= 0.99:
-            if cache.is_pixel_perfect(refined):
-                candidates.append((refined, "near_miss_refine"))
+        if _budget_ok():
+            near_miss_inputs: list[tuple[Program, str]] = list(candidates)
+            all_near_miss_sources = [
+                (pair_result, "pair"), (triple_result, "triple"),
+                (dsl_result, "dsl"), (cond_single, "cond"),
+                (cond_pair, "cond_pair"), (best_single, "single"),
+                (param_result, "param"), (culture_result, "culture"),
+                (object_result, "object_rules"),
+                (obj_decomp_result, "object_decompose"),
+            ]
+            seen_keys: set[tuple[str, ...]] = set()
+            for prog, label in all_near_miss_sources:
+                if prog and prog.fitness >= 0.80 and not cache.is_pixel_perfect(prog):
+                    key = tuple(s.name for s in prog.steps)
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        near_miss_inputs.append((prog, label))
+            # Sort by fitness (highest first) for better early-exit
+            near_miss_inputs.sort(key=lambda x: x[0].fitness, reverse=True)
+            refined = self.synthesizer.try_near_miss_refinement(
+                near_miss_inputs, cache, score_threshold=0.80
+            )
+            if refined and refined.fitness >= 0.99:
+                if cache.is_pixel_perfect(refined):
+                    candidates.append((refined, "near_miss_refine"))
 
         # Inject best candidates into seeds for evolution, best first.
         seed_programs = list(seed_programs) if seed_programs else []

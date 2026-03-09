@@ -37,7 +37,7 @@ git clone https://github.com/fchollet/ARC-AGI.git
 # Reproduce our results — one command does train + eval with culture transfer
 python benchmark.py --pipeline
 
-# Run the test suite (672 tests)
+# Run the test suite (688 tests)
 python -m unittest discover -s tests -p "*.py"
 ```
 
@@ -109,7 +109,7 @@ tail -f logs/*_pipeline.log         # watch full console output
 
 The solver uses a **cell-normalized computational budget** to allocate search effort efficiently. The cost of a single program evaluation varies ~200× depending on grid size (53μs for 90-cell grids vs 16ms for 9,000-cell grids), so a flat eval count is a poor cost metric.
 
-The effective per-task budget is: `min(evals_budget, compute_cap / cells)`.
+The effective per-task budget is: `min(evals_budget, compute_cap / cells)`. The budget gates all search phases: once `cache.n_evals >= evals_budget`, subsequent phases (conditionals, pairs, triples, DSL, object decomposition, near-miss refinement, evolution) are skipped. Only the initial single-primitive scan and culture transfer always run, as they are the cheapest and highest-ROI phases.
 
 | Mode | Command | Compute cap | Effect |
 |------|---------|-------------|--------|
@@ -280,7 +280,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 672 tests (14 test files)
+├── tests/                           # 688 tests (15 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -351,7 +351,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (672 tests)
+- [x] Test suite (688 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
