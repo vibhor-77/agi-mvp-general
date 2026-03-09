@@ -390,11 +390,19 @@ class _BenchmarkTracker:
     when complete, and flags potential stragglers in rolling summaries.
     """
 
-    def __init__(self, n_tasks: int, n_workers: int, task_sizes: dict):
+    def __init__(self, n_tasks: int, n_workers: int, task_sizes: dict,
+                 results_live: str = "", culture_live: str = ""):
         self.n_tasks = n_tasks
         self.n_workers = n_workers
         self.task_sizes = task_sizes  # task_id -> total_cells
+        self.results_live = results_live  # JSONL path for live results
+        self.culture_live = culture_live  # JSONL path for live culture
         self.lock = threading.Lock()
+        # Initialize live files (truncate any previous content)
+        if results_live:
+            open(results_live, "w").close()
+        if culture_live:
+            open(culture_live, "w").close()
 
         # Running stats
         self.done = 0
@@ -533,6 +541,40 @@ class _BenchmarkTracker:
                 f"fail={self.fails}/{self.done}  "
                 f"pending={pending}")
 
+            # Live-append result to JSONL file (one JSON object per line)
+            if self.results_live:
+                try:
+                    live_record = {
+                        "task_id": task_id,
+                        "score": round(score, 4),
+                        "status": status,
+                        "method": method_str or None,
+                        "elapsed": round(elapsed, 2),
+                        "cells": cells,
+                        "n_evals": n_evals,
+                        "program": program_steps,
+                        "candidates": len(r.get("candidates", [])),
+                    }
+                    with open(self.results_live, "a") as f:
+                        f.write(json.dumps(live_record) + "\n")
+                except OSError:
+                    pass  # don't crash if live file can't be written
+
+            # Live-append culture entries (concepts + programs)
+            if self.culture_live:
+                try:
+                    entries = []
+                    for concept in worker_result.get("_learned_concepts", []):
+                        entries.append({"type": "concept", "data": concept})
+                    for prog in worker_result.get("_solved_programs", []):
+                        entries.append({"type": "program", "data": prog})
+                    if entries:
+                        with open(self.culture_live, "a") as f:
+                            for entry in entries:
+                                f.write(json.dumps(entry) + "\n")
+                except OSError:
+                    pass
+
             # Rolling summary every 25 tasks (or at the end)
             if self.done % 25 == 0 or self.done == self.n_tasks:
                 self._print_summary()
@@ -651,6 +693,16 @@ def benchmark_solver(
     else:
         mode = "training"
 
+    # ── Resolve artifact paths early (so we can print and live-write) ──
+    os.makedirs("results", exist_ok=True)
+    os.makedirs("cultures", exist_ok=True)
+    if not results_path:
+        results_path = f"results/{run_timestamp}_{mode}.json"
+    if not save_culture:
+        save_culture = f"cultures/{run_timestamp}_{mode}.json"
+    results_live = results_path.replace(".json", ".jsonl")
+    culture_live = save_culture.replace(".json", ".jsonl")
+
     # ── Print all run parameters ──────────────────────────────────────
     _section(f"Benchmark Configuration")
     print(f"  Mode:             {mode}")
@@ -663,8 +715,13 @@ def benchmark_solver(
     print(f"  Population size:  {population_size}")
     print(f"  Max generations:  {max_generations}")
     print(f"  Culture input:    {culture_file or '(none)'}")
-    print(f"  Culture output:   {save_culture or '(auto)'}")
-    print(f"  Results output:   {results_path or '(auto)'}")
+
+    # Print artifact paths upfront so users can tail -f immediately
+    _section("Output Files (available now for tail -f)")
+    print(f"  Results (live):   {results_live}")
+    print(f"  Results (final):  {results_path}")
+    print(f"  Culture (live):   {culture_live}")
+    print(f"  Culture (final):  {save_culture}")
 
     # Grid size statistics
     sizes = list(task_sizes.values())
@@ -693,7 +750,9 @@ def benchmark_solver(
 
     _section(f"Running {n_total} tasks on {n_workers} workers")
 
-    tracker = _BenchmarkTracker(n_total, n_workers, task_sizes)
+    tracker = _BenchmarkTracker(n_total, n_workers, task_sizes,
+                                results_live=results_live,
+                                culture_live=culture_live)
 
     try:
         if n_workers == 1:
@@ -839,19 +898,18 @@ def benchmark_solver(
         },
     }
 
-    os.makedirs("results", exist_ok=True)
-    if not results_path:
-        results_path = f"results/{run_timestamp}_{mode}.json"
+    # results_path and save_culture already resolved at top of function
     with open(results_path, "w") as f:
         json.dump(results_data, f, indent=2)
     print(f"\n  Results saved:     {results_path}")
+    if os.path.exists(results_live):
+        print(f"  Results (live):    {results_live}")
 
     # ── Save culture (aggregated from all workers) ─────────────────
-    os.makedirs("cultures", exist_ok=True)
-    if not save_culture:
-        save_culture = f"cultures/{run_timestamp}_{mode}.json"
     _aggregate_culture(tracker.all_results, save_culture)
     print(f"  Culture saved:     {save_culture}")
+    if os.path.exists(culture_live):
+        print(f"  Culture (live):    {culture_live}")
 
     return {
         "times": tracker.times,

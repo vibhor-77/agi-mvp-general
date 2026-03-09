@@ -31,17 +31,17 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (656 tests)
-python -m unittest discover -s tests -p "*.py"
-
 # Clone the ARC-AGI dataset
 git clone https://github.com/fchollet/ARC-AGI.git
 
-# Run the benchmark (parallel by default, all outputs auto-saved)
-python benchmark.py --data-dir ARC-AGI/data/training
-python benchmark.py --data-dir ARC-AGI/data/evaluation \
-    --culture-file cultures/<timestamp>_training.json
+# Reproduce our results — one command does train + eval with culture transfer
+python benchmark.py --pipeline
+
+# Run the test suite (656 tests)
+python -m unittest discover -s tests -p "*.py"
 ```
+
+The `--pipeline` command runs all 400 training tasks, saves the learned culture, then runs all 400 evaluation tasks using that culture. Results, logs, and culture snapshots are auto-saved with timestamps. Output file paths are printed at the start so you can `tail -f` them in another terminal.
 
 **Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup.
 
@@ -55,29 +55,32 @@ The `benchmark.py` script is the primary entry point for running and measuring s
 # Full pipeline: train → eval in one command (recommended)
 python benchmark.py --pipeline
 
-# Full training run (all 400 tasks, auto workers, auto-save everything)
-python benchmark.py --data-dir ARC-AGI/data/training
-
-# Quick subset for development
+# Quick subset for development (fast iteration)
 python benchmark.py --data-dir ARC-AGI/data/training --tasks 20
 
 # Single-process for debugging
 python benchmark.py --data-dir ARC-AGI/data/training --workers 1
 
-# Train → Eval workflow with culture transfer (manual)
-python benchmark.py --data-dir ARC-AGI/data/training
-python benchmark.py --data-dir ARC-AGI/data/evaluation \
-    --culture-file cultures/<timestamp>_training.json
+# Targeted testing on specific tasks
+python run_subset.py TASK_ID1 TASK_ID2 --workers 4
 ```
 
 ### Auto-saved artifacts
 
-Every run automatically saves three files with timestamps:
+Every run automatically saves timestamped files. Paths are printed at the start so you can monitor progress live:
 
 ```
-logs/20260308_191928_training.log        — full console output (tee'd)
-results/20260308_191951_training.json    — per-task results + summary
-cultures/20260308_191951_training.json   — learned culture snapshot
+logs/20260308_191928_training.log         — full console output (tee'd)
+results/20260308_191928_training.json     — per-task results + summary (written at end)
+results/20260308_191928_training.jsonl    — live results (one JSON line per task, tail -f friendly)
+cultures/20260308_191928_training.json    — learned culture snapshot (written at end)
+cultures/20260308_191928_training.jsonl   — live culture (concepts/programs as discovered)
+```
+
+Monitor a running benchmark in another terminal:
+```bash
+tail -f results/*_training.jsonl    # watch task results as they complete
+tail -f logs/*_pipeline.log         # watch full console output
 ```
 
 ### Options
