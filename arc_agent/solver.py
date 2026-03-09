@@ -133,6 +133,10 @@ class FourPillarsSolver:
         # pixel-perfect are kept as "best effort" but NOT declared solved.
         candidates: list[tuple[Program, str]] = []  # (program, method)
 
+        # Near-miss pool: collect high-scoring non-perfect programs from
+        # all search phases for later refinement (append/prepend/replace).
+        near_miss_pool: list[tuple[Program, str]] = []
+
         # Step 3: Quick check — does any single primitive solve it?
         best_single = self._try_single_primitives(task, cache)
         if best_single and best_single.fitness >= 0.99:
@@ -170,6 +174,8 @@ class FourPillarsSolver:
         if pair_result and pair_result.fitness >= 0.99:
             if cache.is_pixel_perfect(pair_result):
                 candidates.append((pair_result, "pair_exhaustion"))
+        if pair_result and pair_result.fitness >= 0.80 and not cache.is_pixel_perfect(pair_result):
+            near_miss_pool.append((pair_result, "pair_near_miss"))
 
         # Step 3e: Exhaustive triple search (top-15³ = 3,375 combinations)
         # This is the key unlocking step: ~15% of tasks need exactly 3 steps.
@@ -178,6 +184,8 @@ class FourPillarsSolver:
         if triple_result and triple_result.fitness >= 0.99:
             if cache.is_pixel_perfect(triple_result):
                 candidates.append((triple_result, "triple_exhaustion"))
+        if triple_result and triple_result.fitness >= 0.80 and not cache.is_pixel_perfect(triple_result):
+            near_miss_pool.append((triple_result, "triple_near_miss"))
 
         # Step 3f: Near-miss triple extension (extend best pair with a third step)
         # Cheaper than exhaustive: only ~600 evals, catches cases where the
@@ -217,6 +225,8 @@ class FourPillarsSolver:
         if dsl_result and dsl_result.fitness >= 0.99:
             if cache.is_pixel_perfect(dsl_result):
                 candidates.append((dsl_result, "dsl_synthesis"))
+        if dsl_result and dsl_result.fitness >= 0.80 and not cache.is_pixel_perfect(dsl_result):
+            near_miss_pool.append((dsl_result, "dsl_near_miss"))
 
         # Step 3k: Near-miss refinement (fix-up pass)
         # For programs scoring 0.8+ but not pixel-perfect, try single-step
@@ -326,19 +336,23 @@ class FourPillarsSolver:
             candidates.append((best_program, "evolved"))
 
         # Step 5: Post-evolution near-miss refinement.
-        # Evolution may find high-scoring programs that weren't available
-        # during pre-evolution refinement. Try single-step fixes on the
-        # best evolved program.
-        if not candidates and best_program and best_program.fitness >= 0.80:
-            post_evo_inputs: list[tuple[Program, str]] = [
-                (best_program, "evolved_best"),
-            ]
-            refined_post = self.synthesizer.try_near_miss_refinement(
-                post_evo_inputs, cache, score_threshold=0.80
-            )
-            if refined_post and refined_post.fitness >= 0.99:
-                if cache.is_pixel_perfect(refined_post):
-                    candidates.append((refined_post, "near_miss_refine"))
+        # Try single-step fixes (append/prepend/replace) on the best program
+        # AND all near-miss programs collected from search phases.
+        if not candidates:
+            # Build refinement pool: best program + top near-miss candidates
+            # Sort by fitness and keep top 3 to limit refinement cost
+            near_miss_pool.sort(key=lambda x: x[0].fitness, reverse=True)
+            refine_pool: list[tuple[Program, str]] = near_miss_pool[:3]
+            if best_program and best_program.fitness >= 0.80:
+                refine_pool.append((best_program, "evolved_best"))
+
+            if refine_pool:
+                refined_post = self.synthesizer.try_near_miss_refinement(
+                    refine_pool, cache, score_threshold=0.80
+                )
+                if refined_post and refined_post.fitness >= 0.99:
+                    if cache.is_pixel_perfect(refined_post):
+                        candidates.append((refined_post, "near_miss_refine"))
 
         # Step 5a: Check if best single primitive beats evolved
         if best_single and best_single.fitness >= best_score:
