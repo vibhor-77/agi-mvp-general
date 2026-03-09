@@ -232,6 +232,10 @@ def _try_neighbor_rule_shortcut(
 
     Learns a mapping from (cell_color, n_nonbg_4_neighbors) → output_color
     from I/O pairs. If consistent across all examples, builds a DSL program.
+
+    Includes LOOCV: for each training example, learn the rule from the
+    other N-1 examples and verify it predicts the held-out example.
+    This prevents overfitting to training-specific patterns.
     """
     # Only same-dims tasks
     for inp, out in zip(inputs, outputs):
@@ -245,6 +249,10 @@ def _try_neighbor_rule_shortcut(
     if rule is None:
         return None
 
+    # LOOCV generalization check: learn from N-1, verify on held-out
+    if not _loocv_neighbor_rule(inputs, outputs, interp):
+        return None
+
     expr = DSLExpr.make_op(
         "apply_neighbor_rule",
         [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
@@ -256,6 +264,48 @@ def _try_neighbor_rule_shortcut(
         return None
 
     return _check_match(expr, results, outputs, interp, cache)
+
+
+def _loocv_neighbor_rule(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+) -> bool:
+    """Leave-one-out cross-validation for neighbor rules.
+
+    For each training example i:
+      1. Learn a neighbor rule from all examples EXCEPT i
+      2. Apply it to input[i]
+      3. Check if it produces output[i]
+
+    Returns True only if the rule generalizes across all held-out examples.
+    For n=1 tasks, always returns True (can't cross-validate).
+    """
+    n = len(inputs)
+    if n <= 1:
+        return True
+
+    for hold_out in range(n):
+        # Learn from all except hold_out
+        train_in = inputs[:hold_out] + inputs[hold_out + 1:]
+        train_out = outputs[:hold_out] + outputs[hold_out + 1:]
+
+        rule = _learn_neighbor_rule(train_in, train_out)
+        if rule is None:
+            return False  # Can't even learn a consistent rule from N-1
+
+        # Apply to held-out input
+        expr = DSLExpr.make_op(
+            "apply_neighbor_rule",
+            [DSLExpr.input_grid(),
+             DSLExpr.literal(rule, DSLType.COLOR_MAP)],
+            DSLType.GRID,
+        )
+        result = interp.evaluate(expr, inputs[hold_out])
+        if result is None or result != outputs[hold_out]:
+            return False
+
+    return True
 
 
 def _learn_neighbor_rule(

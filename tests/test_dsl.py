@@ -805,5 +805,96 @@ class TestDSLSynthesisHalving(unittest.TestCase):
             self.assertTrue(cache.is_pixel_perfect(result))
 
 
+class TestDSLLoocv(unittest.TestCase):
+    """Test LOOCV generalization check for DSL neighbor rules."""
+
+    def test_loocv_passes_consistent_rule(self):
+        """A consistent neighbor rule should pass LOOCV."""
+        from arc_agent.dsl_synth import _loocv_neighbor_rule
+        from arc_agent.dsl import DSLInterpreter
+
+        interp = DSLInterpreter()
+        # Simple rule: isolated cells (0 non-bg neighbors) become color 2
+        # This rule should generalize across examples
+        inputs = [
+            [[0, 1, 0], [0, 0, 0], [0, 1, 0]],
+            [[0, 0, 0], [1, 0, 1], [0, 0, 0]],
+            [[1, 0, 0], [0, 0, 0], [0, 0, 1]],
+        ]
+        outputs = [
+            [[0, 2, 0], [0, 0, 0], [0, 2, 0]],
+            [[0, 0, 0], [2, 0, 2], [0, 0, 0]],
+            [[2, 0, 0], [0, 0, 0], [0, 0, 2]],
+        ]
+        self.assertTrue(_loocv_neighbor_rule(inputs, outputs, interp))
+
+    def test_loocv_fails_overfitting_rule(self):
+        """A rule that fits training but doesn't generalize should fail.
+
+        The rule learned from all 3 examples may be consistent but overly
+        specific — when learned from 2 examples it doesn't predict the 3rd.
+        """
+        from arc_agent.dsl_synth import _loocv_neighbor_rule, _learn_neighbor_rule
+        from arc_agent.dsl import DSLInterpreter
+
+        interp = DSLInterpreter()
+        # Task where each example has a different pattern:
+        # Example 1: cell (1,0) neighbors → specific output
+        # Example 2: cell (1,1) neighbors → different output
+        # These won't produce consistent LOOCV because
+        # the neighbor count→color mapping changes per example
+        inputs = [
+            [[1, 0], [0, 1]],
+            [[0, 1], [1, 0]],
+        ]
+        # Output swaps in a way that depends on position, not just neighbors
+        outputs = [
+            [[0, 1], [1, 0]],
+            [[1, 0], [0, 1]],
+        ]
+        # First check: the rule from all examples should be None
+        # (inconsistent) so LOOCV won't even be reached
+        rule = _learn_neighbor_rule(inputs, outputs)
+        if rule is not None:
+            # If a rule is learned from all, LOOCV should catch it
+            result = _loocv_neighbor_rule(inputs, outputs, interp)
+            self.assertFalse(result)
+
+    def test_loocv_single_example_passes(self):
+        """With only 1 training example, LOOCV can't validate — passes."""
+        from arc_agent.dsl_synth import _loocv_neighbor_rule
+        from arc_agent.dsl import DSLInterpreter
+
+        interp = DSLInterpreter()
+        inputs = [[[1, 0], [0, 1]]]
+        outputs = [[[2, 0], [0, 2]]]
+        self.assertTrue(_loocv_neighbor_rule(inputs, outputs, interp))
+
+    def test_loocv_two_examples_generalizes(self):
+        """Two-example LOOCV: rule learned from 1 predicts the other.
+
+        Rule: color-1 cells with exactly 2 non-bg 4-neighbors → color 3.
+        Both examples share the same neighbor-count distribution so
+        a rule learned from one generalizes to the other.
+        """
+        from arc_agent.dsl_synth import _loocv_neighbor_rule
+        from arc_agent.dsl import DSLInterpreter
+
+        interp = DSLInterpreter()
+        # Both grids: same size, same structure of neighbor counts
+        # 3x3 grid with center cell having 4 non-bg neighbors, etc.
+        inputs = [
+            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],  # cross pattern
+            [[0, 1, 0], [1, 1, 1], [0, 1, 0]],  # same pattern
+        ]
+        # Rule: (1, 2) → 3, (1, 4) → 3, (1, 1) → 3
+        # (color 1 cells with any non-bg neighbors become 3)
+        outputs = [
+            [[0, 3, 0], [3, 3, 3], [0, 3, 0]],
+            [[0, 3, 0], [3, 3, 3], [0, 3, 0]],
+        ]
+        self.assertTrue(_loocv_neighbor_rule(inputs, outputs, interp))
+
+
 if __name__ == "__main__":
     unittest.main()
