@@ -31,7 +31,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (650 tests)
+# Run the test suite (656 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
@@ -182,7 +182,9 @@ agi-mvp-general/
 ├── INSTALL.md                       # Setup instructions (conda/venv/pip)
 ├── requirements.txt                 # Dependencies: numpy (runtime) + pytest (dev)
 ├── pyproject.toml                   # Python project configuration
-├── arc_agent/                       # Core agent (18 modules, ~6,400 LOC)
+├── run_subset.py                    # Targeted hypothesis testing on task subsets
+├── run_tests.py                     # Test runner with coverage measurement
+├── arc_agent/                       # Core agent (18 modules, ~14,000 LOC)
 │   ├── evaluate.py                  # CLI entry point (train/infer/eval modes)
 │   ├── dataset.py                   # Dataset loader + parallel evaluation harness
 │   ├── solver.py                    # Main learning loop (all 4 pillars)
@@ -190,7 +192,7 @@ agi-mvp-general/
 │   ├── scorer.py                    # Feedback scoring engine (NumPy-vectorized)
 │   ├── explorer.py                  # Explore/exploit engine (UCB1 + ε-greedy)
 │   ├── concepts.py                  # Concept, Program, Toolkit, Archive data structures
-│   ├── primitives.py                # 287 DSL grid transforms (largest module)
+│   ├── primitives.py                # 304 grid-transform primitives (largest module)
 │   ├── objects.py                   # Object-level primitives (connected components)
 │   ├── scene.py                     # Object-centric reasoning (perceive→infer→apply)
 │   ├── decompose.py                 # Task decomposition (color-channel, spatial, diff)
@@ -201,7 +203,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 650 tests (14 test files)
+├── tests/                           # 656 tests (14 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -264,7 +266,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 | [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Design decisions, rationale, known limitations |
 | [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | Research plan with metrics and protocols |
 | [docs/PROMPT_LOG.md](docs/PROMPT_LOG.md) | Full session history: prompts, reasoning, results |
-| [docs/CELL_RULES.md](docs/CELL_RULES.md) | Cell Rule DSL for per-cell conditional transformations |
+| [docs/DECOMPOSITION_IMPROVEMENTS.md](docs/DECOMPOSITION_IMPROVEMENTS.md) | Decomposition strategies and improvements |
 
 ## Roadmap
 
@@ -272,20 +274,22 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (650 tests)
+- [x] Test suite (656 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
 - [x] Task decomposition (color-channel, spatial, diff-focus strategies)
 - [x] NumPy-accelerated scoring
 - [x] Multiprocessing parallel evaluation
-- [x] Multiple evolution restarts (3x during training)
+- [x] Adaptive evolution (skip when deterministic search succeeds)
 - [x] Consistent metric definitions (solved exact = train AND test)
 - [x] Cell-level rule synthesis (per-cell conditional transformations)
 - [x] Object decomposition (perceive → transform-per-object → reassemble)
 - [x] Parameterized primitives (structural parameter learning)
 - [x] Spatial primitives (line extension, room filling, mirror, gravity)
 - [x] DSL synthesis engine (typed expression trees + bottom-up enumeration)
+- [x] Near-miss refinement (append/prepend/replace on high-scoring programs)
+- [x] LOOCV generalization check (prevents neighbor rule overfitting)
 - [ ] Extend DSL: neighborhood queries, flood fill, cell-level iteration combinator
 - [ ] Richer object rules (movement, conditional, relational)
 - [x] Multiple candidate submission (top-k diverse predictions per task)

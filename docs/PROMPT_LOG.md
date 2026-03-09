@@ -4,6 +4,83 @@ This document records the prompts given to Claude, the reasoning behind each ste
 
 ---
 
+## Session 27 — Search Budget Reallocation & Near-Miss Strategies (March 8, 2026)
+
+### Prompt
+
+> We haven't made any improvement on eval in a day or so. Think deeply about all instructions I gave you, and try to come up with a better plan. Keep going and monitor the pipeline run.
+
+### Analysis
+
+Deep analysis revealed the solver was strategically misaligned: evolution consumed 71% of compute budget with 0% success rate on hard tasks, while deterministic search used 19% with 86%+ success. Key findings:
+
+- 50% of tasks solvable by single primitives, 25% by pairs, ~15% by triples
+- 40% of failures are near-misses (0.8-0.99 score) — very close but missing one final fix
+- Task distribution strongly favors exhaustive bottom-up search over random evolution
+- Neighbor rules had 50% overfit rate (highest of any method)
+
+### Changes
+
+1. **Search budget reallocation** (`solver.py`, `synthesizer.py`):
+   - Expanded pair search from top-20 to top-40 (400→1,600 combinations)
+   - Added `try_all_triples()`: exhaustive top-15³ search (3,375 combinations)
+   - Added `try_near_miss_refinement()`: append/prepend/replace fixes on 0.8+ programs
+   - Reduced evolution from 3 restarts × 30 gen to 1 restart × 15 gen (~80% budget reduction)
+   - Skip degenerate A→A→A triples
+
+2. **LOOCV for neighbor rules** (`solver.py`):
+   - Leave-One-Out Cross-Validation after rule learning
+   - Learn from N-1 examples, test on held-out
+   - Reject rules that fail any held-out example (≥3 examples required)
+
+3. **Post-evolution near-miss refinement** (`solver.py` Step 5.1):
+   - Run systematic append/prepend/replace on best evolved program
+   - Catches near-misses found by evolution but missed by pre-evolution refinement
+
+4. **Color-fix pass** (`synthesizer.py` + `solver.py` Steps 3.98 + 5.2):
+   - Infer consistent color remapping from pixel-level diff between output and expected
+   - Build color_remap concept and append to program
+   - Validates remap consistency (>80% agreement), rejects ambiguous remaps
+   - Applied both pre-evolution and post-evolution
+
+### Results (training run in progress at 192/400)
+
+- **53/192 exact solves (27.6%)** — tracking well above v0.26 baseline of 23.5%
+- **Method contributions**: single_primitive:38, pair_exhaustion:11, triple_exhaustion:5, near_miss_refine:2, object_decompose:2, evolved_r0:1, triple_extension:1, evolved:1, object_rules:1, dsl_synthesis:1
+- **Overfits**: 14 (7 from neighbor rules, 2 triple, 2 object_decompose, 1 near_miss_refine, 2 evolved)
+- **Pair exhaustion**: 11 solves, 0 overfits — highest quality method
+- 654 tests pass (up from 650)
+
+### Key Commits
+
+| Commit | Description |
+|--------|-------------|
+| `9a19ffc` | Reallocate search budget: exhaustive triples, near-miss refinement, reduced evolution |
+| `4c5be19` | Update README: v0.26 results (94 train, 31 eval), 650 tests |
+| `e316931` | Add LOOCV generalization check for neighbor rules |
+| `c4a32e4` | Skip degenerate A→A→A triples in exhaustive triple search |
+| `f9029bc` | Add post-evolution near-miss refinement and color-fix pass |
+
+### Files Modified
+
+| File | Action |
+|------|--------|
+| `arc_agent/solver.py` | Steps 3.6, 3.97, 3.98, 5.1, 5.2; LOOCV; reduced evolution |
+| `arc_agent/synthesizer.py` | `try_all_triples()`, `try_near_miss_refinement()`, `try_color_fix()`; top-40 pairs |
+| `tests/test_synthesizer.py` | TestExhaustiveTriples (2), TestNearMissRefinement (3), TestColorFix (4) |
+| `README.md` | v0.26 results, pipeline docs |
+| `docs/PROMPT_LOG.md` | Session 27 |
+
+### Next Steps
+
+1. Wait for full pipeline run to complete, compare train+eval numbers
+2. Monitor color-fix effectiveness on remaining tasks
+3. Consider expanding pair search to top-50 if budget allows
+4. Investigate 42 decomposition-only failures (37.5% of failures)
+5. Push to GitHub
+
+---
+
 ## Session 26 — Pipeline Mode, Test-Aware Selection, DSL Integration (March 8, 2026)
 
 ### Prompt

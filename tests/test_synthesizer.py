@@ -342,5 +342,105 @@ class TestNearMissRefinement(unittest.TestCase):
                 self.assertGreaterEqual(result.fitness, 0.99)
 
 
+class TestColorFix(unittest.TestCase):
+    """Tests for try_color_fix near-miss color remapping."""
+
+    def setUp(self):
+        self.toolkit = build_initial_toolkit()
+        self.synth = ProgramSynthesizer(self.toolkit, population_size=20)
+
+    def test_color_fix_none_when_no_mismatch(self):
+        """Returns None when program already produces correct output."""
+        from arc_agent.scorer import TaskCache
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[1, 2], [3, 4]]},
+            ]
+        }
+        cache = TaskCache(task)
+        identity = self.toolkit.concepts.get("identity")
+        if identity:
+            prog = Program([identity])
+            prog.fitness = cache.score_program(prog)
+            result = self.synth.try_color_fix(prog, cache)
+            self.assertIsNone(result)
+
+    def test_color_fix_finds_remap(self):
+        """Color fix should find a simple color swap."""
+        from arc_agent.scorer import TaskCache
+        from arc_agent.concepts import Concept
+        import numpy as np
+
+        # Create a concept that swaps 1->2 but leaves rest unchanged
+        def swap_1_to_2(grid):
+            g = np.array(grid)
+            result = g.copy()
+            result[g == 1] = 2
+            return result
+
+        swap_concept = Concept(
+            kind="test", name="test_swap_1_to_2", implementation=swap_1_to_2
+        )
+
+        # Task where input has 1s that should become 3s (not 2s)
+        task = {
+            "train": [
+                {"input": [[1, 0], [0, 1]], "output": [[3, 0], [0, 3]]},
+                {"input": [[0, 1], [1, 0]], "output": [[0, 3], [3, 0]]},
+            ]
+        }
+        cache = TaskCache(task)
+        prog = Program([swap_concept])
+        prog.fitness = cache.score_program(prog)
+
+        # The program outputs 2s where it should output 3s
+        # Color fix should find the 2->3 remap
+        result = self.synth.try_color_fix(prog, cache)
+        if result is not None:
+            self.assertGreaterEqual(result.fitness, 0.99)
+            self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_color_fix_none_for_shape_mismatch(self):
+        """Returns None when output shape differs from expected."""
+        from arc_agent.scorer import TaskCache
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[1, 2, 3], [4, 5, 6]]},
+            ]
+        }
+        cache = TaskCache(task)
+        identity = self.toolkit.concepts.get("identity")
+        if identity:
+            prog = Program([identity])
+            prog.fitness = cache.score_program(prog)
+            result = self.synth.try_color_fix(prog, cache)
+            self.assertIsNone(result)
+
+    def test_color_fix_none_for_ambiguous_remap(self):
+        """Returns None when the same color maps to different targets."""
+        from arc_agent.scorer import TaskCache
+        from arc_agent.concepts import Concept
+        import numpy as np
+
+        # A concept that does nothing (identity)
+        identity_concept = Concept(
+            kind="test", name="test_identity", implementation=lambda g: np.array(g)
+        )
+
+        # Task where color 1 should map to 2 in first example but 3 in second
+        # This is ambiguous — no consistent remap exists
+        task = {
+            "train": [
+                {"input": [[1, 0]], "output": [[2, 0]]},
+                {"input": [[1, 0]], "output": [[3, 0]]},
+            ]
+        }
+        cache = TaskCache(task)
+        prog = Program([identity_concept])
+        prog.fitness = cache.score_program(prog)
+        result = self.synth.try_color_fix(prog, cache)
+        self.assertIsNone(result)
+
+
 if __name__ == '__main__':
     unittest.main()

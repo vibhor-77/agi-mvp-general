@@ -2,7 +2,7 @@
 
 **Author:** Vibhor Jain
 **Date:** March 2026
-**Status:** Active Research — v0.24 (multi-candidate submission, 467 tests)
+**Status:** Active Research — v0.27 (LOOCV generalization, near-miss refinement, 656 tests)
 
 ---
 

@@ -46,14 +46,9 @@ The foundational data model. Contains:
 - **`Toolkit`** (Type 1 Memory): The growing concept library. Stores reusable, context-independent patterns. Supports composition of two concepts into a higher-level concept. This is where cumulative culture lives.
 - **`Archive`** (Type 2 Memory): Episodic memory. Records which programs solved which tasks, enabling cross-task transfer via feature-based similarity matching.
 
-### `primitives.py` — Base Grid Concepts (43 primitives)
+### `primitives.py` — Base Grid Concepts (304 primitives)
 
-The seed knowledge — analogous to biological building blocks that evolution starts with. Organized into:
-
-- **Geometric operators** (7): rotate_90_cw/ccw, rotate_180, mirror_h/v, transpose, identity
-- **Color operators** (22): color swaps (12), recolor (9), invert
-- **Spatial operators** (12): crop, tile, scale, gravity (4 directions), flood_fill, outline, fill_enclosed, extract_colors, count_per_row
-- **Predicates** (4): is_symmetric_h/v, is_square, has_single_color
+The seed knowledge — analogous to biological building blocks that evolution starts with. Includes geometric operators (rotations, mirrors, transpose), color operators (swaps, recoloring, inversion), spatial operators (crop, tile, scale, gravity, flood fill, line extension, room filling), extraction operators (largest/smallest object, border, interior), and predicates. See the module docstring for the full categorized list.
 
 Factory function `build_initial_toolkit(include_objects=True)` assembles all primitives into a fresh Toolkit, optionally including object-level concepts.
 

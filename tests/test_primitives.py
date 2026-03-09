@@ -2488,6 +2488,40 @@ class TestNeighborRuleLearner(unittest.TestCase):
                     f"Concept {nc.name} should match training output")
 
 
+    def test_position_feature_extractor(self):
+        """Position-aware extractor captures border vs interior distinction."""
+        from arc_agent.solver import FourPillarsSolver
+        grid = [
+            [1, 2, 3],
+            [4, 0, 6],
+            [7, 8, 9],
+        ]
+        # Corner cell (border)
+        feat_corner = FourPillarsSolver._extract_features_with_position(grid, 0, 0)
+        self.assertEqual(feat_corner[0], 1)  # center_color
+        self.assertTrue(feat_corner[1])      # is_border
+
+        # Interior cell (not border)
+        feat_center = FourPillarsSolver._extract_features_with_position(grid, 1, 1)
+        self.assertEqual(feat_center[0], 0)  # center_color
+        self.assertFalse(feat_center[1])     # is_border
+
+        # Edge cell (border)
+        feat_edge = FourPillarsSolver._extract_features_with_position(grid, 0, 1)
+        self.assertEqual(feat_edge[0], 2)  # center_color
+        self.assertTrue(feat_edge[1])      # is_border
+
+    def test_position_extractor_in_feature_list(self):
+        """Position feature extractor is included in the feature extractor list."""
+        solver = self._make_solver()
+        # Verify _extract_features_with_position exists and is callable
+        feat = solver._extract_features_with_position(
+            [[1, 2], [3, 4]], 0, 0
+        )
+        self.assertIsInstance(feat, tuple)
+        self.assertEqual(len(feat), 5)  # (cell, is_border, n4, n8, dom8)
+
+
 class TestV20ToolkitContents(unittest.TestCase):
     def test_new_v20_primitives_exist(self):
         tk = build_initial_toolkit()

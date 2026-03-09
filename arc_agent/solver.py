@@ -117,7 +117,7 @@ class FourPillarsSolver:
         if self.verbose:
             print(f"Seed programs from transfer: {len(seed_programs)}")
 
-        # Step 2.5: Learn task-specific concepts from examples (MDL principle)
+        # Step 2b: Learn task-specific concepts from examples (MDL principle)
         # These are temporarily injected into the toolkit for this task's search.
         learned_concepts = self._learn_task_concepts(task)
         for lc in learned_concepts:
@@ -139,7 +139,7 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(best_single):
                 candidates.append((best_single, "single_primitive"))
 
-        # Step 3.2: Try all culture programs directly (cross-run transfer).
+        # Step 3a: Try all culture programs directly (cross-run transfer).
         culture_result: Optional[Program] = None
         if self.toolkit.programs:
             culture_result = self._try_culture_programs(task, cache)
@@ -147,7 +147,7 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(culture_result):
                     candidates.append((culture_result, "culture_transfer"))
 
-        # Step 3.4: Try parameterized primitives (learn from examples).
+        # Step 3b: Try parameterized primitives (learn from examples).
         # These are templates that learn parameters from training examples,
         # enabling structural generalization (e.g., "map by frequency rank" not absolute colors).
         param_result = self._try_parameterized(task, cache)
@@ -158,20 +158,20 @@ class FourPillarsSolver:
         # No early exit — always try all search strategies to find
         # the best and most diverse set of candidates.
 
-        # Step 3.45: Conditional search — single conditionals (if-then-else)
+        # Step 3c: Conditional search — single conditionals (if-then-else)
         # Exhaustive: try every predicate × top primitive pairs as branches.
         cond_single = self.synthesizer.try_conditional_singles(task, cache, top_k=15)
         if cond_single and cond_single.fitness >= 0.99:
             if cache.is_pixel_perfect(cond_single):
                 candidates.append((cond_single, "conditional_single"))
 
-        # Step 3.5: Try all pairs of top primitives (wider search: top-40)
+        # Step 3d: Try all pairs of top primitives (wider search: top-40)
         pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=40)
         if pair_result and pair_result.fitness >= 0.99:
             if cache.is_pixel_perfect(pair_result):
                 candidates.append((pair_result, "pair_exhaustion"))
 
-        # Step 3.6: Exhaustive triple search (top-15³ = 3,375 combinations)
+        # Step 3e: Exhaustive triple search (top-15³ = 3,375 combinations)
         # This is the key unlocking step: ~15% of tasks need exactly 3 steps.
         # Exhaustive search guarantees finding all L=3 solutions in top-15.
         triple_result = self.synthesizer.try_all_triples(task, cache, top_k=15)
@@ -179,7 +179,7 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(triple_result):
                 candidates.append((triple_result, "triple_exhaustion"))
 
-        # Step 3.7: Near-miss triple extension (extend best pair with a third step)
+        # Step 3f: Near-miss triple extension (extend best pair with a third step)
         # Cheaper than exhaustive: only ~600 evals, catches cases where the
         # near-miss pair is just missing one step.
         if not triple_result or triple_result.fitness < 0.99:
@@ -190,13 +190,13 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(triple_ext):
                     candidates.append((triple_ext, "triple_extension"))
 
-        # Step 3.8: Conditional pairs (conditional + primitive or primitive + conditional)
+        # Step 3g: Conditional pairs
         cond_pair = self.synthesizer.try_conditional_pairs(task, cache, top_k=10)
         if cond_pair and cond_pair.fitness >= 0.99:
             if cache.is_pixel_perfect(cond_pair):
                 candidates.append((cond_pair, "conditional_pair"))
 
-        # Step 3.9: Object-centric reasoning (perceive → compare → infer)
+        # Step 3h: Object-centric reasoning
         # Only for same-dims tasks. Runs even if we have pair/triple candidates
         # since object rules may provide a better (more generalizable) solution.
         object_result = self._try_object_rules(task, cache)
@@ -204,34 +204,43 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(object_result):
                 candidates.append((object_result, "object_rules"))
 
-        # Step 3.95: Object decomposition (per-object transform search)
+        # Step 3i: Object decomposition (per-object transform search)
         # Apply each toolkit primitive to each object independently, reassemble.
         obj_decomp_result = self._try_object_decomposition(task, cache)
         if obj_decomp_result and obj_decomp_result.fitness >= 0.99:
             if cache.is_pixel_perfect(obj_decomp_result):
                 candidates.append((obj_decomp_result, "object_decompose"))
 
-        # Step 3.96: DSL synthesis (novel transform search)
+        # Step 3j: DSL synthesis (novel transform search)
         # Synthesize Grid→Grid transforms from sub-primitive operations.
         dsl_result = self._try_dsl_synthesis(task, cache)
         if dsl_result and dsl_result.fitness >= 0.99:
             if cache.is_pixel_perfect(dsl_result):
                 candidates.append((dsl_result, "dsl_synthesis"))
 
-        # Step 3.97: Near-miss refinement (fix-up pass)
+        # Step 3k: Near-miss refinement (fix-up pass)
         # For programs scoring 0.8+ but not pixel-perfect, try single-step
-        # fixes: append, prepend, or replace one step. This is the highest-
-        # ROI search — 40% of failures are near-misses that often need just
-        # one color swap, crop, or flip to become exact.
-        # Collect all non-exact near-misses for refinement
+        # fixes: append, prepend, or replace one step. Collects all high-
+        # scoring programs from every search strategy above, deduplicates,
+        # and tries each as a refinement base.
         near_miss_inputs: list[tuple[Program, str]] = list(candidates)
-        # Also include high-scoring non-candidates
-        for prog, label in [
+        all_near_miss_sources = [
             (pair_result, "pair"), (triple_result, "triple"),
             (dsl_result, "dsl"), (cond_single, "cond"),
-        ]:
+            (cond_pair, "cond_pair"), (best_single, "single"),
+            (param_result, "param"), (culture_result, "culture"),
+            (object_result, "object_rules"),
+            (obj_decomp_result, "object_decompose"),
+        ]
+        seen_keys: set[tuple[str, ...]] = set()
+        for prog, label in all_near_miss_sources:
             if prog and prog.fitness >= 0.80 and not cache.is_pixel_perfect(prog):
-                near_miss_inputs.append((prog, label))
+                key = tuple(s.name for s in prog.steps)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    near_miss_inputs.append((prog, label))
+        # Sort by fitness (highest first) for better early-exit
+        near_miss_inputs.sort(key=lambda x: x[0].fitness, reverse=True)
         refined = self.synthesizer.try_near_miss_refinement(
             near_miss_inputs, cache, score_threshold=0.80
         )
@@ -261,6 +270,13 @@ class FourPillarsSolver:
         all_history = []
         evo_generations = max(15, self.max_generations // 2)
 
+        if candidates:
+            # Already have at least one pixel-perfect candidate from deterministic
+            # search. Skip evolution to save ~15-30 seconds per task.
+            n_restarts = 0
+            if self.verbose:
+                print(f"  ⚡ Skipping evolution — {len(candidates)} candidate(s) already found")
+
         for restart_idx in range(n_restarts):
             if restart_idx > 0:
                 import random
@@ -286,8 +302,9 @@ class FourPillarsSolver:
 
         elapsed = time.time() - start_time
 
-        # Step 4.5: Try decomposition as fallback (COMPOSABILITY)
-        if best_score < 0.99:
+        # Step 4a: Try decomposition as fallback (COMPOSABILITY)
+        # Skip if we already have candidates from deterministic search.
+        if best_score < 0.99 and not candidates:
             decomposed = self.decomposer.decompose_if_needed(
                 task,
                 best_score,
@@ -304,20 +321,33 @@ class FourPillarsSolver:
                 if self.verbose:
                     print(f"  ◆ Decomposition improved score to {best_score:.3f}")
 
-        # Step 5: Add evolved/decomposed result to candidates if pixel-perfect.
+        # Step 4b: Add evolved/decomposed result to candidates if pixel-perfect.
         if best_score >= 0.99 and best_program and cache.is_pixel_perfect(best_program):
             candidates.append((best_program, "evolved"))
 
-        # Step 5.5: Also check if best_single beats evolved (even if not pixel-perfect)
+        # Step 5: Post-evolution near-miss refinement.
+        # Evolution may find high-scoring programs that weren't available
+        # during pre-evolution refinement. Try single-step fixes on the
+        # best evolved program.
+        if not candidates and best_program and best_program.fitness >= 0.80:
+            post_evo_inputs: list[tuple[Program, str]] = [
+                (best_program, "evolved_best"),
+            ]
+            refined_post = self.synthesizer.try_near_miss_refinement(
+                post_evo_inputs, cache, score_threshold=0.80
+            )
+            if refined_post and refined_post.fitness >= 0.99:
+                if cache.is_pixel_perfect(refined_post):
+                    candidates.append((refined_post, "near_miss_refine"))
+
+        # Step 5a: Check if best single primitive beats evolved
         if best_single and best_single.fitness >= best_score:
             if cache.is_pixel_perfect(best_single) and (
                 not best_program or len(best_single) <= len(best_program)
             ):
                 candidates.append((best_single, "single_primitive"))
 
-        # Step 5.9: Deduplicate candidates by step sequence.
-        # The same program can appear from different methods (e.g., a single
-        # primitive found both in step 3 and step 5.5). Keep the first occurrence.
+        # Step 6: Deduplicate candidates by step sequence.
         seen_steps: set[tuple[str, ...]] = set()
         unique_candidates: list[tuple[Program, str]] = []
         for prog, meth in candidates:
@@ -327,7 +357,7 @@ class FourPillarsSolver:
                 unique_candidates.append((prog, meth))
         candidates = unique_candidates
 
-        # Step 6: Pick the winner from ALL candidates.
+        # Step 7: Pick the winner from ALL candidates.
         # Strategy: prefer candidates that PASS TEST (if test available),
         # then use MDL (shortest program) to break ties.
         # Pure MDL sometimes picks a program that overfits training.
@@ -584,7 +614,8 @@ class FourPillarsSolver:
         return result
 
     def _try_dsl_synthesis(self, task: dict,
-                           cache: "TaskCache") -> Optional[Program]:
+                           cache: "TaskCache",
+                           time_budget: float = 5.0) -> Optional[Program]:
         """Synthesize a novel Grid→Grid transform from DSL sub-primitives.
 
         Uses bottom-up enumeration over a typed DSL to construct transforms
@@ -593,7 +624,7 @@ class FourPillarsSolver:
         """
         from .dsl_synth import synthesize_dsl_program
 
-        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        result = synthesize_dsl_program(task, cache, time_budget=time_budget)
 
         if result and self.verbose:
             print(f"  ◇ DSL synthesis (score={result.fitness:.3f})")
@@ -747,6 +778,21 @@ class FourPillarsSolver:
 
         return (is_bg, n4, n8, dom8, col_dom)
 
+    @staticmethod
+    def _extract_features_with_position(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (center_color, is_border, n_non_bg_4, n_non_bg_8, dom_8)
+
+        Adds positional awareness (is_border) and center color.
+        Helps with tasks that change border vs interior cells differently.
+        """
+        rows = len(grid)
+        cols = len(grid[0]) if grid else 0
+        bg = FourPillarsSolver._get_bg(grid)
+        cell = grid[r][c]
+        is_border = r == 0 or c == 0 or r == rows - 1 or c == cols - 1
+        n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
+        return (cell, is_border, n4, n8, dom8)
+
     def _learn_neighbor_rules(self, train: list[dict]) -> list[Concept]:
         """Learn neighbor-rule concepts from training examples.
 
@@ -765,6 +811,7 @@ class FourPillarsSolver:
             ("with_center", self._extract_features_with_center),
             ("with_row", self._extract_features_with_row),
             ("with_col", self._extract_features_with_col),
+            ("with_position", self._extract_features_with_position),
         ]
 
         concepts = []
@@ -833,6 +880,126 @@ class FourPillarsSolver:
 
             if not all_correct:
                 continue
+
+            # Phase 3.5: Generalization check — Leave-One-Out Cross-Validation.
+            # For each training example, learn the rule from the other N-1
+            # examples and test on the held-out one. If any held-out example
+            # fails, the rule is likely to overfit on unseen test data.
+            # Only run LOOCV when we have enough examples (≥3).
+            if len(train) >= 3:
+                loocv_pass = True
+                for hold_idx in range(len(train)):
+                    # Learn rule from all examples except hold_idx
+                    loo_rules: dict[tuple, dict[int, int]] = {}
+                    for ei, ex in enumerate(train):
+                        if ei == hold_idx:
+                            continue
+                        inp, out = ex["input"], ex["output"]
+                        rows, cols = len(inp), len(inp[0])
+                        for r in range(rows):
+                            for c_idx in range(cols):
+                                if inp[r][c_idx] != out[r][c_idx]:
+                                    feat = extractor(inp, r, c_idx)
+                                    if feat not in loo_rules:
+                                        loo_rules[feat] = {}
+                                    oc = out[r][c_idx]
+                                    loo_rules[feat][oc] = \
+                                        loo_rules[feat].get(oc, 0) + 1
+
+                    # Build LOO rule map (skip inconsistent)
+                    loo_map: dict[tuple, int] = {}
+                    loo_valid = True
+                    for feat, out_counts in loo_rules.items():
+                        if len(out_counts) != 1:
+                            loo_valid = False
+                            break
+                        loo_map[feat] = next(iter(out_counts))
+
+                    if not loo_valid:
+                        loocv_pass = False
+                        break
+
+                    # Test on held-out example
+                    held = train[hold_idx]
+                    h_inp, h_out = held["input"], held["output"]
+                    h_rows, h_cols = len(h_inp), len(h_inp[0])
+                    for r in range(h_rows):
+                        for c_idx in range(h_cols):
+                            feat = extractor(h_inp, r, c_idx)
+                            if feat in loo_map:
+                                if loo_map[feat] != h_out[r][c_idx]:
+                                    loocv_pass = False
+                                    break
+                            else:
+                                if h_inp[r][c_idx] != h_out[r][c_idx]:
+                                    loocv_pass = False
+                                    break
+                        if not loocv_pass:
+                            break
+                    if not loocv_pass:
+                        break
+
+                if not loocv_pass:
+                    continue
+
+            # Phase 3.6: Complexity check — reject rules with too many
+            # unique features relative to training size. A rule that maps
+            # 50 unique feature tuples from only 3 examples is likely
+            # memorizing rather than learning a generalizable pattern.
+            # Allow at most 8 rules per training example.
+            n_rules = len(rule_map)
+            max_rules = max(8, len(train) * 8)
+            if n_rules > max_rules:
+                continue
+
+            # Phase 3.7: Also require LOOCV for n_train=2 (stricter).
+            # For 2-example tasks, train on example 0 and test on 1,
+            # then vice versa. Both must pass.
+            if len(train) == 2:
+                loocv_pass_2 = True
+                for hold_idx in range(2):
+                    other_idx = 1 - hold_idx
+                    loo_rules_2: dict[tuple, dict[int, int]] = {}
+                    oi, oo = train[other_idx]["input"], train[other_idx]["output"]
+                    for r in range(len(oi)):
+                        for c_idx in range(len(oi[0])):
+                            if oi[r][c_idx] != oo[r][c_idx]:
+                                feat = extractor(oi, r, c_idx)
+                                if feat not in loo_rules_2:
+                                    loo_rules_2[feat] = {}
+                                oc = oo[r][c_idx]
+                                loo_rules_2[feat][oc] = \
+                                    loo_rules_2[feat].get(oc, 0) + 1
+                    # Build LOO map
+                    loo_map_2: dict[tuple, int] = {}
+                    loo_valid_2 = True
+                    for feat, out_counts in loo_rules_2.items():
+                        if len(out_counts) != 1:
+                            loo_valid_2 = False
+                            break
+                        loo_map_2[feat] = next(iter(out_counts))
+                    if not loo_valid_2:
+                        loocv_pass_2 = False
+                        break
+                    # Test on held-out
+                    hi, ho = train[hold_idx]["input"], train[hold_idx]["output"]
+                    for r in range(len(hi)):
+                        for c_idx in range(len(hi[0])):
+                            feat = extractor(hi, r, c_idx)
+                            if feat in loo_map_2:
+                                if loo_map_2[feat] != ho[r][c_idx]:
+                                    loocv_pass_2 = False
+                                    break
+                            else:
+                                if hi[r][c_idx] != ho[r][c_idx]:
+                                    loocv_pass_2 = False
+                                    break
+                        if not loocv_pass_2:
+                            break
+                    if not loocv_pass_2:
+                        break
+                if not loocv_pass_2:
+                    continue
 
             # Phase 4: Build the concept closure
             frozen_rules = dict(rule_map)  # capture

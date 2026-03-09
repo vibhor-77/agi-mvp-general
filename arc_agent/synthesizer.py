@@ -426,7 +426,7 @@ class ProgramSynthesizer:
         """Exhaustively try all triples of top-scoring singles.
 
         This is the key unlocking insight: ~15% of ARC tasks need exactly
-        3 steps, and 15³ = 3,375 combinations is cheap to exhaust.
+        3 steps, and 20³ = 8,000 combinations is cheap to exhaust.
         Combined with the essential pair concepts, this covers the most
         common 3-step compositions deterministically.
 
@@ -465,6 +465,10 @@ class ProgramSynthesizer:
         for a in top_concepts:
             for b in top_concepts:
                 for c in top_concepts:
+                    # Skip degenerate A→A→A triples: equivalent to single A
+                    # (already tested). Saves ~N evaluations per loop.
+                    if a.name == b.name == c.name:
+                        continue
                     prog = Program([a, b, c])
                     score = cache.score_program(prog)
                     if score > best_score:
@@ -559,6 +563,116 @@ class ProgramSynthesizer:
                             return best_prog
 
         return best_prog
+
+    def try_color_fix(
+        self,
+        program: "Program",
+        cache: "TaskCache",
+    ) -> Optional[Program]:
+        """Try to fix a near-miss by applying a color remapping to its output.
+
+        Many ARC near-misses differ from the target by a consistent color
+        substitution (e.g., all 3s should be 5s). This method:
+          1. Runs the program on each training input
+          2. Compares output vs expected pixel-by-pixel
+          3. Infers a color remapping from mismatches
+          4. Wraps program + remap into a new Program
+
+        Returns a pixel-perfect program if the color fix works, else None.
+        """
+        import numpy as np
+
+        if cache.n_examples == 0:
+            return None
+
+        # Collect mismatch color pairs across all training examples
+        from collections import Counter
+        color_map_votes: Counter = Counter()
+        has_structural_mismatch = False
+
+        for i in range(cache.n_examples):
+            inp = cache._inputs[i]
+            expected = cache._expected[i]
+            try:
+                result = program.execute(inp)
+                if result is None:
+                    return None
+                result = np.array(result)
+            except Exception:
+                return None
+
+            if result.shape != expected.shape:
+                has_structural_mismatch = True
+                break
+
+            # Find mismatched positions
+            diff_mask = result != expected
+            if not diff_mask.any():
+                continue  # this example already matches
+
+            # Collect (got -> want) pairs
+            got_colors = result[diff_mask]
+            want_colors = expected[diff_mask]
+            for g, w in zip(got_colors.flat, want_colors.flat):
+                if g != w:
+                    color_map_votes[(int(g), int(w))] += 1
+
+        if has_structural_mismatch or not color_map_votes:
+            return None
+
+        # Build a consistent color remapping: for each "got" color,
+        # pick the most common "want" color
+        remap: dict[int, int] = {}
+        by_got: dict[int, Counter] = {}
+        for (g, w), count in color_map_votes.items():
+            if g not in by_got:
+                by_got[g] = Counter()
+            by_got[g][w] += count
+        for g, votes in by_got.items():
+            best_w, _ = votes.most_common(1)[0]
+            remap[g] = best_w
+
+        if not remap:
+            return None
+
+        # Check that the remap is consistent (no conflicts)
+        # A conflict is when the same "got" color needs to map to different
+        # "want" colors in different positions
+        for g, votes in by_got.items():
+            if len(votes) > 1:
+                top_count = votes.most_common(1)[0][1]
+                total = sum(votes.values())
+                # If the top vote has <80% of cases, the remap is ambiguous
+                if top_count / total < 0.80:
+                    return None
+
+        # Find or create a concept that does this specific remap
+        from arc_agent.concepts import Concept
+        def make_remap_fn(mapping):
+            def remap_fn(grid):
+                import numpy as np
+                g = np.array(grid)
+                result = g.copy()
+                for old_c, new_c in mapping.items():
+                    result[g == old_c] = new_c
+                return result
+            return remap_fn
+
+        remap_concept = Concept(
+            kind="derived",
+            name=f"color_remap_{'_'.join(f'{k}to{v}' for k, v in sorted(remap.items()))}",
+            implementation=make_remap_fn(remap),
+        )
+
+        # Build fixed program: original steps + remap
+        fixed = Program(list(program.steps) + [remap_concept])
+        score = cache.score_program(fixed)
+        fixed.fitness = score
+
+        if score >= 0.99 and cache.is_pixel_perfect(fixed):
+            return fixed
+
+        return None
 
     # ────────────────────────────────────────────────────────────────
     # CONDITIONAL SEARCH (deterministic, no evolution)
