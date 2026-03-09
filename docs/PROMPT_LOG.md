@@ -2278,3 +2278,59 @@ Key wins: higher solve rate and halved overfit rate from LOOCV.
 2. Revert immediately if speed regression is confirmed — accuracy gains must justify cost
 3. Keep commit history clean: squash add-then-revert cycles before pushing
 4. Document stale numbers are a maintenance burden — automate counts where possible
+
+---
+
+## Session 29 — v0.27 Full Results, DSL LOOCV, Near-Miss Analysis (March 9, 2026)
+
+### Prompt
+
+> Continue from Session 28. Pipeline monitoring, strategic analysis, DSL LOOCV fix.
+
+### Analysis
+
+v0.27 pipeline completed: **97 exact, 23 overfits** (400/400 training tasks).
+
+Compared to v0.26 (92 exact, 28 overfits):
+- +5 exact solves (97 vs 92)
+- -5 overfits (23 vs 28)
+- Test confirmed: 101 vs 99
+
+### Key Finding: DSL LOOCV Gap
+
+The DSL synthesis engine's `apply_neighbor_rule` shortcut bypassed the solver's LOOCV
+generalization check, producing 3 overfits (7e0986d6, 7f4411dc, bda2d7a6). All three
+had overfit rules with many entries learned from few examples. Added LOOCV to the DSL
+path — learns from N-1 examples, verifies on held-out. All 3 overfits eliminated.
+
+### Near-Miss Analysis
+
+119 out of 276 failures (44%) score 0.90+ — the solver is *almost* right on these.
+
+Top unsolved categories (0.95+ near-misses):
+- Complex recolor (20 tasks): multiple colors change based on spatial context
+- Single-color fill (16 tasks): fill regions with one color — have fill primitives but wrong ones
+- Paint on background (4 tasks)
+- Erase cells (3 tasks)
+
+36 single-color-fill tasks are the largest coherent unsolved category.
+
+### Strategic Insights
+
+1. **DSL hasn't added new solves** — its one exact solve was already found by pair exhaustion
+2. **Pair search covers 4.9% of composition space** — top-40² out of 304². Asymmetric search tested but yielded 0 new solves — the bottleneck is primitive expressiveness, not search breadth
+3. **Overfit sources**: 12/23 are L=1 programs. Complexity isn't the issue — generalization is
+4. **Diagonal symmetry completion** has a cascading inference gap: can't fill cells where both mirror positions are empty
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `arc_agent/dsl_synth.py` | Added `_loocv_neighbor_rule()`, integrated into `_try_neighbor_rule_shortcut()` |
+| `tests/test_dsl.py` | 4 new LOOCV tests (TestDSLLoocv class) |
+| `README.md` | Updated v0.27 results (97 exact), test count (660) |
+
+### Results
+
+v0.27 final: 97/400 (24.3%) exact, 23 overfits, 4 flukes, mean score 0.855
+With DSL LOOCV fix applied next run: ~97 exact, ~20 overfits
