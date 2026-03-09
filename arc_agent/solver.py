@@ -286,6 +286,24 @@ class FourPillarsSolver:
                 if cache.is_pixel_perfect(refined):
                     candidates.append((refined, "near_miss_refine"))
 
+        # Step 3l: Color fix — try consistent color remapping on near-misses.
+        # Many tasks differ from the target by a consistent color substitution
+        # (e.g., all 3s should be 5s). This is cheap: one scoring call per
+        # candidate, and can convert near-misses to solves.
+        if not candidates and _budget_ok():
+            all_color_fix_sources = [
+                best_single, pair_result, triple_result, dsl_result,
+                cond_single, cond_pair, object_result, obj_decomp_result,
+                param_result, culture_result,
+            ]
+            for prog in all_color_fix_sources:
+                if prog and prog.fitness >= 0.80 and not cache.is_pixel_perfect(prog):
+                    fixed = self.synthesizer.try_color_fix(prog, cache)
+                    if fixed and fixed.fitness >= 0.99:
+                        if cache.is_pixel_perfect(fixed):
+                            candidates.append((fixed, "color_fix"))
+                            break
+
         # Inject best candidates into seeds for evolution, best first.
         seed_programs = list(seed_programs) if seed_programs else []
         if dsl_result and dsl_result.fitness >= 0.70 and \
