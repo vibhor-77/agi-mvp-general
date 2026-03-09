@@ -1811,3 +1811,81 @@ Current: v0.25 — 92/400 training (23.0%), 25/400 eval (6.25%)
 2. Increase max_program_length from 4 → 6 with staged search
 3. Run full training + eval benchmarks to measure culture impact
 4. Investigate why eval dropped from 25/400 to 23/400 (possible regression or empty culture effect)
+
+---
+
+## Session 23b — Conditional Logic, Extended Programs, Near-Miss Tracking (March 2026)
+
+### Prompt
+
+> git push done. If the old scripts are obsolete, do you want to delete them and keep the repository pristine?
+> Also, continue with the big picture high ROI improvements in parallel at high priority.
+> If any of the non primary candidates would have succeeded the task, then we should count it as a near miss?
+
+### Claude's Reasoning
+
+Three high-ROI improvements identified from the big-picture analysis:
+
+1. **Conditional logic (if-then-else)** — The infrastructure (ConditionalConcept, predicates, evolutionary mutation) already existed but was only used during random evolution. The critical gap was a **deterministic conditional search phase** — exhaustively trying all predicate × branch combinations. Added `try_conditional_singles()` (O(P×K²)) and `try_conditional_pairs()` into the solver pipeline.
+
+2. **Extended program length** — Increased max_program_length from 4 → 6 to allow the evolutionary search to discover longer compositions. Some ARC tasks genuinely need 5-6 composed steps.
+
+3. **Near-miss tracking** — Added a separate counter for tasks where the primary candidate failed test but at least one non-primary candidate would have passed. This identifies cases where the candidate selection heuristic (MDL: simplest program) chose wrong.
+
+Decision on script cleanup: Keep both `evaluate.py` (clean train/infer/eval mode separation for data leakage prevention) and `benchmark.py` (feature-rich runner with progress tracking). They serve different purposes.
+
+### Changes
+
+**arc_agent/primitives.py:**
+- Added 7 new predicates (17 total): `is_mostly_empty`, `has_frame_structure`, `has_diagonal_symmetry`, `is_odd_dimensions`, `has_two_colors`, `has_horizontal_stripe`, `has_vertical_stripe`
+- These expand the branching vocabulary for conditional programs
+
+**arc_agent/synthesizer.py:**
+- Added `try_conditional_singles()`: exhaustive search over predicate × top-K primitive pairs as branches. Complexity: 17 predicates × 15² top primitives = ~3,825 tries. Early exit on pixel-perfect.
+- Added `try_conditional_pairs()`: greedy best-conditional-per-predicate, then pair with top-K primitives (conditional→prim, prim→conditional)
+- Fixed `_random_program()` to include conditionals with probability `conditional_rate` (was only using `_random_concept()`, missing conditionals)
+
+**arc_agent/solver.py:**
+- Inserted `try_conditional_singles()` as Step 3.45 (after parameterized, before pairs)
+- Inserted `try_conditional_pairs()` as Step 3.8 (after triples, before object rules)
+- Increased default `max_program_length` from 4 → 6
+- Both conditional search phases integrated into candidate collection
+
+**benchmark.py:**
+- Added near-miss tracking: counts tasks where a non-primary candidate would have passed test
+- Near-misses shown in rolling summaries and final summary with task IDs and passing methods
+- Added `near_misses` and `near_miss_tasks` to results JSON
+
+**tests/test_conditionals.py:**
+- Added `TestNewPredicates` (7 tests for new predicates)
+- Added `TestConditionalSearch` (4 tests: singles, pairs, branching solution, empty predicates)
+- Added `TestMaxProgramLength` (1 test: default = 6)
+
+### Results
+
+- 624 tests pass (12 new, no regressions)
+- Toolkit: 304 concepts (up from 287), 17 predicates (up from 10)
+- Conditional search producing candidates (visible in 20-task validation):
+  - `conditional_single` and `conditional_pair` candidates appearing alongside regular candidates
+  - Conditionals also appearing in evolved programs
+- 5/20 exact on training subset (25%), consistent with baseline
+
+### Files Modified
+
+| File | Action |
+|------|--------|
+| `arc_agent/primitives.py` | Added 7 new predicates (17 total) |
+| `arc_agent/synthesizer.py` | Added try_conditional_singles(), try_conditional_pairs(), fixed _random_program() |
+| `arc_agent/solver.py` | Integrated conditional search steps 3.45 and 3.8, max_program_length 4→6 |
+| `benchmark.py` | Added near-miss tracking |
+| `tests/test_conditionals.py` | Added 12 new tests |
+| `README.md` | Updated test count to 624 |
+| `docs/PROMPT_LOG.md` | Added Session 23b |
+
+### Next Steps
+
+1. Run full 400-task training + eval to measure actual improvement from conditionals
+2. Investigate culture impact (run eval with and without culture)
+3. Recursive task decomposition (next high-ROI improvement)
+4. Analyze near-miss tasks to improve candidate selection
+5. Consider faster conditional search (currently ~2-4s overhead per task)

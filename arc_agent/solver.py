@@ -41,7 +41,7 @@ class FourPillarsSolver:
         self,
         population_size: int = 60,
         max_generations: int = 30,
-        max_program_length: int = 4,
+        max_program_length: int = 6,
         verbose: bool = True,
     ):
         # Initialize the dual memory system
@@ -158,6 +158,13 @@ class FourPillarsSolver:
         # No early exit — always try all search strategies to find
         # the best and most diverse set of candidates.
 
+        # Step 3.45: Conditional search — single conditionals (if-then-else)
+        # Exhaustive: try every predicate × top primitive pairs as branches.
+        cond_single = self.synthesizer.try_conditional_singles(task, cache, top_k=15)
+        if cond_single and cond_single.fitness >= 0.99:
+            if cache.is_pixel_perfect(cond_single):
+                candidates.append((cond_single, "conditional_single"))
+
         # Step 3.5: Try all pairs of top primitives (fast, high-yield)
         pair_result = self.synthesizer.try_all_pairs(task, cache, top_k=20)
         if pair_result and pair_result.fitness >= 0.99:
@@ -171,6 +178,12 @@ class FourPillarsSolver:
         if triple_result and triple_result.fitness >= 0.99:
             if cache.is_pixel_perfect(triple_result):
                 candidates.append((triple_result, "triple_search"))
+
+        # Step 3.8: Conditional pairs (conditional + primitive or primitive + conditional)
+        cond_pair = self.synthesizer.try_conditional_pairs(task, cache, top_k=10)
+        if cond_pair and cond_pair.fitness >= 0.99:
+            if cache.is_pixel_perfect(cond_pair):
+                candidates.append((cond_pair, "conditional_pair"))
 
         # Step 3.9: Object-centric reasoning (perceive → compare → infer)
         # Only for same-dims tasks. Runs even if we have pair/triple candidates

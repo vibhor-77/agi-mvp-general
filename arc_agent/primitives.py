@@ -536,6 +536,86 @@ def has_background_majority(grid: Grid) -> bool:
     return zero_count > total_cells / 2
 
 
+def is_mostly_empty(grid: Grid) -> bool:
+    """Check if more than 80% of cells are background (0)."""
+    h, w = _grid_dims(grid)
+    if h == 0 or w == 0:
+        return True
+    total_cells = h * w
+    zero_count = sum(1 for row in grid for cell in row if cell == 0)
+    return zero_count > total_cells * 0.8
+
+
+def has_frame_structure(grid: Grid) -> bool:
+    """Check if grid has a frame pattern (border colors differ from interior)."""
+    h, w = _grid_dims(grid)
+    if h < 3 or w < 3:
+        return False
+    border_colors = set()
+    interior_colors = set()
+    for r in range(h):
+        for c in range(w):
+            val = grid[r][c]
+            if val == 0:
+                continue
+            if r == 0 or r == h - 1 or c == 0 or c == w - 1:
+                border_colors.add(val)
+            else:
+                interior_colors.add(val)
+    return (len(border_colors) > 0 and len(interior_colors) > 0
+            and not (border_colors & interior_colors))
+
+
+def has_diagonal_symmetry(grid: Grid) -> bool:
+    """Check if grid has diagonal symmetry (transpose equals self)."""
+    h, w = _grid_dims(grid)
+    if h != w or h == 0:
+        return False
+    for r in range(h):
+        for c in range(r + 1, w):
+            if grid[r][c] != grid[c][r]:
+                return False
+    return True
+
+
+def is_odd_dimensions(grid: Grid) -> bool:
+    """Check if both height and width are odd."""
+    h, w = _grid_dims(grid)
+    return h % 2 == 1 and w % 2 == 1 and h > 0
+
+
+def has_two_colors(grid: Grid) -> bool:
+    """Check if grid has exactly two non-zero colors."""
+    colors = set()
+    for row in grid:
+        for cell in row:
+            if cell != 0:
+                colors.add(cell)
+    return len(colors) == 2
+
+
+def has_horizontal_stripe(grid: Grid) -> bool:
+    """Check if grid contains at least one uniform-color row."""
+    for row in grid:
+        non_zero = [c for c in row if c != 0]
+        if len(non_zero) == len(row) and len(set(non_zero)) == 1:
+            return True
+    return False
+
+
+def has_vertical_stripe(grid: Grid) -> bool:
+    """Check if grid contains at least one uniform-color column."""
+    h, w = _grid_dims(grid)
+    if h == 0 or w == 0:
+        return False
+    for c in range(w):
+        col_vals = [grid[r][c] for r in range(h)]
+        non_zero = [v for v in col_vals if v != 0]
+        if len(non_zero) == h and len(set(non_zero)) == 1:
+            return True
+    return False
+
+
 # ============================================================
 # GRID PARTITIONING AND PATTERN OPERATIONS
 # ============================================================
@@ -4769,7 +4849,7 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
             implementation=_make_replace_with_bg(color),
         ))
 
-    # Add predicates (for conditional logic)
+    # Add predicates (for conditional logic — 18 predicates)
     predicates = [
         ("is_symmetric_h", is_symmetric_h),
         ("is_symmetric_v", is_symmetric_v),
@@ -4781,6 +4861,13 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("is_small", is_small),
         ("is_large", is_large),
         ("has_background_majority", has_background_majority),
+        ("is_mostly_empty", is_mostly_empty),
+        ("has_frame_structure", has_frame_structure),
+        ("has_diagonal_symmetry", has_diagonal_symmetry),
+        ("is_odd_dimensions", is_odd_dimensions),
+        ("has_two_colors", has_two_colors),
+        ("has_horizontal_stripe", has_horizontal_stripe),
+        ("has_vertical_stripe", has_vertical_stripe),
     ]
 
     for name, predicate_fn in predicates:

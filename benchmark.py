@@ -413,6 +413,11 @@ class _BenchmarkTracker:
         self.fluke_train_hit = 0   # train examples that fluke programs got right
         self.fluke_train_total = 0 # total train examples across fluke tasks
 
+        # Near-miss: tasks where the primary candidate failed test but
+        # at least one non-primary candidate would have passed.
+        self.near_misses = 0
+        self.near_miss_tasks: list[str] = []
+
         # Per-task tracking for straggler detection
         self.completed: set[str] = set()
         # All task results for saving
@@ -464,6 +469,18 @@ class _BenchmarkTracker:
             if solved:
                 method = r.get("method", "unknown")
                 self.by_method[method] = self.by_method.get(method, 0) + 1
+
+            # Near-miss detection: primary candidate failed test,
+            # but at least one non-primary candidate would have passed.
+            if not tc and not fl:
+                cands = r.get("candidates", [])
+                any_alt_passed = any(
+                    c.get("test_exact", False)
+                    for c in cands
+                )
+                if any_alt_passed:
+                    self.near_misses += 1
+                    self.near_miss_tasks.append(task_id)
 
             icon = _STATUS_ICON[status]
             score = r["score"]
@@ -552,6 +569,9 @@ class _BenchmarkTracker:
                                 sorted(self.by_method.items(),
                                        key=lambda x: -x[1]))
             print(f"  │  Methods: {methods}")
+        if self.near_misses > 0:
+            print(f"  │  Near-misses: {self.near_misses} "
+                  f"(non-primary candidate would have passed test)")
 
         # Straggler post-mortem: show the slowest completed tasks so far
         if len(self.times) >= 10:
@@ -734,6 +754,17 @@ def benchmark_solver(
         for m, c in sorted(tracker.by_method.items(), key=lambda x: -x[1]):
             print(f"    {m}: {c}")
 
+    # Near-miss report: tasks where a non-primary candidate would have passed
+    if tracker.near_misses > 0:
+        print(f"  Near-misses:       {tracker.near_misses}  "
+              f"(non-primary candidate passed test)")
+        for tid in tracker.near_miss_tasks[:10]:
+            wr = tracker.all_results[tid]
+            cands = wr["result"].get("candidates", [])
+            passing = [c for c in cands if c.get("test_exact")]
+            methods = ", ".join(c.get("method", "?") for c in passing)
+            print(f"    {tid}  (would pass via: {methods})")
+
     # Show top-5 slowest tasks (straggler post-mortem)
     if len(tracker.times) >= 10:
         task_time_pairs = [
@@ -776,6 +807,8 @@ def benchmark_solver(
             "total_evals": tracker.total_evals,
             "fluke_train_hit": tracker.fluke_train_hit,
             "fluke_train_total": tracker.fluke_train_total,
+            "near_misses": tracker.near_misses,
+            "near_miss_tasks": tracker.near_miss_tasks,
             "by_method": tracker.by_method,
         },
         "tasks": {

@@ -31,7 +31,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (612 tests)
+# Run the test suite (624 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
@@ -195,7 +195,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 612 tests (14 test files)
+├── tests/                           # 624 tests (14 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -266,7 +266,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (612 tests)
+- [x] Test suite (624 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)

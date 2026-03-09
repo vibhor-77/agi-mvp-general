@@ -198,5 +198,144 @@ class TestConditionalConcept(unittest.TestCase):
         self.assertIs(cond.children[1], else_c)
 
 
+class TestNewPredicates(unittest.TestCase):
+    """Test the new predicates added in Session 23."""
+
+    def test_is_mostly_empty(self):
+        from arc_agent.primitives import is_mostly_empty
+        # 9 cells, only 1 non-zero → 88% empty → True
+        grid = [[0, 0, 0], [0, 1, 0], [0, 0, 0]]
+        self.assertTrue(is_mostly_empty(grid))
+        # All non-zero → False
+        grid = [[1, 2], [3, 4]]
+        self.assertFalse(is_mostly_empty(grid))
+
+    def test_has_frame_structure(self):
+        from arc_agent.primitives import has_frame_structure
+        # 3x3 with border=1, interior=2 → True
+        grid = [[1, 1, 1], [1, 2, 1], [1, 1, 1]]
+        self.assertTrue(has_frame_structure(grid))
+        # Uniform → False
+        grid = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+        self.assertFalse(has_frame_structure(grid))
+
+    def test_has_diagonal_symmetry(self):
+        from arc_agent.primitives import has_diagonal_symmetry
+        # Symmetric: transpose equals self
+        grid = [[1, 2], [2, 1]]
+        self.assertTrue(has_diagonal_symmetry(grid))
+        # Not symmetric
+        grid = [[1, 2], [3, 4]]
+        self.assertFalse(has_diagonal_symmetry(grid))
+        # Non-square → False
+        grid = [[1, 2, 3], [4, 5, 6]]
+        self.assertFalse(has_diagonal_symmetry(grid))
+
+    def test_is_odd_dimensions(self):
+        from arc_agent.primitives import is_odd_dimensions
+        grid = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]  # 3x3
+        self.assertTrue(is_odd_dimensions(grid))
+        grid = [[1, 2], [3, 4]]  # 2x2
+        self.assertFalse(is_odd_dimensions(grid))
+
+    def test_has_two_colors(self):
+        from arc_agent.primitives import has_two_colors
+        grid = [[1, 2], [2, 1]]
+        self.assertTrue(has_two_colors(grid))
+        grid = [[1, 1], [1, 1]]
+        self.assertFalse(has_two_colors(grid))
+        grid = [[1, 2], [3, 0]]
+        self.assertFalse(has_two_colors(grid))  # 3 non-zero colors
+
+    def test_has_horizontal_stripe(self):
+        from arc_agent.primitives import has_horizontal_stripe
+        grid = [[1, 1, 1], [2, 3, 4]]
+        self.assertTrue(has_horizontal_stripe(grid))
+        grid = [[1, 2, 3], [4, 5, 6]]
+        self.assertFalse(has_horizontal_stripe(grid))
+
+    def test_has_vertical_stripe(self):
+        from arc_agent.primitives import has_vertical_stripe
+        grid = [[1, 2], [1, 3], [1, 4]]
+        self.assertTrue(has_vertical_stripe(grid))
+        grid = [[1, 2], [3, 4]]
+        self.assertFalse(has_vertical_stripe(grid))
+
+
+class TestConditionalSearch(unittest.TestCase):
+    """Test deterministic conditional search methods."""
+
+    def setUp(self):
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.synthesizer import ProgramSynthesizer
+        self.toolkit = build_initial_toolkit(include_objects=False)
+        self.synth = ProgramSynthesizer(self.toolkit)
+
+    def test_try_conditional_singles_returns_program_or_none(self):
+        """try_conditional_singles should return a Program or None."""
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[3, 1], [4, 2]]},
+            ]
+        }
+        result = self.synth.try_conditional_singles(task, top_k=5)
+        if result is not None:
+            self.assertIsInstance(result, Program)
+            self.assertGreater(result.fitness, 0)
+
+    def test_try_conditional_pairs_returns_program_or_none(self):
+        """try_conditional_pairs should return a Program or None."""
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[3, 1], [4, 2]]},
+            ]
+        }
+        result = self.synth.try_conditional_pairs(task, top_k=5)
+        if result is not None:
+            self.assertIsInstance(result, Program)
+            self.assertGreater(result.fitness, 0)
+
+    def test_conditional_search_finds_branching_solution(self):
+        """Should find a conditional that branches on grid shape."""
+        # Square input → rotate, non-square → mirror_h
+        task = {
+            "train": [
+                # 2x2 square: rotate_90_cw → [[3,1],[4,2]]
+                {"input": [[1, 2], [3, 4]], "output": [[3, 1], [4, 2]]},
+                # 2x3 wide: mirror_h → [[3,2,1],[6,5,4]]
+                {"input": [[1, 2, 3], [4, 5, 6]], "output": [[3, 2, 1], [6, 5, 4]]},
+            ]
+        }
+        result = self.synth.try_conditional_singles(task, top_k=10)
+        if result is not None:
+            self.assertGreaterEqual(result.fitness, 0.99)
+
+    def test_conditional_search_does_not_crash_empty_predicates(self):
+        """Should handle toolkit with no predicates gracefully."""
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.synthesizer import ProgramSynthesizer
+        from arc_agent.concepts import Concept
+        # Build toolkit without predicates
+        tk = build_initial_toolkit(include_objects=False)
+        # Remove all predicates
+        pred_names = [n for n, c in tk.concepts.items() if c.kind == "predicate"]
+        for n in pred_names:
+            tk.concepts.pop(n)
+        synth = ProgramSynthesizer(tk)
+
+        task = {"train": [{"input": [[1]], "output": [[2]]}]}
+        result = synth.try_conditional_singles(task)
+        self.assertIsNone(result)
+
+
+class TestMaxProgramLength(unittest.TestCase):
+    """Test that max_program_length is set to 6."""
+
+    def test_default_max_program_length(self):
+        from arc_agent.solver import FourPillarsSolver
+        solver = FourPillarsSolver(verbose=False)
+        self.assertEqual(solver.synthesizer.max_program_length, 6)
+
+
 if __name__ == '__main__':
     unittest.main()

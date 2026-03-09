@@ -83,9 +83,20 @@ class ProgramSynthesizer:
         return ConditionalConcept(predicate, then_concept, else_concept)
 
     def _random_program(self, max_len: Optional[int] = None) -> Program:
-        """Generate a random program (sequence of concepts)."""
+        """Generate a random program (sequence of concepts).
+
+        Each step has a chance of being a conditional (if predicates are
+        available), controlled by self.conditional_rate.
+        """
         length = random.randint(1, max_len or self.max_program_length)
-        steps = [self._random_concept() for _ in range(length)]
+        steps = []
+        for _ in range(length):
+            if random.random() < self.conditional_rate and self._get_predicates():
+                cond = self._random_conditional()
+                if cond is not None:
+                    steps.append(cond)
+                    continue
+            steps.append(self._random_concept())
         return Program(steps)
 
     def generate_initial_population(self) -> list[Program]:
@@ -404,6 +415,167 @@ class ProgramSynthesizer:
                     return best_triple
 
         return best_triple
+
+    # ────────────────────────────────────────────────────────────────
+    # CONDITIONAL SEARCH (deterministic, no evolution)
+    # ────────────────────────────────────────────────────────────────
+    # Many ARC tasks require branching: "if condition then transform_A
+    # else transform_B". The random evolution discovers these slowly;
+    # exhaustive search finds them in seconds.
+    # ────────────────────────────────────────────────────────────────
+
+    def try_conditional_singles(
+        self,
+        task: dict,
+        cache: "TaskCache | None" = None,
+        top_k: int = 15,
+    ) -> Optional[Program]:
+        """Exhaustively try single-step conditional programs.
+
+        For each predicate P and each pair of top primitives (A, B):
+            if P(input) → A(input)  else → B(input)
+
+        Complexity: P × top_k² where P = # predicates, typically 17 × 15² = 3,825.
+        Each call is cheap (predicate is O(grid), concept is cached).
+
+        Args:
+            task: ARC task dict
+            cache: Pre-converted TaskCache
+            top_k: Top primitives to try as branches
+
+        Returns:
+            Best single-conditional program, or None.
+        """
+        if cache is None:
+            cache = TaskCache(task)
+
+        predicates = self._get_predicates()
+        if not predicates:
+            return None
+
+        # Score all single primitives, keep top-k
+        singles: list[tuple[float, Concept]] = []
+        for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
+            prog = Program([concept])
+            score = cache.score_program(prog)
+            singles.append((score, concept))
+
+        singles.sort(key=lambda x: x[0], reverse=True)
+        top_concepts = [c for _, c in singles[:top_k]]
+
+        best_prog = None
+        best_score = 0.0
+
+        for pred in predicates:
+            for then_c in top_concepts:
+                for else_c in top_concepts:
+                    if then_c is else_c:
+                        continue  # identity → no branching
+                    cond = ConditionalConcept(pred, then_c, else_c)
+                    prog = Program([cond])
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99:
+                            return best_prog
+
+        return best_prog
+
+    def try_conditional_pairs(
+        self,
+        task: dict,
+        cache: "TaskCache | None" = None,
+        top_k: int = 10,
+    ) -> Optional[Program]:
+        """Try 2-step programs involving conditionals.
+
+        Combines top single conditionals with top primitives:
+            conditional → primitive  (post-process)
+            primitive → conditional  (pre-process)
+
+        Uses greedy selection: builds best conditional per predicate first,
+        then pairs with top-k primitives.
+
+        Args:
+            task: ARC task dict
+            cache: Pre-converted TaskCache
+            top_k: Top primitives/conditionals to combine
+
+        Returns:
+            Best conditional pair, or None.
+        """
+        if cache is None:
+            cache = TaskCache(task)
+
+        predicates = self._get_predicates()
+        if not predicates:
+            return None
+
+        # Get top primitives
+        singles: list[tuple[float, Concept]] = []
+        for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
+            prog = Program([concept])
+            score = cache.score_program(prog)
+            singles.append((score, concept))
+        singles.sort(key=lambda x: x[0], reverse=True)
+        top_concepts = [c for _, c in singles[:top_k]]
+
+        # Build best conditional per predicate (greedy sampling)
+        best_conds: list[ConditionalConcept] = []
+        for pred in predicates:
+            best_cond = None
+            best_cond_score = 0.0
+            # Try top_k random pairs from top concepts
+            for i in range(min(top_k, len(top_concepts))):
+                for j in range(min(top_k, len(top_concepts))):
+                    if i == j:
+                        continue
+                    cond = ConditionalConcept(pred, top_concepts[i], top_concepts[j])
+                    prog = Program([cond])
+                    score = cache.score_program(prog)
+                    if score > best_cond_score:
+                        best_cond_score = score
+                        best_cond = cond
+            if best_cond is not None and best_cond_score > 0.3:
+                best_cond.fitness = best_cond_score
+                best_conds.append(best_cond)
+
+        # Sort and keep top-5
+        best_conds.sort(key=lambda c: c.fitness, reverse=True)
+        best_conds = best_conds[:5]
+
+        best_prog = None
+        best_score = 0.0
+
+        for cond in best_conds:
+            for prim in top_concepts:
+                # cond → prim
+                prog = Program([cond, prim])
+                score = cache.score_program(prog)
+                if score > best_score:
+                    best_score = score
+                    best_prog = prog
+                    best_prog.fitness = score
+                    if score >= 0.99:
+                        return best_prog
+
+                # prim → cond
+                prog = Program([prim, cond])
+                score = cache.score_program(prog)
+                if score > best_score:
+                    best_score = score
+                    best_prog = prog
+                    best_prog.fitness = score
+                    if score >= 0.99:
+                        return best_prog
+
+        return best_prog
 
     def hill_climb(
         self,
