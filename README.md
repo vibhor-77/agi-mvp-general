@@ -52,6 +52,9 @@ The `benchmark.py` script is the primary entry point for running and measuring s
 ### Usage
 
 ```bash
+# Full pipeline: train → eval in one command (recommended)
+python benchmark.py --pipeline
+
 # Full training run (all 400 tasks, auto workers, auto-save everything)
 python benchmark.py --data-dir ARC-AGI/data/training
 
@@ -61,7 +64,7 @@ python benchmark.py --data-dir ARC-AGI/data/training --tasks 20
 # Single-process for debugging
 python benchmark.py --data-dir ARC-AGI/data/training --workers 1
 
-# Train → Eval workflow with culture transfer
+# Train → Eval workflow with culture transfer (manual)
 python benchmark.py --data-dir ARC-AGI/data/training
 python benchmark.py --data-dir ARC-AGI/data/evaluation \
     --culture-file cultures/<timestamp>_training.json
@@ -91,11 +94,14 @@ cultures/20260308_191951_training.json   — learned culture snapshot
 --results PATH         Override auto results save path
 --log-file PATH        Override auto log file path
 --no-log               Disable log file (console only)
+--pipeline             Run full train→eval in one command
+--train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
+--eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
 ```
 
 ### Progress display
 
-The benchmark shows Started/Done lines per task with straggler detection, rolling summaries every 25 tasks, and flags tasks taking >3x the median time.
+The benchmark shows Started/Done lines per task with straggler detection, rolling summaries every 25 tasks, flags tasks taking >3x the median time, per-candidate test results, program trees, and near-miss detection.
 
 ## CLI Modes (arc_agent.evaluate)
 
