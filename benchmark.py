@@ -659,7 +659,7 @@ def benchmark_solver(
     results_path: str | None = None,
     run_timestamp: str = "",
     evals_budget: int = 150_000,
-    compute_cap: int = 500_000_000,
+    compute_cap: int = 400_000_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
@@ -1075,23 +1075,23 @@ def main():
              "Combined with --compute-cap for cell-normalized budgets.",
     )
     parser.add_argument(
-        "--compute-cap", type=int, default=500_000_000,
+        "--compute-cap", type=int, default=400_000_000,
         help="Cell-normalized compute cap: effective per-task budget = "
              "min(evals_budget, compute_cap/cells). Large grids get fewer "
              "evals since each eval is proportionally slower. Default: "
-             "500M (saves ~12%% time, 0 solve loss). Set to 0 to disable.",
+             "400M (saves ~18%% time, 0 solve loss). Set to 0 to disable.",
     )
     parser.add_argument(
         "--contest", action="store_true",
-        help="Contest mode: use generous compute cap (K=400M) that loses 0 "
-             "solves while saving ~18%% wall time on futile large-grid "
-             "evolution. Equivalent to --compute-cap 400000000.",
+        help="Contest mode: disable compute cap entirely to maximize solves. "
+             "Uses full evals_budget for every task regardless of grid size. "
+             "Equivalent to --compute-cap 0.",
     )
     args = parser.parse_args()
 
-    # Contest mode: generous cap that loses 0 solves but still saves ~18%
+    # Contest mode: uncapped — maximize solves, don't save time
     if args.contest:
-        args.compute_cap = 400_000_000
+        args.compute_cap = 0
 
     if args.pipeline:
         _run_pipeline(args)
