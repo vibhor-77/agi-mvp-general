@@ -8,6 +8,11 @@ from arc_agent.decompose import (
     _merge_quadrants,
     _find_changed_cells,
     _extract_region_around_changes,
+    _detect_repeating_pattern,
+    _separate_foreground_background,
+    _merge_foreground_background,
+    _get_bounding_box,
+    _extract_subgrid,
 )
 from arc_agent.concepts import Program, Concept
 from arc_agent.primitives import identity, rotate_90_cw
@@ -276,6 +281,375 @@ class TestDecompositionEngine(unittest.TestCase):
             return None, []
 
         result = self.engine.try_spatial_decomposition(task, dummy_synthesize)
+        self.assertIsNone(result)
+
+
+class TestPatternDetection(unittest.TestCase):
+    """Test repeating pattern detection."""
+
+    def test_detect_2x2_repeating_pattern(self):
+        """Detect a 2x2 tile repeated in a 4x4 grid."""
+        # 2x2 tile [[1, 2], [3, 4]] repeated 2x2
+        grid = [
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+        ]
+
+        result = _detect_repeating_pattern(grid)
+        self.assertIsNotNone(result)
+        tile_h, tile_w, tile = result
+        self.assertEqual(tile_h, 2)
+        self.assertEqual(tile_w, 2)
+        self.assertEqual(tile, [[1, 2], [3, 4]])
+
+    def test_detect_3x3_repeating_pattern(self):
+        """Detect a 3x3 tile repeated in a 6x6 grid."""
+        tile = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+        grid = tile + tile  # Vertical repeat
+        grid = [row + row for row in grid]  # Horizontal repeat
+
+        result = _detect_repeating_pattern(grid)
+        self.assertIsNotNone(result)
+        tile_h, tile_w, detected_tile = result
+        self.assertEqual(tile_h, 3)
+        self.assertEqual(tile_w, 3)
+        self.assertEqual(detected_tile, tile)
+
+    def test_detect_non_repeating_returns_none(self):
+        """Non-repeating patterns should return None."""
+        grid = [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+            [13, 14, 15, 16],
+        ]
+
+        result = _detect_repeating_pattern(grid)
+        self.assertIsNone(result)
+
+    def test_detect_single_tile_returns_none(self):
+        """Single tile (no repetition) should return None."""
+        grid = [[1, 2], [3, 4]]
+        result = _detect_repeating_pattern(grid)
+        self.assertIsNone(result)
+
+    def test_detect_empty_grid(self):
+        """Empty grid should return None."""
+        result = _detect_repeating_pattern([])
+        self.assertIsNone(result)
+
+
+class TestForegroundBackground(unittest.TestCase):
+    """Test foreground/background separation."""
+
+    def test_separate_foreground_background(self):
+        """Separate grid into foreground and background."""
+        grid = [
+            [0, 0, 0],
+            [0, 5, 0],
+            [0, 0, 0],
+        ]
+        mask, bg = _separate_foreground_background(grid)
+
+        self.assertEqual(bg, 0)
+        self.assertEqual(mask, [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+        ])
+
+    def test_separate_with_different_bg(self):
+        """Detect background as most common color."""
+        grid = [
+            [5, 5, 3],
+            [5, 2, 5],
+            [5, 5, 5],
+        ]
+        mask, bg = _separate_foreground_background(grid)
+
+        self.assertEqual(bg, 5)
+        self.assertEqual(mask, [
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 0, 0],
+        ])
+
+    def test_merge_foreground_background(self):
+        """Merge foreground grid with background."""
+        fg_grid = [
+            [0, 0, 3],
+            [0, 2, 0],
+            [0, 0, 0],
+        ]
+        result = _merge_foreground_background(fg_grid, 0)
+
+        expected = [
+            [0, 0, 3],
+            [0, 2, 0],
+            [0, 0, 0],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_merge_with_different_bg(self):
+        """Merge with a specific background color."""
+        fg_grid = [
+            [0, 0, 3],
+            [0, 2, 0],
+            [0, 0, 0],
+        ]
+        result = _merge_foreground_background(fg_grid, 5)
+
+        expected = [
+            [5, 5, 3],
+            [5, 2, 5],
+            [5, 5, 5],
+        ]
+        self.assertEqual(result, expected)
+
+
+class TestBoundingBox(unittest.TestCase):
+    """Test bounding box extraction."""
+
+    def test_get_bounding_box(self):
+        """Get bounding box of non-zero cells."""
+        mask = [
+            [0, 0, 0],
+            [0, 1, 0],
+            [0, 0, 0],
+        ]
+        bbox = _get_bounding_box(mask)
+        self.assertEqual(bbox, (1, 1, 1, 1))
+
+    def test_get_bounding_box_multiple_cells(self):
+        """Get bounding box with multiple non-zero cells."""
+        mask = [
+            [0, 1, 0],
+            [1, 1, 1],
+            [0, 1, 0],
+        ]
+        bbox = _get_bounding_box(mask)
+        self.assertEqual(bbox, (0, 0, 2, 2))
+
+    def test_get_bounding_box_all_zero(self):
+        """All-zero grid should return None."""
+        mask = [
+            [0, 0, 0],
+            [0, 0, 0],
+            [0, 0, 0],
+        ]
+        bbox = _get_bounding_box(mask)
+        self.assertIsNone(bbox)
+
+    def test_extract_subgrid(self):
+        """Extract a subgrid by coordinates."""
+        grid = [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+        ]
+        subgrid = _extract_subgrid(grid, 0, 0, 1, 1)
+        expected = [[1, 2], [4, 5]]
+        self.assertEqual(subgrid, expected)
+
+    def test_extract_subgrid_single_cell(self):
+        """Extract a single cell."""
+        grid = [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+        ]
+        subgrid = _extract_subgrid(grid, 1, 1, 1, 1)
+        expected = [[5]]
+        self.assertEqual(subgrid, expected)
+
+
+class TestPatternDecompositionStrategy(unittest.TestCase):
+    """Test the pattern decomposition strategy."""
+
+    def test_pattern_decomposition_2x2_tile(self):
+        """Pattern decomposition with 2x2 repeating tiles."""
+        engine = DecompositionEngine()
+
+        # Task: 2x2 tile repeated 2x2, each tile gets rotated
+        tile_input = [[1, 2], [3, 4]]
+        tile_output = [[2, 4], [1, 3]]  # Some transformation
+
+        task = {
+            'train': [
+                {
+                    'input': [
+                        [1, 2, 1, 2],
+                        [3, 4, 3, 4],
+                        [1, 2, 1, 2],
+                        [3, 4, 3, 4],
+                    ],
+                    'output': [
+                        [2, 4, 2, 4],
+                        [1, 3, 1, 3],
+                        [2, 4, 2, 4],
+                        [1, 3, 1, 3],
+                    ],
+                }
+            ]
+        }
+
+        def identity_synthesize(t):
+            # Return identity for tile task
+            prog = Program([Concept(
+                kind="operator",
+                name="identity",
+                implementation=lambda g: g,
+            )])
+            prog.fitness = 1.0
+            return prog, []
+
+        result = engine.try_pattern_decomposition(task, identity_synthesize)
+        # Should recognize the pattern and attempt decomposition
+        self.assertIsNotNone(result)
+
+    def test_pattern_decomposition_no_pattern(self):
+        """Pattern decomposition should return None for non-repeating grids."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                    'output': [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                }
+            ]
+        }
+
+        def dummy_synthesize(t):
+            return None, []
+
+        result = engine.try_pattern_decomposition(task, dummy_synthesize)
+        self.assertIsNone(result)
+
+
+class TestSizeRatioDecomposition(unittest.TestCase):
+    """Test size-ratio decomposition strategy."""
+
+    def test_size_ratio_2x_expansion(self):
+        """Size ratio decomposition with 2x expansion."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[1, 2], [3, 4]],
+                    'output': [[1, 1, 2, 2], [1, 1, 2, 2], [3, 3, 4, 4], [3, 3, 4, 4]],
+                }
+            ]
+        }
+
+        def identity_synthesize(t):
+            # Return identity
+            prog = Program([Concept(
+                kind="operator",
+                name="identity",
+                implementation=lambda g: g,
+            )])
+            prog.fitness = 1.0
+            return prog, []
+
+        result = engine.try_size_ratio_decomposition(task, identity_synthesize)
+        # Should detect the 2x ratio
+        self.assertIsNotNone(result)
+
+    def test_size_ratio_inconsistent_ratios(self):
+        """Size ratio decomposition should fail with inconsistent ratios."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[1, 2], [3, 4]],
+                    'output': [[1, 1], [1, 1]],  # 1x ratio
+                }
+            ]
+        }
+
+        def dummy_synthesize(t):
+            return None, []
+
+        result = engine.try_size_ratio_decomposition(task, dummy_synthesize)
+        self.assertIsNone(result)
+
+    def test_size_ratio_3x_expansion(self):
+        """Size ratio decomposition with 3x expansion."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[1]],
+                    'output': [[1, 1, 1], [1, 1, 1], [1, 1, 1]],
+                }
+            ]
+        }
+
+        def identity_synthesize(t):
+            prog = Program([Concept(
+                kind="operator",
+                name="identity",
+                implementation=lambda g: g,
+            )])
+            prog.fitness = 1.0
+            return prog, []
+
+        result = engine.try_size_ratio_decomposition(task, identity_synthesize)
+        self.assertIsNotNone(result)
+
+
+class TestMaskingDecomposition(unittest.TestCase):
+    """Test masking (foreground/background) decomposition strategy."""
+
+    def test_masking_decomposition_same_dims(self):
+        """Masking decomposition with same-dimension I/O."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+                    'output': [[0, 2, 0], [2, 2, 2], [0, 2, 0]],
+                }
+            ]
+        }
+
+        def identity_synthesize(t):
+            prog = Program([Concept(
+                kind="operator",
+                name="identity",
+                implementation=lambda g: g,
+            )])
+            prog.fitness = 1.0
+            return prog, []
+
+        result = engine.try_masking_decomposition(task, identity_synthesize)
+        # Should attempt decomposition with same-dim task
+        self.assertIsNotNone(result)
+
+    def test_masking_decomposition_different_dims(self):
+        """Masking decomposition should skip different-dimension tasks."""
+        engine = DecompositionEngine()
+
+        task = {
+            'train': [
+                {
+                    'input': [[1, 2], [3, 4]],
+                    'output': [[1, 2, 0], [3, 4, 0]],  # Different width
+                }
+            ]
+        }
+
+        def dummy_synthesize(t):
+            return None, []
+
+        result = engine.try_masking_decomposition(task, dummy_synthesize)
         self.assertIsNone(result)
 
 

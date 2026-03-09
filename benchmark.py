@@ -604,12 +604,19 @@ def benchmark_solver(
     save_culture: str | None = None,
     workers: int = 0,
     results_path: str | None = None,
+    run_timestamp: str = "",
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
     Returns dict with 'times', 'scores', 'results_path', 'culture_path',
     or None if no tasks found.
+
+    Args:
+        run_timestamp: Shared timestamp for all artifacts from this run.
+                       If empty, generates one at call time.
     """
+    if not run_timestamp:
+        run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     from arc_agent.cpu_utils import default_workers
 
     task_files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
@@ -834,8 +841,7 @@ def benchmark_solver(
 
     os.makedirs("results", exist_ok=True)
     if not results_path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_path = f"results/{ts}_{mode}.json"
+        results_path = f"results/{run_timestamp}_{mode}.json"
     with open(results_path, "w") as f:
         json.dump(results_data, f, indent=2)
     print(f"\n  Results saved:     {results_path}")
@@ -843,8 +849,7 @@ def benchmark_solver(
     # ── Save culture (aggregated from all workers) ─────────────────
     os.makedirs("cultures", exist_ok=True)
     if not save_culture:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_culture = f"cultures/{ts}_{mode}.json"
+        save_culture = f"cultures/{run_timestamp}_{mode}.json"
     _aggregate_culture(tracker.all_results, save_culture)
     print(f"  Culture saved:     {save_culture}")
 
@@ -945,6 +950,9 @@ def main():
     )
     args = parser.parse_args()
 
+    # ── Generate a single timestamp for all artifacts ───────────────
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # ── Set up tee logging ────────────────────────────────────────────
     tee = None
     if not args.no_log:
@@ -959,8 +967,7 @@ def main():
                 mode_tag = "test"
             else:
                 mode_tag = "training"
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            log_path = f"logs/{ts}_{mode_tag}.log"
+            log_path = f"logs/{run_timestamp}_{mode_tag}.log"
         tee = _TeeWriter(log_path, sys.stdout)
         sys.stdout = tee
 
@@ -983,6 +990,7 @@ def main():
             save_culture=args.save_culture,
             workers=args.workers,
             results_path=args.results,
+            run_timestamp=run_timestamp,
         )
         if result is not None and args.tasks > 0:
             _extrapolate(result["times"], numba_active)
