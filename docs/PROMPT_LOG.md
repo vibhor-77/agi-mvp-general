@@ -1715,3 +1715,99 @@ The user wants a professional, production-quality benchmark runner that:
 1. Run full 400-task training benchmark with new parallel runner
 2. Run eval with culture transfer from training
 3. Continue DSL synthesis improvements (cell-level iteration, more dimension ops)
+
+---
+
+## Session 23 — Benchmark Polish, Program Trees, Big-Picture Strategy (March 2026)
+
+### Prompt
+
+> Show 2 decimals (truncated, not rounded), not 1 decimal.
+> Also, in the results/output json file as well as in the progress output, print the program tree that was used as the final candidate. This way I can manually look at some passing as well as failing examples and understand and debug what happened. I can also demo this to other people, and they can also understand how well the code is working and how intuitive it is.
+> Also, as discussed before, if there are multiple candidates that work correctly on the train examples, I want to know about that as well, as well as whether they worked correctly on the test input, even if the primary candidate worked or not.
+
+Also addressing earlier feedback:
+- Percentages were misleading (6% instead of 5.75%)
+- Culture file was empty (benchmark.py saving empty culture instead of aggregating from workers)
+- Reorder metrics: exact+fluke first, then overfit+fail
+- Add fluke train accuracy tracking
+- Print suggested next command after training (no more digging for culture file)
+
+### Claude's Reasoning
+
+Three categories of improvements:
+
+1. **Observability**: Users and reviewers need to see _what_ the solver did, not just whether it passed. Program trees make the solver's reasoning transparent and debuggable. Showing all candidates with individual test results reveals search diversity.
+
+2. **Precision**: Truncated (not rounded) 2-decimal percentages prevent misleading over-reporting. `math.floor(value * 100) / 100` ensures 23/400 shows as 5.75%, not 5.8% or 6%.
+
+3. **Usability**: Printing the exact eval command after training eliminates the friction of finding auto-generated culture file paths.
+
+### Changes
+
+**benchmark.py:**
+- `_pct()` now uses `math.floor` for 2-decimal truncation (5.75% not 5.8%)
+- Progress output shows program steps (`program: rotate_90 → flip_h`)
+- Progress output shows all candidates with per-candidate test pass/fail
+- Results JSON includes `program_steps`, `test_score`, full `candidates` array with `test_exact`/`test_score` per candidate
+- After training, prints suggested eval command with culture file path
+- Fixed culture aggregation (was saving empty culture from fresh solver)
+
+**arc_agent/solver.py:**
+- `_make_result()` now validates ALL candidates on test individually (not just the winner)
+- Each candidate dict includes `test_exact` and `test_score` fields
+- Result dict includes `program_steps` (list of primitive names)
+
+**arc_agent/scorer.py:**
+- Added `per_example_exact()` method to TaskCache for fluke diagnostics
+
+### Example Output (5-task validation)
+
+```
+  ✓ [  2/5] 00d62c1b     4.3s  score=1.000  exact   single_primitive
+       program: fill_rooms_with_new_color
+       candidate[0] ✓ test=1.000  single_primitive  fill_rooms_with_new_color
+       candidate[1] ✓ test=1.000  parameterized  parameterized_FillEnclosedWith
+       candidate[2] ✓ test=1.000  pair_exhaustion  fill_rooms_with_new_color → fill_rooms_with_new_color
+       candidate[3] ✓ test=1.000  triple_search  fill_rooms_with_new_color → fill_rooms_with_new_color → identity
+       cells=2272  evals=6,081  ...
+```
+
+### Results
+
+- 612 tests pass (no regressions)
+- Program trees visible in both progress output and results JSON
+- Candidates with individual test results in both outputs
+- Culture aggregation confirmed working (1 concept, 5 programs, 8 features on 8-task run)
+
+### Big-Picture Strategy Analysis
+
+Current: v0.25 — 92/400 training (23.0%), 25/400 eval (6.25%)
+
+**Highest-ROI improvements for eval accuracy:**
+
+1. **Conditional logic (if-then-else in programs)** — estimated +20-40 tasks. Programs are currently linear sequences only. Many ARC tasks require branching: "if condition then transform_A else transform_B". Need to extend Program representation from flat lists to decision trees and teach evolution to discover branching.
+
+2. **Increase max program length from 4 → 6-7** — estimated +10-20 tasks. Some tasks genuinely need 5-6 composed steps. Low implementation cost: staged search (30 gen @ len=4, then 30 gen @ len=6 if needed).
+
+3. **Recursive task decomposition** — estimated +15-30 tasks. Current decomposition is shallow (color-channel, quadrant, diff). Need pattern-detection decomposition ("find repeating unit → solve once → tile") and recursive sub-task solving.
+
+4. **Object relationship reasoning** — estimated +10-20 tasks. Scene.py finds objects via connected components but misses spatial relationships (touching, collinear, concentric, inside, aligned). Need pairwise relationship predicates.
+
+5. **DSL synthesis depth → 3** — estimated +5-15 tasks. Current depth=2 with 5s budget is too shallow. Need smarter pruning (output hash clustering) to enable depth 3.
+
+### Files Modified
+
+| File | Action |
+|------|--------|
+| `benchmark.py` | 2-decimal truncated %, program trees, candidate test results, next-command suggestion |
+| `arc_agent/solver.py` | Per-candidate test validation, program_steps in result dict |
+| `arc_agent/scorer.py` | per_example_exact() for fluke diagnostics |
+| `docs/PROMPT_LOG.md` | Added Session 23 |
+
+### Next Steps
+
+1. Implement conditional logic (if-then-else) in Program representation
+2. Increase max_program_length from 4 → 6 with staged search
+3. Run full training + eval benchmarks to measure culture impact
+4. Investigate why eval dropped from 25/400 to 23/400 (possible regression or empty culture effect)
