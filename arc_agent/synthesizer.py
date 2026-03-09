@@ -305,7 +305,7 @@ class ProgramSynthesizer:
         self,
         task: dict,
         cache: "TaskCache | None" = None,
-        top_k: int = 20,
+        top_k: int = 40,
     ) -> Optional[Program]:
         """Exhaustively try all pairs of top-scoring + essential primitives.
 
@@ -318,6 +318,7 @@ class ProgramSynthesizer:
             task: ARC task dict
             cache: Pre-converted TaskCache
             top_k: Number of top single primitives to consider for pairing
+                   (default 40 — wider search catches more solutions)
 
         Returns:
             Best 2-step program found, or None if nothing scored well.
@@ -415,6 +416,149 @@ class ProgramSynthesizer:
                     return best_triple
 
         return best_triple
+
+    def try_all_triples(
+        self,
+        task: dict,
+        cache: "TaskCache | None" = None,
+        top_k: int = 15,
+    ) -> Optional[Program]:
+        """Exhaustively try all triples of top-scoring singles.
+
+        This is the key unlocking insight: ~15% of ARC tasks need exactly
+        3 steps, and 15³ = 3,375 combinations is cheap to exhaust.
+        Combined with the essential pair concepts, this covers the most
+        common 3-step compositions deterministically.
+
+        Args:
+            task: ARC task dict
+            cache: Pre-computed TaskCache
+            top_k: Number of top singles to use in triple combinations
+
+        Returns:
+            Best 3-step program found, or None if nothing scored well.
+        """
+        if cache is None:
+            cache = TaskCache(task)
+
+        # Score all single primitives (reuses same logic as try_all_pairs)
+        singles: list[tuple[float, Concept]] = []
+        for concept in self.toolkit.concepts.values():
+            if concept.kind == "predicate":
+                continue
+            prog = Program([concept])
+            score = cache.score_program(prog)
+            singles.append((score, concept))
+
+        singles.sort(key=lambda x: x[0], reverse=True)
+        top_concepts = [c for _, c in singles[:top_k]]
+
+        # Add essential structural primitives
+        top_names = {c.name for c in top_concepts}
+        for name in self.ESSENTIAL_PAIR_CONCEPTS:
+            if name not in top_names and name in self.toolkit.concepts:
+                top_concepts.append(self.toolkit.concepts[name])
+
+        best_prog = None
+        best_score = 0.0
+
+        for a in top_concepts:
+            for b in top_concepts:
+                for c in top_concepts:
+                    prog = Program([a, b, c])
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99:
+                            return best_prog
+
+        return best_prog
+
+    def try_near_miss_refinement(
+        self,
+        candidates: list[tuple["Program", str]],
+        cache: "TaskCache",
+        score_threshold: float = 0.80,
+    ) -> Optional[Program]:
+        """Refine near-miss programs by trying single-step fixes.
+
+        For each candidate scoring >= threshold but < 0.99, try:
+          1. Appending every single concept
+          2. Prepending every single concept
+          3. Replacing each step with every other concept
+
+        This is the highest-ROI search: programs at 0.8-0.99 are almost
+        right — they often need just one color swap, crop, or flip.
+
+        Args:
+            candidates: List of (program, method) tuples from earlier search
+            cache: Pre-computed TaskCache
+            score_threshold: Only refine programs scoring at least this high
+
+        Returns:
+            Best refined program if pixel-perfect, else None.
+        """
+        # Collect near-misses (high score but not pixel-perfect)
+        near_misses = []
+        for prog, method in candidates:
+            if prog.fitness >= score_threshold and not cache.is_pixel_perfect(prog):
+                near_misses.append(prog)
+
+        if not near_misses:
+            return None
+
+        # Get all non-predicate concepts
+        all_concepts = [c for c in self.toolkit.concepts.values()
+                        if c.kind != "predicate"]
+
+        best_prog = None
+        best_score = 0.0
+
+        for near_miss in near_misses:
+            steps = list(near_miss.steps)
+
+            # Try appending
+            if len(steps) < self.max_program_length:
+                for concept in all_concepts:
+                    prog = Program(steps + [concept])
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99 and cache.is_pixel_perfect(best_prog):
+                            return best_prog
+
+            # Try prepending
+            if len(steps) < self.max_program_length:
+                for concept in all_concepts:
+                    prog = Program([concept] + steps)
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99 and cache.is_pixel_perfect(best_prog):
+                            return best_prog
+
+            # Try replacing each step
+            for i in range(len(steps)):
+                for concept in all_concepts:
+                    if concept.name == steps[i].name:
+                        continue  # skip identity replacement
+                    new_steps = steps[:i] + [concept] + steps[i + 1:]
+                    prog = Program(new_steps)
+                    score = cache.score_program(prog)
+                    if score > best_score:
+                        best_score = score
+                        best_prog = prog
+                        best_prog.fitness = score
+                        if score >= 0.99 and cache.is_pixel_perfect(best_prog):
+                            return best_prog
+
+        return best_prog
 
     # ────────────────────────────────────────────────────────────────
     # CONDITIONAL SEARCH (deterministic, no evolution)

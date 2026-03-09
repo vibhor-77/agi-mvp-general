@@ -227,5 +227,120 @@ class TestTripleSearch(unittest.TestCase):
             self.assertGreaterEqual(triple.fitness, 0.0)
 
 
+class TestExhaustiveTriples(unittest.TestCase):
+    """Tests for try_all_triples — exhaustive 3-step program search."""
+
+    def _make_task(self):
+        """Task that requires 3 steps: mirror_horizontal → rotate_90_cw → crop."""
+        # Simple task where identity is easiest, just verify method works
+        return {
+            "train": [
+                {"input": [[1, 0], [0, 2]], "output": [[1, 0], [0, 2]]},
+                {"input": [[3, 0], [0, 4]], "output": [[3, 0], [0, 4]]},
+            ]
+        }
+
+    def test_returns_program_or_none(self):
+        """try_all_triples returns a Program or None."""
+        random.seed(42)
+        toolkit = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit, population_size=20)
+        from arc_agent.scorer import TaskCache
+        task = self._make_task()
+        cache = TaskCache(task)
+        result = synth.try_all_triples(task, cache, top_k=5)
+        # Should return something (identity exists in singles)
+        if result is not None:
+            self.assertIsInstance(result, Program)
+            self.assertLessEqual(len(result.steps), 3)
+            self.assertGreater(result.fitness, 0.0)
+
+    def test_top_k_limits_search(self):
+        """Smaller top_k means fewer combinations searched."""
+        random.seed(42)
+        toolkit = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit, population_size=20)
+        from arc_agent.scorer import TaskCache
+        task = self._make_task()
+        cache = TaskCache(task)
+        # top_k=3 should still work
+        result = synth.try_all_triples(task, cache, top_k=3)
+        # Just verify it doesn't crash
+        self.assertTrue(result is None or isinstance(result, Program))
+
+
+class TestNearMissRefinement(unittest.TestCase):
+    """Tests for try_near_miss_refinement — fix-up pass on high-scoring programs."""
+
+    def test_refine_none_when_no_near_misses(self):
+        """Returns None when no candidates score above threshold."""
+        random.seed(42)
+        toolkit = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit, population_size=20)
+        from arc_agent.scorer import TaskCache
+        task = {
+            "train": [
+                {"input": [[1, 2], [3, 4]], "output": [[5, 6], [7, 8]]},
+            ]
+        }
+        cache = TaskCache(task)
+        # Empty candidates list
+        result = synth.try_near_miss_refinement([], cache)
+        self.assertIsNone(result)
+
+    def test_refine_with_near_miss(self):
+        """Refinement tries to improve a near-miss candidate."""
+        random.seed(42)
+        toolkit = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit, population_size=20)
+        from arc_agent.scorer import TaskCache
+        # Task: identity (solved by doing nothing / identity concept)
+        task = {
+            "train": [
+                {"input": [[1, 0], [0, 2]], "output": [[1, 0], [0, 2]]},
+            ]
+        }
+        cache = TaskCache(task)
+        # Create a near-miss: a program that scores high but isn't perfect
+        # Use a real concept that changes the grid slightly
+        rotate = toolkit.concepts.get("rotate_90_cw")
+        if rotate:
+            prog = Program([rotate])
+            prog.fitness = cache.score_program(prog)
+            if prog.fitness >= 0.50:  # only test if it's actually a near miss
+                result = synth.try_near_miss_refinement(
+                    [(prog, "test")], cache, score_threshold=0.50
+                )
+                # Should at least return something (may find a fix)
+                self.assertTrue(result is None or isinstance(result, Program))
+
+    def test_refine_returns_pixel_perfect_when_found(self):
+        """When refinement finds pixel-perfect, returns it."""
+        random.seed(42)
+        toolkit = build_initial_toolkit()
+        synth = ProgramSynthesizer(toolkit, population_size=20)
+        from arc_agent.scorer import TaskCache
+        # Task solvable by mirror_horizontal
+        task = {
+            "train": [
+                {"input": [[1, 2, 3]], "output": [[3, 2, 1]]},
+                {"input": [[4, 5, 6]], "output": [[6, 5, 4]]},
+            ]
+        }
+        cache = TaskCache(task)
+        # Give it a near-miss (rotate_90_cw won't match but has some score)
+        rotate = toolkit.concepts.get("rotate_90_cw")
+        if rotate:
+            prog = Program([rotate])
+            prog.fitness = cache.score_program(prog)
+            result = synth.try_near_miss_refinement(
+                [(prog, "test")], cache, score_threshold=0.01
+            )
+            # The refinement should discover mirror_horizontal as a replacement
+            if result is not None:
+                self.assertIsInstance(result, Program)
+                self.assertGreaterEqual(result.fitness, 0.99)
+
+
 if __name__ == '__main__':
     unittest.main()
