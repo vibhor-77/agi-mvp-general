@@ -299,7 +299,7 @@ def _solve_one(args):
     in parallel mode the user sees when work truly begins on each task.
     """
     task_id, task, population_size, max_generations, seed, culture_path, \
-        idx, n_tasks, train_dims, test_dims, cells = args
+        idx, n_tasks, train_dims, test_dims, cells, evals_budget = args
 
     # Print Started at actual execution time (from the worker process)
     print(f"  >> [{idx:3d}/{n_tasks}] {task_id}  "
@@ -324,9 +324,11 @@ def _solve_one(args):
         except Exception:
             pass
 
+    cpu0 = time.process_time()
     t0 = time.perf_counter()
-    result = solver.solve_task(task, task_id)
+    result = solver.solve_task(task, task_id, evals_budget=evals_budget)
     elapsed = time.perf_counter() - t0
+    cpu_time = time.process_time() - cpu0
 
     # Collect culture data for aggregation across workers
     learned_concepts = []
@@ -359,6 +361,7 @@ def _solve_one(args):
         "task_id": task_id,
         "result": result,
         "elapsed": elapsed,
+        "cpu_time": cpu_time,
         "toolkit_size": solver.toolkit.size,
         "cells": cells,
         "train_dims": train_dims,
@@ -412,6 +415,8 @@ class _BenchmarkTracker:
         self.fails = 0
 
         self.total_evals = 0  # total program evaluations across all tasks
+        self.total_cpu_time = 0.0  # total CPU time across all tasks
+        self.budget_exceeded_count = 0  # tasks that hit evals budget
         self.scores: list[float] = []
         self.times: list[float] = []
         self.by_method: dict[str, int] = {}
@@ -438,12 +443,16 @@ class _BenchmarkTracker:
 
             r = worker_result["result"]
             elapsed = worker_result["elapsed"]
+            cpu_time = worker_result.get("cpu_time", 0.0)
             task_id = worker_result["task_id"]
             cells = worker_result.get("cells", 0)
             train_dims = worker_result.get("train_dims", "?")
             test_dims = worker_result.get("test_dims", "?")
             n_evals = r.get("n_evals", 0)
             self.total_evals += n_evals
+            self.total_cpu_time += cpu_time
+            if r.get("budget_exceeded", False):
+                self.budget_exceeded_count += 1
 
             self.completed.add(task_id)
             self.all_results[task_id] = worker_result
@@ -550,8 +559,10 @@ class _BenchmarkTracker:
                         "status": status,
                         "method": method_str or None,
                         "elapsed": round(elapsed, 2),
+                        "cpu_time": round(cpu_time, 2),
                         "cells": cells,
                         "n_evals": n_evals,
+                        "budget_exceeded": r.get("budget_exceeded", False),
                         "program": program_steps,
                         "candidates": len(r.get("candidates", [])),
                     }
@@ -647,6 +658,7 @@ def benchmark_solver(
     workers: int = 0,
     results_path: str | None = None,
     run_timestamp: str = "",
+    evals_budget: int = 150_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
@@ -715,6 +727,7 @@ def benchmark_solver(
     print(f"  Population size:  {population_size}")
     print(f"  Max generations:  {max_generations}")
     print(f"  Culture input:    {culture_file or '(none)'}")
+    print(f"  Evals budget:     {evals_budget:,} per task")
 
     # Grid size statistics
     sizes = list(task_sizes.values())
@@ -744,7 +757,8 @@ def benchmark_solver(
          seed + i * 1000, culture_path,
          i + 1, n_total,  # idx, n_tasks
          task_dims[task_id][0], task_dims[task_id][1],  # train_dims, test_dims
-         task_sizes[task_id])  # cells
+         task_sizes[task_id],  # cells
+         evals_budget)  # deterministic computational budget
         for i, task_id in enumerate(sorted_ids)
     ]
 
@@ -808,6 +822,10 @@ def benchmark_solver(
           f"({_pct(tracker.fails, done)})")
     print(f"  Mean score:        {statistics.mean(tracker.scores):.3f}")
     print(f"  Total evaluations: {tracker.total_evals:,}")
+    print(f"  Total CPU time:    {_fmt_duration(tracker.total_cpu_time)}")
+    if tracker.budget_exceeded_count > 0:
+        print(f"  Budget exceeded:   {tracker.budget_exceeded_count}/{done} tasks "
+              f"(capped at {evals_budget:,} evals)")
     print(f"  Median task time:  {statistics.median(tracker.times):.2f}s")
     print(f"  Mean task time:    {statistics.mean(tracker.times):.2f}s")
     total_wall = time.time() - tracker.start_time
@@ -871,6 +889,9 @@ def benchmark_solver(
             "mean_score": round(statistics.mean(tracker.scores), 4),
             "median_time": round(statistics.median(tracker.times), 2),
             "total_evals": tracker.total_evals,
+            "total_cpu_time": round(tracker.total_cpu_time, 2),
+            "budget_exceeded_count": tracker.budget_exceeded_count,
+            "evals_budget": evals_budget,
             "fluke_train_hit": tracker.fluke_train_hit,
             "fluke_train_total": tracker.fluke_train_total,
             "near_misses": tracker.near_misses,
@@ -891,6 +912,8 @@ def benchmark_solver(
                 "n_evals": wr["result"].get("n_evals", 0),
                 "n_train": wr["result"].get("n_train", 0),
                 "train_example_exact": wr["result"].get("train_example_exact", []),
+                "cpu_time": round(wr.get("cpu_time", 0.0), 3),
+                "budget_exceeded": wr["result"].get("budget_exceeded", False),
                 "cells": wr.get("cells", 0),
                 "toolkit_size": wr["toolkit_size"],
             }
@@ -1030,6 +1053,12 @@ def main():
         default="ARC-AGI/data/evaluation",
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
+    parser.add_argument(
+        "--evals-budget", type=int, default=150_000,
+        help="Max program evaluations per task — deterministic computational "
+             "budget (default: 150000). Tasks exceeding this skip evolution "
+             "and decomposition.",
+    )
     args = parser.parse_args()
 
     if args.pipeline:
@@ -1059,6 +1088,7 @@ def _run_single(args):
             workers=args.workers,
             results_path=args.results,
             run_timestamp=run_timestamp,
+            evals_budget=args.evals_budget,
         )
         if result is not None and args.tasks > 0:
             _extrapolate(result["times"], numba_active)
@@ -1114,6 +1144,7 @@ def _run_pipeline(args):
             culture_file=args.culture_file,
             workers=args.workers,
             run_timestamp=run_timestamp,
+            evals_budget=args.evals_budget,
         )
 
         if train_result is None:
@@ -1134,24 +1165,25 @@ def _run_pipeline(args):
             culture_file=culture_path,
             workers=args.workers,
             run_timestamp=run_timestamp,
+            evals_budget=args.evals_budget,
         )
 
         # ── Pipeline summary ──────────────────────────────────────────
         _section("PIPELINE SUMMARY")
-        if train_result:
-            t_solved = train_result["solved"]
-            t_total = train_result["total"]
-            t_overfit = train_result["overfits"]
-            print(f"  Training:   {t_solved}/{t_total} solved "
-                  f"({_pct(t_solved, t_total)})"
-                  f"{'  [+' + str(t_overfit) + ' overfit]' if t_overfit else ''}")
-        if eval_result:
-            e_solved = eval_result["solved"]
-            e_total = eval_result["total"]
-            e_overfit = eval_result["overfits"]
-            print(f"  Evaluation: {e_solved}/{e_total} solved "
-                  f"({_pct(e_solved, e_total)})"
-                  f"{'  [+' + str(e_overfit) + ' overfit]' if e_overfit else ''}")
+        for label, res in [("Training", train_result), ("Evaluation", eval_result)]:
+            if res:
+                s = res["solved"]
+                t = res["total"]
+                ov = res["overfits"]
+                fl = res["flukes"]
+                extras = []
+                if ov:
+                    extras.append(f"+{ov} overfit")
+                if fl:
+                    extras.append(f"+{fl} fluke")
+                extra_str = f"  [{', '.join(extras)}]" if extras else ""
+                print(f"  {label:12s} {s}/{t} solved "
+                      f"({_pct(s, t)}){extra_str}")
 
         _print_artifacts(log_path, train_result, args.no_log, label="Train")
         _print_artifacts(None, eval_result, True, label="Eval")

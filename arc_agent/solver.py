@@ -71,17 +71,24 @@ class FourPillarsSolver:
         self.concept_growth: list[int] = []
 
     def solve_task(self, task: dict, task_id: str = "unknown",
-                   mode: str = "train") -> dict:
+                   mode: str = "train",
+                   evals_budget: int = 150_000) -> dict:
         """Solve a single ARC task using all 4 pillars.
 
         Runs all search strategies exhaustively and collects all pixel-perfect
-        candidates. No early exits — we always want the full picture.
+        candidates. Expensive steps (evolution, decomposition) are skipped
+        if the evaluation budget is exceeded.
 
         Args:
             task: The ARC task dict with 'train' and optionally 'test'.
             task_id: Identifier for this task.
             mode: Passed through for metadata only. The solver runs
                   identically in all modes.
+            evals_budget: Maximum number of program evaluations for this task
+                (default 150,000). Uses cache.n_evals which is deterministic
+                and machine-independent. Deterministic search always runs;
+                evolution and decomposition are skipped if the budget is
+                exceeded.
 
         Returns:
             Dict with solve status, best program, score, and metadata.
@@ -287,6 +294,13 @@ class FourPillarsSolver:
             if self.verbose:
                 print(f"  ⚡ Skipping evolution — {len(candidates)} candidate(s) already found")
 
+        # Skip evolution if evaluation budget exceeded
+        if cache.n_evals >= evals_budget:
+            n_restarts = 0
+            if self.verbose:
+                print(f"  ⏱ Skipping evolution — evals budget exceeded "
+                      f"({cache.n_evals:,}/{evals_budget:,})")
+
         for restart_idx in range(n_restarts):
             if restart_idx > 0:
                 import random
@@ -313,8 +327,8 @@ class FourPillarsSolver:
         elapsed = time.time() - start_time
 
         # Step 4a: Try decomposition as fallback (COMPOSABILITY)
-        # Skip if we already have candidates from deterministic search.
-        if best_score < 0.99 and not candidates:
+        # Skip if we already have candidates or evals budget exceeded.
+        if best_score < 0.99 and not candidates and cache.n_evals < evals_budget:
             decomposed = self.decomposer.decompose_if_needed(
                 task,
                 best_score,
@@ -338,7 +352,7 @@ class FourPillarsSolver:
         # Step 5: Post-evolution near-miss refinement.
         # Try single-step fixes (append/prepend/replace) on the best program
         # AND all near-miss programs collected from search phases.
-        if not candidates:
+        if not candidates and cache.n_evals < evals_budget:
             # Build refinement pool: best program + top near-miss candidates
             # Sort by fitness and keep top 3 to limit refinement cost
             near_miss_pool.sort(key=lambda x: x[0].fitness, reverse=True)
@@ -458,7 +472,8 @@ class FourPillarsSolver:
                                   candidate_test_results=candidate_test_results,
                                   n_evals=cache.n_evals,
                                   n_train=n_train,
-                                  train_example_exact=train_example_exact)
+                                  train_example_exact=train_example_exact,
+                                  budget_exceeded=cache.n_evals >= evals_budget)
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -1081,7 +1096,8 @@ class FourPillarsSolver:
                       candidate_test_results: list | None = None,
                       n_evals: int = 0,
                       n_train: int = 0,
-                      train_example_exact: list | None = None):
+                      train_example_exact: list | None = None,
+                      budget_exceeded: bool = False):
         """Build the per-task result dict.
 
         Args:
@@ -1136,6 +1152,7 @@ class FourPillarsSolver:
             "n_evals": n_evals,
             "n_train": n_train,
             "train_example_exact": train_example_exact or [],
+            "budget_exceeded": budget_exceeded,
         }
 
     def solve_batch(self, tasks: dict[str, dict]) -> dict:
