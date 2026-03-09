@@ -31,7 +31,7 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (645 tests)
+# Run the test suite (650 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
@@ -140,16 +140,15 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.25 (current)
+### ARC-AGI-1 v0.26 (current)
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
-| **Solved (exact)** | 92/400 (23.0%) | 25/400 (6.2%) |
-| Test confirmed | 96/400 (24.0%) | 30/400 (7.5%) |
-| Flukes | 4 | 5 |
-| Overfits | 26 | 9 |
-| Mean score | 0.868 | 0.834 |
-| Median score | 0.936 | 0.907 |
+| **Solved (exact)** | 94/400 (23.5%) | 31/400 (7.8%) |
+| Test confirmed | 99/400 (24.8%) | 36/400 (9.0%) |
+| Flukes | 5 | 5 |
+| Overfits | 31 | 11 |
+| Mean score | 0.871 | 0.848 |
 | LLM used | None | None |
 
 **Metrics explained:**
@@ -158,7 +157,7 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 - **Flukes** = passed test but NOT pixel-perfect on train (likely luck)
 - **Overfits** = pixel-perfect on train but FAILED test (memorized, doesn't generalize)
 
-287 hand-crafted primitives, object-centric scene reasoning, neighbor-rule learning, color mapping, per-object decomposition with conditional recolor, exhaustive pair + triple search, evolutionary synthesis with multiple restarts. Pure Four Pillars — no LLMs.
+304 primitives, object-centric scene reasoning, neighbor-rule learning, DSL synthesis (45 ops), per-object decomposition with conditional recolor, exhaustive pair (top-40²) + triple (top-15³) search, near-miss refinement, evolutionary synthesis. Pure Four Pillars — no LLMs.
 
 ### Version history
 
@@ -170,6 +169,7 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 | v0.22 | 79/400 (19.8%) | 18/400 (4.5%) | Fixed metrics (exact = train AND test) |
 | v0.23 | 81/400 (20.2%) | 19/400 (4.8%) | Object-centric reasoning, no early exits |
 | v0.25 | 92/400 (23.0%) | 25/400 (6.2%) | Object decomposition, conditional recolor, Numba fix |
+| v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 
@@ -201,7 +201,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 645 tests (14 test files)
+├── tests/                           # 650 tests (14 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -272,7 +272,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (645 tests)
+- [x] Test suite (650 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
