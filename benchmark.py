@@ -132,10 +132,12 @@ def benchmark_operations():
 # 3. Solver accuracy & timing on N tasks
 # ---------------------------------------------------------------------------
 
-def benchmark_solver(data_dir: str, n_tasks: int = 20, seed: int = 42):
+def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42):
+    task_files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    if n_tasks > 0:
+        task_files = task_files[:n_tasks]
+    n_tasks = len(task_files)
     _section(f"Solver benchmark ({n_tasks} tasks, seed={seed}, 1 worker)")
-
-    task_files = sorted(glob.glob(os.path.join(data_dir, "*.json")))[:n_tasks]
     if not task_files:
         print(f"  ERROR: no .json files found in {data_dir}")
         return None
@@ -244,8 +246,8 @@ def main():
     parser.add_argument(
         "--tasks",
         type=int,
-        default=20,
-        help="Number of tasks to evaluate (default: 20)",
+        default=0,
+        help="Number of tasks to evaluate (default: 0 = all tasks)",
     )
     parser.add_argument(
         "--seed",
@@ -265,7 +267,9 @@ def main():
     result = benchmark_solver(args.data_dir, args.tasks, args.seed)
     if result is not None:
         task_times, scores = result
-        extrapolate(task_times, dt_fo, numba_active)
+        if args.tasks > 0:
+            # Only show projections when running a subset
+            extrapolate(task_times, dt_fo, numba_active)
 
     _hline("═")
     print("  Done.")
