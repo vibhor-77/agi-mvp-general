@@ -37,7 +37,7 @@ git clone https://github.com/fchollet/ARC-AGI.git
 # Reproduce our results — one command does train + eval with culture transfer
 python benchmark.py --pipeline
 
-# Run the test suite (660 tests)
+# Run the test suite (672 tests)
 python -m unittest discover -s tests -p "*.py"
 ```
 
@@ -143,7 +143,15 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.27 (current)
+### ARC-AGI-1 v0.28 (current, pending benchmark)
+
+Building on v0.27 with DSL extensions and broader near-miss refinement:
+
+- **4 new DSL operations**: diagonal symmetry, 4-way symmetry, largest object extraction, row sorting (39 DSL ops total)
+- **Near-miss candidate pool**: collects high-scoring programs from pair, triple, and DSL search for broader refinement (3-4× more refinement candidates)
+- **LOOCV generalization**: prevents neighbor rule overfitting (from v0.27)
+
+### ARC-AGI-1 v0.27
 
 | Metric | Training (400) | Evaluation |
 |--------|---------------|------------|
@@ -173,7 +181,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 - **Flukes** = passed test but NOT pixel-perfect on train (likely luck)
 - **Overfits** = pixel-perfect on train but FAILED test (memorized, doesn't generalize)
 
-304 primitives, object-centric scene reasoning, neighbor-rule learning, DSL synthesis (45 ops), per-object decomposition with conditional recolor, exhaustive pair (top-40²) + triple (top-15³) search, near-miss refinement, evolutionary synthesis. Pure Four Pillars — no LLMs.
+304 primitives, object-centric scene reasoning, neighbor-rule learning, DSL synthesis (39 ops), per-object decomposition with conditional recolor, exhaustive pair (top-40²) + triple (top-15³) search, multi-source near-miss refinement, evolutionary synthesis. Pure Four Pillars — no LLMs.
 
 ### Version history
 
@@ -187,6 +195,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 | v0.25 | 92/400 (23.0%) | 25/400 (6.2%) | Object decomposition, conditional recolor, Numba fix |
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 | v0.27 | 97/400 (24.3%) | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
+| v0.28 | pending | pending | 4 new DSL ops, multi-source near-miss refinement pool |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 
@@ -220,7 +229,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 660 tests (14 test files)
+├── tests/                           # 672 tests (14 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -291,7 +300,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (660 tests)
+- [x] Test suite (672 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)

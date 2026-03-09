@@ -2334,3 +2334,71 @@ Top unsolved categories (0.95+ near-misses):
 
 v0.27 final: 97/400 (24.3%) exact, 23 overfits, 4 flukes, mean score 0.855
 With DSL LOOCV fix applied next run: ~97 exact, ~20 overfits
+
+---
+
+## Session 30 — DSL Extensions & Near-Miss Pool; AGI Strategy Reflection (March 9, 2026)
+
+### Prompt
+
+> Continue making progress with scientific method, short feedback loops, parallel experiments. Remember: we're solving general intelligence, not just ARC-AGI-1. Whatever techniques we build should apply to ARC-AGI-2, Zork, robotics, and human intelligence more broadly.
+
+### Analysis
+
+#### Near-Miss Deep Dive
+
+Comprehensive analysis of 276 training failures revealed the highest-leverage improvement areas:
+
+- **54 tasks** score 0.95+ (almost solved) — dominated by decomposition near-misses
+  - `color_channel_decomp`: 11 tasks at 0.95+, 31 total at 0.85+
+  - `spatial_quadrant_decomp`: 5 tasks at 0.95+, 20 total at 0.85+
+  - `identity`: 7 tasks at 0.95+ (no primitive helps, output ≈ input)
+- **32/37 spatial_quadrant near-misses** have separator structures (27 zero-separators, 3 non-zero, 2 grid patterns)
+- Fixed midpoint splits miss natural grid boundaries by up to 50%
+
+#### Bottleneck Identification
+
+The fundamental bottleneck is **representational expressiveness**, not search breadth:
+- Asymmetric pair search (top-40 × all-304) yielded 0 new solves
+- New primitive candidates (symmetry_4way, flood_fill) yielded 0 improvements
+- The solver can only find solutions that decompose into its fixed vocabulary
+
+#### AGI Strategy Insights
+
+Key lessons that generalize beyond ARC-AGI-1:
+
+1. **Program synthesis > pattern matching**: The DSL synthesis engine is the right direction because it constructs novel transforms from sub-primitive ops. The specific DSL ops are domain-specific but the synthesis mechanism (bottom-up enumeration + execution-guided pruning + compositional structure) is universal.
+
+2. **Decomposition is fundamental**: Breaking complex problems into independent sub-problems is core to intelligence. Color/spatial decompositions are domain-specific instances; the general principle applies to goal decomposition (Zork), task decomposition (robotics), and problem decomposition (reasoning).
+
+3. **Near-miss refinement = iterative debugging**: Taking something almost-right and fixing it with a targeted change is how humans iterate. This generalizes directly to all domains.
+
+4. **LOOCV = generalization**: Any solution must generalize beyond training data. This applies universally.
+
+5. **The missing piece: abstract reasoning about structure**: Currently the system finds solutions by search, not by understanding. For ARC-AGI-2 (novel reasoning), Zork (planning), and robotics (world modeling), we need the ability to infer rules from examples, plan action sequences toward goals, and build predictive world models.
+
+### Changes
+
+1. **4 new DSL operations** (`arc_agent/dsl.py`):
+   - `complete_symmetry_diagonal`: Fill zeros from diagonal (transpose) reflection
+   - `complete_symmetry_4way`: Cascade completion across H, V, and both diagonals
+   - `extract_largest_object`: Flood-fill largest connected component, crop to bbox
+   - `sort_rows_by_nonzero`: Sort grid rows by ascending non-zero cell count
+   - 12 new TDD tests covering all operations and compositions
+
+2. **Near-miss candidate pool** (`arc_agent/solver.py`):
+   - Collect near-miss programs (0.80-0.99) from pair, triple, and DSL search
+   - Feed top 3 near-misses + best overall to refinement step
+   - Previously only refined the single best program; now has 3-4× more candidates
+   - Expected to convert more near-misses into solves via append/prepend/replace fixes
+
+### Results
+
+- v0.28 (pending full benchmark): 672 tests pass (up from 660)
+- DSL ops: 39 total (up from 35), expanding depth-2 composition space
+- Near-miss pool: broadens refinement search by 3-4× at <2s additional cost
+
+### Commits
+
+- `d6b2a05` — Add 4 new DSL operations: diagonal/4way symmetry, object extraction, row sorting
+- `0a4d496` — Broaden near-miss refinement with multi-source candidate pool
