@@ -1600,15 +1600,23 @@ Built a program synthesis engine that constructs novel Grid→Grid transforms fr
 
 **Why no new solves yet**: The v1 DSL has only 11 operations that overlap with existing macro primitives. To unlock new solve categories, the DSL needs: neighborhood queries, flood fill, object-level manipulation, conditional branching. The foundation is in place.
 
+**v0.26b (DSL extended with neighborhood ops)**:
+- Added 3 new DSL operations: `crop_to_content`, `fill_background`, `apply_neighbor_rule`
+- Added `_learn_neighbor_rule()` shortcut: learns `(cell_color, n_nonbg_4_neighbors) → output_color` mappings
+- Training: 92/400 (23.0%) — same
+- Eval: 26/400 (6.5%) — **+1 from v0.25** (gained 21f83797, 73182012; lost 59341089 which was unstable)
+- 585 tests all pass (35 DSL-specific tests)
+- The `crop_to_content` composition with geometric ops found new solutions
+
 ### Files Created/Modified
 
 | File | Action |
 |------|--------|
-| `arc_agent/dsl.py` | **NEW** — DSL expression tree + interpreter |
-| `arc_agent/dsl_synth.py` | **NEW** — Bottom-up synthesis engine |
+| `arc_agent/dsl.py` | **NEW** — DSL expression tree + interpreter (14 ops + map_objects combinator) |
+| `arc_agent/dsl_synth.py` | **NEW** — Bottom-up synthesis engine with color map + neighbor rule shortcuts |
 | `arc_agent/solver.py` | Added `_try_dsl_synthesis()` at step 3.96 |
 | `arc_agent/object_decompose.py` | Added by_input_color, by_position, by_shape strategies |
-| `tests/test_dsl.py` | **NEW** — 29 tests for DSL + synthesis |
+| `tests/test_dsl.py` | **NEW** — 35 tests for DSL + synthesis |
 | `tests/test_object_decompose.py` | Updated: unittest.TestCase, new strategy tests |
 | `.gitignore` | Added `*.log` |
 
