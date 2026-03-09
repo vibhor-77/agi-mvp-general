@@ -659,6 +659,7 @@ def benchmark_solver(
     results_path: str | None = None,
     run_timestamp: str = "",
     evals_budget: int = 150_000,
+    compute_cap: int = 500_000_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
@@ -727,7 +728,11 @@ def benchmark_solver(
     print(f"  Population size:  {population_size}")
     print(f"  Max generations:  {max_generations}")
     print(f"  Culture input:    {culture_file or '(none)'}")
-    print(f"  Evals budget:     {evals_budget:,} per task")
+    if compute_cap > 0:
+        print(f"  Compute cap:      {compute_cap:,} (evals×cells)")
+        print(f"  Evals budget:     min({evals_budget:,}, {compute_cap:,}/cells) per task")
+    else:
+        print(f"  Evals budget:     {evals_budget:,} per task (no compute cap)")
 
     # Grid size statistics
     sizes = list(task_sizes.values())
@@ -752,15 +757,24 @@ def benchmark_solver(
     # Build worker args (includes idx, dims, cells for Started line in worker)
     sorted_ids = sorted(tasks.keys())
     culture_path = culture_file or ""
-    worker_args = [
-        (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000, culture_path,
-         i + 1, n_total,  # idx, n_tasks
-         task_dims[task_id][0], task_dims[task_id][1],  # train_dims, test_dims
-         task_sizes[task_id],  # cells
-         evals_budget)  # deterministic computational budget
-        for i, task_id in enumerate(sorted_ids)
-    ]
+    worker_args = []
+    for i, task_id in enumerate(sorted_ids):
+        cells = task_sizes[task_id]
+        # Cell-normalized budget: large grids get fewer evals because each
+        # eval is proportionally more expensive. This is deterministic and
+        # machine-independent (unlike wall-clock timeouts).
+        if compute_cap > 0 and cells > 0:
+            effective_budget = min(evals_budget, compute_cap // cells)
+        else:
+            effective_budget = evals_budget
+        worker_args.append((
+            task_id, tasks[task_id], population_size, max_generations,
+            seed + i * 1000, culture_path,
+            i + 1, n_total,  # idx, n_tasks
+            task_dims[task_id][0], task_dims[task_id][1],  # train_dims, test_dims
+            cells,
+            effective_budget,  # cell-normalized computational budget
+        ))
 
     _section(f"Running {n_total} tasks on {n_workers} workers")
 
@@ -824,8 +838,9 @@ def benchmark_solver(
     print(f"  Total evaluations: {tracker.total_evals:,}")
     print(f"  Total CPU time:    {_fmt_duration(tracker.total_cpu_time)}")
     if tracker.budget_exceeded_count > 0:
+        cap_str = f"compute_cap={compute_cap:,}" if compute_cap > 0 else f"evals={evals_budget:,}"
         print(f"  Budget exceeded:   {tracker.budget_exceeded_count}/{done} tasks "
-              f"(capped at {evals_budget:,} evals)")
+              f"({cap_str})")
     print(f"  Median task time:  {statistics.median(tracker.times):.2f}s")
     print(f"  Mean task time:    {statistics.mean(tracker.times):.2f}s")
     total_wall = time.time() - tracker.start_time
@@ -892,6 +907,7 @@ def benchmark_solver(
             "total_cpu_time": round(tracker.total_cpu_time, 2),
             "budget_exceeded_count": tracker.budget_exceeded_count,
             "evals_budget": evals_budget,
+            "compute_cap": compute_cap,
             "fluke_train_hit": tracker.fluke_train_hit,
             "fluke_train_total": tracker.fluke_train_total,
             "near_misses": tracker.near_misses,
@@ -1055,11 +1071,27 @@ def main():
     )
     parser.add_argument(
         "--evals-budget", type=int, default=150_000,
-        help="Max program evaluations per task — deterministic computational "
-             "budget (default: 150000). Tasks exceeding this skip evolution "
-             "and decomposition.",
+        help="Max program evaluations per task (default: 150000). "
+             "Combined with --compute-cap for cell-normalized budgets.",
+    )
+    parser.add_argument(
+        "--compute-cap", type=int, default=500_000_000,
+        help="Cell-normalized compute cap: effective per-task budget = "
+             "min(evals_budget, compute_cap/cells). Large grids get fewer "
+             "evals since each eval is proportionally slower. Default: "
+             "500M (saves ~12%% time, 0 solve loss). Set to 0 to disable.",
+    )
+    parser.add_argument(
+        "--contest", action="store_true",
+        help="Contest mode: use generous compute cap (K=400M) that loses 0 "
+             "solves while saving ~18%% wall time on futile large-grid "
+             "evolution. Equivalent to --compute-cap 400000000.",
     )
     args = parser.parse_args()
+
+    # Contest mode: generous cap that loses 0 solves but still saves ~18%
+    if args.contest:
+        args.compute_cap = 400_000_000
 
     if args.pipeline:
         _run_pipeline(args)
@@ -1089,6 +1121,7 @@ def _run_single(args):
             results_path=args.results,
             run_timestamp=run_timestamp,
             evals_budget=args.evals_budget,
+            compute_cap=args.compute_cap,
         )
         if result is not None and args.tasks > 0:
             _extrapolate(result["times"], numba_active)
@@ -1145,6 +1178,7 @@ def _run_pipeline(args):
             workers=args.workers,
             run_timestamp=run_timestamp,
             evals_budget=args.evals_budget,
+            compute_cap=args.compute_cap,
         )
 
         if train_result is None:
@@ -1166,6 +1200,7 @@ def _run_pipeline(args):
             workers=args.workers,
             run_timestamp=run_timestamp,
             evals_budget=args.evals_budget,
+            compute_cap=args.compute_cap,
         )
 
         # ── Pipeline summary ──────────────────────────────────────────

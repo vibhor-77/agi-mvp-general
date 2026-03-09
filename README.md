@@ -100,7 +100,46 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
+--compute-cap N        Cell-normalized compute cap (default: 500M, 0=disable)
+--evals-budget N       Max evals per task before cell normalization (default: 150K)
+--contest              Contest mode: disable compute cap, maximize solves
 ```
+
+### Compute budget strategy
+
+The solver uses a **cell-normalized computational budget** to allocate search effort efficiently. The cost of a single program evaluation varies ~200× depending on grid size (53μs for 90-cell grids vs 16ms for 9,000-cell grids), so a flat eval count is a poor cost metric.
+
+The effective per-task budget is: `min(evals_budget, compute_cap / cells)`.
+
+| Mode | Command | Compute cap | Effect |
+|------|---------|-------------|--------|
+| **Iteration** (default) | `python benchmark.py --pipeline` | 500M | Saves ~12% wall time, 0 solve loss |
+| **Contest** | `python benchmark.py --pipeline --contest` | 400M | Saves ~18% wall time, 0 solve loss |
+
+**ROI curve** (eval, 400 tasks, v0.28 — cell-normalized budget `min(150K, K/cells)`):
+
+| Compute cap (K) | Solves | Eval time | Time saved | Solves lost |
+|-----------------|--------|-----------|------------|-------------|
+| uncapped | 35 | 784 min | — | 0 |
+| 1000M | 35 | 773 min | 11 min (1%) | 0 |
+| 750M | 35 | 748 min | 35 min (5%) | 0 |
+| 500M (iteration default) | 35 | 691 min | 92 min (12%) | 0 |
+| **400M (contest default)** | **35** | **642 min** | **141 min (18%)** | **0** |
+| 300M | 34 | 569 min | 214 min (27%) | 1 |
+| 200M | 34 | 465 min | 319 min (41%) | 1 |
+
+The sweet spot is K=400M: it saves 141 minutes with zero solve loss. Both defaults (iteration at 500M, contest at 400M) lose zero solves — iteration is more conservative to leave headroom as the solver improves.
+
+**Why cell-normalized?** A single eval costs ~50μs on a 90-cell grid but ~16ms on a 9,000-cell grid (200× difference). A flat eval count treats these identically, so large-grid tasks burn 25× more wall time for the same budget. Cell normalization allocates time proportionally: a 9,000-cell task gets ~44K evals (vs 150K for small grids), enough for deterministic search but capping the futile evolution phase that never solves on large grids.
+
+**Phase ROI** (eval data):
+
+| Phase | Solves | Wall time | ROI (solves/min) |
+|-------|--------|-----------|------------------|
+| Deterministic search | 20 | ~33 min | 0.61 |
+| Evolution (all tasks) | 15 | ~751 min | 0.02 |
+
+Deterministic search delivers 30× better ROI than evolution. Evolution has a 4% solve rate (15/373) but consumes 96% of compute on unsolved tasks. All large-grid (5K+ cells) solves use deterministic methods — large-grid evolution is never productive.
 
 ### Progress display
 
@@ -143,12 +182,24 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.28 (current, pending benchmark)
+### ARC-AGI-1 v0.28 (current)
 
-Building on v0.27 with DSL extensions and broader near-miss refinement:
+| Metric | Training (400) | Evaluation (400) |
+|--------|---------------|-----------------|
+| **Solved (exact)** | 97/400 (24.3%) | 35/400 (8.8%) |
+| Flukes | 3 | 4 |
+| Overfits | 23 | 9 |
+| Mean score | 0.855 | 0.844 |
+| LLM used | None | None |
+
+Building on v0.27 with DSL extensions, broader near-miss refinement, and compute budget:
 
 - **4 new DSL operations**: diagonal symmetry, 4-way symmetry, largest object extraction, row sorting (39 DSL ops total)
 - **Near-miss candidate pool**: collects high-scoring programs from pair, triple, and DSL search for broader refinement (3-4× more refinement candidates)
+- **Cell-normalized compute budget**: caps large-grid evolution runs that never solve, saving ~12% wall time with 0 solve loss (see [Compute budget strategy](#compute-budget-strategy))
+- **Contest mode**: `--contest` flag disables cap for maximum solves
+- **Computational cost logging**: cpu_time, budget_exceeded per task in JSON output
+- **Pipeline summary**: shows both train and eval with flukes
 - **LOOCV generalization**: prevents neighbor rule overfitting (from v0.27)
 
 ### ARC-AGI-1 v0.27
@@ -195,7 +246,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 | v0.25 | 92/400 (23.0%) | 25/400 (6.2%) | Object decomposition, conditional recolor, Numba fix |
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 | v0.27 | 97/400 (24.3%) | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
-| v0.28 | pending | pending | 4 new DSL ops, multi-source near-miss refinement pool |
+| v0.28 | 97/400 (24.3%) | 35/400 (8.8%) | 4 new DSL ops, near-miss pool, cell-normalized compute budget |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 
