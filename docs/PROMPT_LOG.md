@@ -2402,3 +2402,72 @@ Key lessons that generalize beyond ARC-AGI-1:
 
 - `d6b2a05` — Add 4 new DSL operations: diagonal/4way symmetry, object extraction, row sorting
 - `0a4d496` — Broaden near-miss refinement with multi-source candidate pool
+
+---
+
+## Session 31 — Compute Budget Fix & ROI Analysis (March 9, 2026)
+
+### Prompt
+
+> Continue from Session 30. Fix compute budget defaults (contest vs iteration were backwards), then make high-ROI improvements. The --compute-cap flag doesn't seem to be having any effect.
+
+### Analysis
+
+1. **Contest vs iteration defaults were backwards**: Contest had tighter cap (K=400M) than iteration (K=500M). Fixed: iteration=400M (fast feedback), contest=uncapped (maximize solves).
+
+2. **Compute budget had no effect** — root cause discovered in two layers:
+   - **Layer 1 (phase-level)**: Budget checks only gated evolution, decomposition, and post-evolution refinement (3 of 12+ phases). All deterministic search phases (conditionals, pairs, triples, DSL, object decomposition, near-miss refinement) ran unconditionally. Fixed by adding `_budget_ok()` checks before each phase.
+   - **Layer 2 (inner-loop)**: Even after phase gating, individual methods like `try_all_triples` could consume 110K+ evals internally once started (because the essentials list inflates top-15 to ~50 concepts → 50³=125K combos). Fixed by adding `cache.budget_ok` checks inside inner loops of all expensive search methods.
+
+3. **`try_color_fix` was implemented but never called**: The synthesizer had a well-tested color remapping method that was never integrated into the solver pipeline. Integrated as step 3l.
+
+4. **Near-miss ROI analysis** (eval v0.26b data):
+   - 170 tasks score 0.90+ but aren't solved (out of 362 unsolved)
+   - 56 decomp near-misses (33 spatial + 23 color) — biggest opportunity
+   - 79 evolved near-misses — evolution gets close but not pixel-perfect
+   - 18 identity near-misses — solver can't find any useful transform
+   - 17 single-prim near-misses — close but not perfect
+
+5. **Overfit analysis**: 16 of 28 overfits use `learned_neighbor_*`, but all alternative candidates also fail test — these are genuinely hard tasks, not just neighbor-rule artifacts. Tightening LOOCV wouldn't gain eval solves.
+
+### Changes
+
+1. **Fix contest/iteration defaults** (`benchmark.py`, `README.md`):
+   - Iteration default: K=400M (saves 18%, 0 loss)
+   - Contest: uncapped (K=0, `--contest` sets `compute_cap=0`)
+   - Function signature default aligned with CLI default
+
+2. **Phase-level budget gating** (`arc_agent/solver.py`):
+   - Added `_budget_ok()` helper checking `cache.n_evals < evals_budget`
+   - Gated steps 3c through 3k (conditionals, pairs, triples, DSL, objects, near-miss)
+   - Single primitives and culture transfer always run (cheapest, highest ROI)
+   - All gated variables initialized to `Optional[Program] = None` for safe downstream use
+
+3. **Inner-loop budget enforcement** (`arc_agent/scorer.py`, `arc_agent/synthesizer.py`):
+   - Added `evals_budget` field and `budget_ok` property to `TaskCache`
+   - Solver passes budget to cache: `TaskCache(task, evals_budget=evals_budget)`
+   - Budget checks inside: `try_all_pairs`, `try_all_triples`, `try_best_triples`, `try_near_miss_refinement`, `try_conditional_singles`
+   - Result: task 017c7c7b budget=5,555 now uses 5,719 evals (was 116,263 — 95% reduction)
+
+4. **Integrate try_color_fix** (`arc_agent/solver.py`):
+   - Added as step 3l after near-miss refinement
+   - Tries consistent color remapping on all near-miss programs scoring 0.80+
+   - Cheap: one scoring call per candidate
+
+5. **New tests** (`tests/test_compute_budget.py`):
+   - 16 tests covering cell-normalized budget, budget gating, exceeded flag, TaskCache counter
+   - Test suite: 688 tests (up from 672), all passing
+
+### Results
+
+- Budget system fully functional: `--compute-cap 1` now actually limits compute
+- 3-task benchmark: 23.7s → 3.0s with tight budget (8× faster)
+- All 688 tests pass
+- No regression in solve count (budget only affects tasks that exceed their allocation)
+
+### Commits
+
+- `04d4b17` — Fix compute cap defaults: iteration=400M (fast), contest=uncapped (max solves)
+- `b67e8b0` — Fix compute budget to gate all search phases, not just evolution
+- `eef6f59` — Add fine-grained budget enforcement inside search methods
+- `5f18226` — Integrate try_color_fix into solver search pipeline
