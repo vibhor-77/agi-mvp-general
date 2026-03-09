@@ -366,17 +366,14 @@ class FourPillarsSolver:
         elapsed = time.time() - start_time
 
         # Step 4a: Try decomposition as fallback (COMPOSABILITY)
+        # Uses deterministic search (singles/pairs/triples) for sub-problems
+        # instead of evolution — 30× more effective per eval.
         # Skip if we already have candidates or evals budget exceeded.
         if best_score < 0.99 and not candidates and cache.n_evals < evals_budget:
             decomposed = self.decomposer.decompose_if_needed(
                 task,
                 best_score,
-                lambda t: self.synthesizer.synthesize(
-                    task=t,
-                    max_generations=self.max_generations // 2,
-                    target_score=0.99,
-                    verbose=False,
-                )
+                self._deterministic_sub_synthesize,
             )
             if decomposed is not None and decomposed.fitness > best_score:
                 best_program = decomposed
@@ -680,6 +677,58 @@ class FourPillarsSolver:
             print(f"  ◆ Object decomposition (score={result.fitness:.3f})")
 
         return result
+
+    # ----------------------------------------------------------------
+    # Deterministic sub-synthesize: fast search for decomposition sub-tasks
+    # ----------------------------------------------------------------
+
+    def _deterministic_sub_synthesize(
+        self, task: dict
+    ) -> tuple[Optional[Program], list[dict]]:
+        """Fast deterministic search for decomposition sub-problems.
+
+        The decomposer breaks a task into sub-problems (color channels,
+        quadrants, etc.) and calls a synthesize_fn on each.  The original
+        implementation used evolutionary synthesis — slow and poor at
+        generalizing.  This replaces it with the fast deterministic pipeline
+        (singles → pairs) which is 30× more effective per eval.
+
+        Sub-problems should be simpler than the original task, so we use
+        a lighter search: singles → parameterized → pairs(top-15).
+        Triples are skipped to keep decomposition fast (each decomposition
+        strategy creates 2-7 sub-problems).
+
+        Returns (program, []) to match the synthesize_fn signature expected
+        by DecompositionEngine.  The history list is always empty since
+        deterministic search has no generational history.
+        """
+        cache = TaskCache(task)
+
+        # 1. Try single primitives (fast: ~300 evals)
+        best = self._try_single_primitives(task, cache)
+        if best and cache.is_pixel_perfect(best):
+            return best, []
+
+        # 2. Try parameterized primitives (fast: ~50 evals)
+        param = self._try_parameterized(task, cache)
+        if param and cache.is_pixel_perfect(param):
+            return param, []
+
+        # 3. Try all pairs (top-15: ~225 combos × examples)
+        # Lighter than main solver's top-40 since sub-problems should be simpler
+        pair = self.synthesizer.try_all_pairs(task, cache, top_k=15)
+        if pair and cache.is_pixel_perfect(pair):
+            return pair, []
+
+        # 4. Return best non-perfect result (decomposer checks fitness)
+        best_prog = None
+        best_score = 0.0
+        for prog in [best, param, pair]:
+            if prog and prog.fitness > best_score:
+                best_score = prog.fitness
+                best_prog = prog
+
+        return best_prog, []
 
     def _try_dsl_synthesis(self, task: dict,
                            cache: "TaskCache",

@@ -807,7 +807,8 @@ class DecompositionEngine:
         self,
         task: dict,
         best_score: float,
-        synthesize_fn: Callable[[dict], tuple[Optional[Program], list[dict]]]
+        synthesize_fn: Callable[[dict], tuple[Optional[Program], list[dict]]],
+        time_budget: float = 30.0,
     ) -> Optional[Program]:
         """Try decomposition strategies if best_score is below threshold.
 
@@ -815,13 +816,20 @@ class DecompositionEngine:
             task: ARC task
             best_score: Current best score from standard synthesis
             synthesize_fn: Function to synthesize on a task
+            time_budget: Maximum seconds to spend on all strategies combined.
+                         Default 30s prevents decomposition from dominating
+                         overall solve time.
 
         Returns:
             A decomposed program if found and better than best_score, else None.
         """
+        import time as _time
+
         if best_score >= 0.99:
             # Already solved well enough
             return None
+
+        deadline = _time.time() + time_budget
 
         # Try strategies in order: simpler/faster first
         strategies = [
@@ -834,6 +842,8 @@ class DecompositionEngine:
         ]
 
         for strategy in strategies:
+            if _time.time() >= deadline:
+                break
             try:
                 program = strategy(task, synthesize_fn)
                 if program is not None and program.fitness > best_score:

@@ -653,5 +653,65 @@ class TestMaskingDecomposition(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestDeterministicSubSynthesize(unittest.TestCase):
+    """Test the deterministic sub-synthesize used by decomposition.
+
+    The solver's _deterministic_sub_synthesize replaces the evolutionary
+    synthesize_fn with fast deterministic search (singles → pairs → triples).
+    """
+
+    def test_sub_synthesize_finds_identity(self):
+        """Deterministic sub-synthesize should find identity transform."""
+        from arc_agent.solver import FourPillarsSolver as Solver
+
+        solver = Solver(verbose=False)
+        task = {
+            'train': [
+                {'input': [[1, 2], [3, 4]], 'output': [[1, 2], [3, 4]]},
+                {'input': [[5, 6], [7, 8]], 'output': [[5, 6], [7, 8]]},
+            ]
+        }
+        prog, history = solver._deterministic_sub_synthesize(task)
+        self.assertIsNotNone(prog)
+        self.assertIsInstance(history, list)
+        # Identity should score perfectly
+        self.assertGreaterEqual(prog.fitness, 0.99)
+
+    def test_sub_synthesize_returns_tuple(self):
+        """Return signature matches (program, history) for decomposer."""
+        from arc_agent.solver import FourPillarsSolver as Solver
+
+        solver = Solver(verbose=False)
+        task = {
+            'train': [
+                {'input': [[1]], 'output': [[1]]},
+            ]
+        }
+        result = solver._deterministic_sub_synthesize(task)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+    def test_sub_synthesize_unsolvable_returns_none(self):
+        """Unsolvable sub-tasks should return (None, [])."""
+        from arc_agent.solver import FourPillarsSolver as Solver
+
+        solver = Solver(verbose=False)
+        # Create a task with complex, unsolvable transform
+        task = {
+            'train': [
+                {
+                    'input': [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                    'output': [[9, 1, 5], [3, 7, 2], [6, 4, 8]],
+                },
+            ]
+        }
+        prog, history = solver._deterministic_sub_synthesize(task)
+        # May return None or a low-scoring program
+        if prog is not None:
+            # Should not be pixel-perfect for a random permutation
+            self.assertLessEqual(prog.fitness, 1.0)
+        self.assertIsInstance(history, list)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -2471,3 +2471,52 @@ Key lessons that generalize beyond ARC-AGI-1:
 - `b67e8b0` — Fix compute budget to gate all search phases, not just evolution
 - `eef6f59` — Add fine-grained budget enforcement inside search methods
 - `5f18226` — Integrate try_color_fix into solver search pipeline
+
+---
+
+## Session 32 — Decomposition with Deterministic Search (March 9, 2026)
+
+### Prompt
+
+> Continue from where you left off. Continue with high ROI big picture stuff.
+
+### Analysis
+
+Previous ROI analysis identified 56 eval near-misses from decomposition strategies (33 spatial_quadrant_decomp + 23 color_channel_decomp scoring 0.90+). The decomposition engine was using **evolutionary synthesis** for sub-problems — slow (190+ seconds per task) and poor at generalizing.
+
+Root cause: `decompose_if_needed()` called `self.synthesizer.synthesize()` which runs evolution. Each decomposition strategy creates 2-7 sub-problems, each running full evolutionary search. This was both slow and ineffective.
+
+### Changes
+
+1. **`arc_agent/solver.py`** — Added `_deterministic_sub_synthesize()` method:
+   - Replaces evolutionary synthesis for decomposition sub-problems
+   - Runs: singles → parameterized → pairs(top-15)
+   - Skips triples (sub-problems should be simpler than the original)
+   - Matches the `synthesize_fn` signature: `(task) -> (program, history)`
+
+2. **`arc_agent/decompose.py`** — Added time budget to `decompose_if_needed()`:
+   - 30-second default time budget for all strategies combined
+   - Prevents decomposition from dominating overall solve time
+   - Strategies abort at deadline; remaining strategies skipped
+
+3. **`tests/test_decompose.py`** — 3 new tests for `_deterministic_sub_synthesize`:
+   - Finds identity transform on simple task
+   - Returns correct (program, history) tuple format
+   - Handles unsolvable tasks gracefully
+
+### Performance Impact
+
+Before (evolutionary decomposition):
+- 6cdd2623: 255s (color decomposition with 7 colors × evolution)
+- 2281f1f4: 189s (spatial decomposition × 4 quadrants × evolution)
+
+After (deterministic decomposition):
+- 6cdd2623: 11.3s (23× faster)
+- 2281f1f4: 5.5s (34× faster)
+- All 10 near-miss tasks complete within 30s budget
+
+### Results
+
+- 691 tests pass (688 + 3 new)
+- No regression on 15-task benchmark (3/15 solved, same as baseline)
+- Decomposition now fast enough to be worth running on every unsolved task
