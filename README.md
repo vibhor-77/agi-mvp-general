@@ -31,79 +31,93 @@ git clone https://github.com/vibhor-77/agi-mvp-general.git
 cd agi-mvp-general
 pip install numpy
 
-# Run the test suite (480 tests)
+# Run the test suite (612 tests)
 python -m unittest discover -s tests -p "*.py"
 
 # Clone the ARC-AGI dataset
 git clone https://github.com/fchollet/ARC-AGI.git
 
-# Run the full pipeline (see CLI Modes below)
-python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
-    --culture-file culture.json --output results_train.json
-python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
-    --culture-file culture.json --output results_eval.json
+# Run the benchmark (parallel by default, all outputs auto-saved)
+python benchmark.py --data-dir ARC-AGI/data/training
+python benchmark.py --data-dir ARC-AGI/data/evaluation \
+    --culture-file cultures/<timestamp>_training.json
 ```
 
 **Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup.
 
-## CLI Modes
+## Benchmark
 
-The benchmark has three modes with clean separation of concerns:
+The `benchmark.py` script is the primary entry point for running and measuring solver performance. It runs tasks in parallel by default and automatically saves all artifacts to organized subdirectories.
+
+### Usage
+
+```bash
+# Full training run (all 400 tasks, auto workers, auto-save everything)
+python benchmark.py --data-dir ARC-AGI/data/training
+
+# Quick subset for development
+python benchmark.py --data-dir ARC-AGI/data/training --tasks 20
+
+# Single-process for debugging
+python benchmark.py --data-dir ARC-AGI/data/training --workers 1
+
+# Train → Eval workflow with culture transfer
+python benchmark.py --data-dir ARC-AGI/data/training
+python benchmark.py --data-dir ARC-AGI/data/evaluation \
+    --culture-file cultures/<timestamp>_training.json
+```
+
+### Auto-saved artifacts
+
+Every run automatically saves three files with timestamps:
+
+```
+logs/20260308_191928_training.log        — full console output (tee'd)
+results/20260308_191951_training.json    — per-task results + summary
+cultures/20260308_191951_training.json   — learned culture snapshot
+```
+
+### Options
+
+```
+--data-dir PATH        ARC-AGI data directory (default: ARC-AGI/data/training)
+--tasks N              Number of tasks, 0=all (default: 0)
+--workers N            Parallel workers, 0=auto, 1=single-process (default: 0)
+--seed N               Random seed (default: 42)
+--population-size N    Evolutionary population (default: 60)
+--max-generations N    Max generations (default: 30)
+--culture-file PATH    Load culture from this file
+--save-culture PATH    Override auto culture save path
+--results PATH         Override auto results save path
+--log-file PATH        Override auto log file path
+--no-log               Disable log file (console only)
+```
+
+### Progress display
+
+The benchmark shows Started/Done lines per task with straggler detection, rolling summaries every 25 tasks, and flags tasks taking >3x the median time.
+
+## CLI Modes (arc_agent.evaluate)
+
+The `arc_agent.evaluate` module provides fine-grained control with three modes:
 
 ### `train` — Learn from training data
-
-Runs the solver with full access to training answers. Discovers concepts and programs, saves them to a culture file for reuse. Uses exhaustive search with multiple restarts.
-
 ```bash
-python -m arc_agent.evaluate train \
-    --data-dir ARC-AGI/data/training \
-    --culture-file culture.json \
-    --output results_train.json
+python -m arc_agent.evaluate train --data-dir ARC-AGI/data/training \
+    --culture-file culture.json --output results_train.json
 ```
-
-Culture file is **saved** after the run. This is the most expensive mode — it invests compute to build up knowledge.
 
 ### `eval` — Score against held-out data
-
-Runs the solver on evaluation tasks and scores results against expected test output. Loads culture from training. Produces the full scoreboard with solved(exact), flukes, overfits.
-
 ```bash
-python -m arc_agent.evaluate eval \
-    --data-dir ARC-AGI/data/evaluation \
-    --culture-file culture.json \
-    --output results_eval.json
+python -m arc_agent.evaluate eval --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output results_eval.json
 ```
-
-Culture file is **loaded** before the run.
 
 ### `infer` — Generate predictions (no test peeking)
-
-Same as eval but never looks at test output. Outputs ranked candidates per task with their programs. Use this for private eval submission — clean separation guarantees no data leakage.
-
 ```bash
-python -m arc_agent.evaluate infer \
-    --data-dir ARC-AGI/data/evaluation \
-    --culture-file culture.json \
-    --output predictions_eval.json
+python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
+    --culture-file culture.json --output predictions_eval.json
 ```
-
-### Recommended workflow
-
-```bash
-# Step 1: Train (learn culture from training set)
-python -m arc_agent.evaluate train \
-    --data-dir ARC-AGI/data/training \
-    --culture-file culture.json \
-    --output results_train.json
-
-# Step 2: Eval (score on held-out evaluation set)
-python -m arc_agent.evaluate eval \
-    --data-dir ARC-AGI/data/evaluation \
-    --culture-file culture.json \
-    --output results_eval.json
-```
-
-For private eval submission, replace `eval` with `infer` in Step 2.
 
 ### Common options
 
@@ -116,20 +130,6 @@ For private eval submission, replace `eval` with `infer` in Step 2.
 --seed N         Random seed for reproducibility (default: 42)
 --top-k N        Candidates to submit per task (default: 3)
 --quiet          Suppress per-task output
-```
-
-### Quick debugging run
-
-```bash
-# Run a small subset
-python -m arc_agent.evaluate train \
-    --data-dir ARC-AGI/data/training \
-    --limit 20 --workers 1
-
-# Run specific tasks by ID
-python -m arc_agent.evaluate train \
-    --data-dir ARC-AGI/data/training \
-    --tasks 0b148d64 2204b7a8 3c9b0459
 ```
 
 ## Results
@@ -172,6 +172,7 @@ Note: v0.22 appears lower than v0.17 because the metric definition changed. Earl
 ```
 agi-mvp-general/
 ├── README.md                        # This file
+├── benchmark.py                     # Primary benchmark runner (parallel, auto-save)
 ├── INSTALL.md                       # Setup instructions (conda/venv/pip)
 ├── requirements.txt                 # Dependencies: numpy (runtime) + pytest (dev)
 ├── pyproject.toml                   # Python project configuration
@@ -188,28 +189,22 @@ agi-mvp-general/
 │   ├── scene.py                     # Object-centric reasoning (perceive→infer→apply)
 │   ├── decompose.py                 # Task decomposition (color-channel, spatial, diff)
 │   ├── object_decompose.py          # Per-object decomposition (perceive→transform→reassemble)
-│   ├── dsl.py                       # Typed DSL: expression trees + interpreter (~20 ops)
+│   ├── dsl.py                       # Typed DSL: expression trees + interpreter (45 ops)
 │   ├── dsl_synth.py                 # Bottom-up program synthesis over DSL
 │   ├── culture.py                   # Culture save/load (cumulative knowledge transfer)
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 612 tests
-│   ├── test_primitives.py           # Grid transforms (55 tests)
-│   ├── test_scene.py                # Object-centric reasoning (26 tests)
-│   ├── test_concepts.py             # Concept system (21 tests)
-│   ├── test_decompose.py            # Task decomposition (21 tests)
-│   ├── test_integration.py          # Full pipeline (22 tests)
-│   ├── test_performance.py          # Parallel eval + scorer correctness (26 tests)
-│   └── ...                          # 14 test files total
+├── tests/                           # 612 tests (14 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
-│   ├── analyze_object_rules.py      # Pattern analysis across tasks
-│   └── debug_recolor.py             # Deep dive into recolor failures
-└── docs/                            # Documentation
-    ├── ARCHITECTURE.md              # Technical architecture guide
-    ├── DESIGN_NOTES.md              # Design decisions and rationale
-    ├── RESEARCH_PLAN.md             # Research plan with metrics
-    └── PROMPT_LOG.md                # Full session history and results
+├── docs/                            # Documentation
+│   ├── ARCHITECTURE.md              # Technical architecture guide
+│   ├── DESIGN_NOTES.md              # Design decisions and rationale
+│   ├── RESEARCH_PLAN.md             # Research plan with metrics
+│   └── PROMPT_LOG.md                # Full session history and results
+├── logs/                            # Auto-saved benchmark logs (gitignored)
+├── results/                         # Auto-saved benchmark results (gitignored)
+└── cultures/                        # Auto-saved culture snapshots (gitignored)
 ```
 
 ## Architecture
@@ -271,7 +266,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (480 tests)
+- [x] Test suite (612 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)

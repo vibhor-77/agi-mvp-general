@@ -1643,3 +1643,75 @@ Built a program synthesis engine that constructs novel Grid→Grid transforms fr
 2. **Cell-level iteration combinator**: `for_each_cell` for outline, border detection, local ops
 3. **More dimension-changing ops**: compress_rows/cols, extract_repeating_tile
 4. **Path to ARC-AGI-2 / Zork / robotics**: Swap grid ops for action primitives → same engine
+
+---
+
+## Session 22 — v0.27: Parallel Benchmark, Auto-Save Artifacts, Straggler Detection
+
+### Prompt
+
+> Can you commit the files to git as well every time without me having to ask you?
+> Beautify it as needed [...] I should get a good sense of progress and performance so that I can cancel early if something seems off. Stragglers have been a concern before, so I would like to know if a task is slow because it is just a large task, or if there is possibly a bug or inefficient code or pathology.
+> Also, print in the very beginning explicitly all the search parameters and any other parameters or arguments that the run is using, so that I can look back.
+> Also, tee the output to a timestamped log file in the logs subdirectory. Similarly, by default create timestamped culture file in the cultures subdirectory and results/output file in the results subdirectory.
+> Also, going forward, please record any output files in appropriate subdirectories instead of polluting the top level directory with too many junk files.
+
+### Claude's Reasoning
+
+The user wants a professional, production-quality benchmark runner that:
+1. Runs tasks in parallel by default using multiprocessing.Pool
+2. Auto-saves all artifacts (logs, results, culture) to organized timestamped subdirectories
+3. Prints all parameters upfront for reproducibility
+4. Shows detailed progress with straggler detection
+5. Tees console output to a log file
+6. Cleans up top-level junk files
+
+### Changes Made
+
+**benchmark.py — Complete rewrite:**
+- Parallel execution via `multiprocessing.Pool` with `imap_unordered` (default: auto-detect performance cores)
+- `_TeeWriter` class: duplicates stdout to both console and a timestamped log file
+- Full parameter dump at run start: mode, data dir, tasks, workers, seed, population size, max generations, culture input/output, results output, grid size statistics
+- `_BenchmarkTracker` class with:
+  - `>>` Started lines showing task ID, total cell count, train/test dimensions
+  - `✓/◇/△/✗` Done lines with walltime, status, score, method, running totals
+  - `*** SLOW ***` flag when a task takes >3x the running median time
+  - Rolling summaries every 25 tasks with ETA, rate, method breakdown
+  - Straggler detection in summaries: lists in-flight tasks exceeding 3x median
+  - Top-5 slowest tasks in final summary (straggler post-mortem)
+- Auto-save to organized subdirectories:
+  - `logs/<timestamp>_<mode>.log` — full console output
+  - `results/<timestamp>_<mode>.json` — per-task results with meta section
+  - `cultures/<timestamp>_<mode>.json` — culture snapshot
+- Results JSON includes meta (all parameters, wall clock time), summary, and per-task details
+- New CLI flags: `--workers`, `--population-size`, `--max-generations`, `--results`, `--log-file`, `--no-log`
+- Final "Artifacts" section prints paths to all saved files
+
+**Cleanup:**
+- Moved 15 top-level junk files to proper subdirectories:
+  - `*.json` results → `results/`
+  - `culture*.json` → `cultures/`
+  - `*.log` → `logs/`
+- Added `cultures/` to `.gitignore`
+- Updated README: new Quick Start with benchmark.py, project structure with logs/results/cultures dirs, test count to 612, DSL ops to 45
+
+### Results
+
+- 612 tests pass (no regressions)
+- 6-task validation: parallel execution confirmed working, straggler detection flags slow tasks
+- All artifacts auto-saved correctly
+
+### Files Modified
+
+| File | Action |
+|------|--------|
+| `benchmark.py` | Complete rewrite: parallel, auto-save, tee logging, straggler detection |
+| `.gitignore` | Added `cultures/` |
+| `README.md` | Updated Quick Start, project structure, test count, benchmark docs |
+| `docs/PROMPT_LOG.md` | Added Session 22 |
+
+### Next Steps
+
+1. Run full 400-task training benchmark with new parallel runner
+2. Run eval with culture transfer from training
+3. Continue DSL synthesis improvements (cell-level iteration, more dimension ops)
