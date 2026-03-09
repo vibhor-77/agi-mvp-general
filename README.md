@@ -140,7 +140,17 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.26 (current)
+### ARC-AGI-1 v0.27 (current — partial, full run pending)
+
+| Metric | Training (122/400) | Evaluation |
+|--------|-------------------|------------|
+| **Solved (exact)** | 36/122 (29.5%) | pending |
+| Overfits | 5/122 (4.1%) | pending |
+| LLM used | None | None |
+
+Key improvement over v0.26: LOOCV generalization reduced overfits from ~8% to ~4%.
+
+### ARC-AGI-1 v0.26
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
@@ -170,6 +180,9 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 | v0.23 | 81/400 (20.2%) | 19/400 (4.8%) | Object-centric reasoning, no early exits |
 | v0.25 | 92/400 (23.0%) | 25/400 (6.2%) | Object decomposition, conditional recolor, Numba fix |
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
+| v0.27 | 36/122 (29.5%)* | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
+
+\* Partial run (122/400 training tasks). Overfits dropped from 31 to 5 at this checkpoint.
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 

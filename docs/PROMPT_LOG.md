@@ -2212,3 +2212,69 @@ Decision on script cleanup: Keep both `evaluate.py` (clean train/infer/eval mode
 3. Recursive task decomposition (next high-ROI improvement)
 4. Analyze near-miss tasks to improve candidate selection
 5. Consider faster conditional search (currently ~2-4s overhead per task)
+
+---
+
+## Session 28: LOOCV Generalization, Code Cleanup & Consolidation
+
+**Date:** March 9, 2026
+**Starting point:** v0.26 (94 train, 31 eval)
+**Focus:** Reducing overfitting, code quality, repository consolidation
+
+### Changes Made
+
+**Validated improvements (kept):**
+- LOOCV generalization check for neighbor rules (+2 exact, -6 overfits on 13-task test set)
+- Expanded near-miss refinement pool: 10 sources with dedup/sorting (+1 new deterministic solve)
+- Position-aware feature extractor for neighbor rules
+- Skip evolution when deterministic search already solved
+- Post-evolution near-miss refinement
+
+**Tried and reverted:**
+- Second-pass DSL synthesis (10s/task, 0 new solves — 3× slowdown for no gain)
+- Aggressive evolution seeding (lower thresholds — caused major slowdown)
+- Evolution restarts 1→2 (marginal gain, measurable cost)
+- Triple search top-15→top-20 (marginal gain, measurable cost)
+
+**Dead code removed:**
+- Color-fix pass in solver pipeline (validated 0 solves on 10 candidate tasks)
+
+**Code quality:**
+- Clean step numbering in solve_task() (was 3.45, 3.95, 3.97, 5.1, 5.9 → now 3a-3k, 4-4b, 5-5a, 6, 7)
+- Fixed stale documentation: primitive counts 287→304, broken CELL_RULES.md reference, LOC counts
+- Squashed 13 add-then-revert commits into single clean commit
+- Added run_subset.py for targeted hypothesis testing
+
+### Experiment Methodology
+
+Created `run_subset.py` for fast targeted experiments on specific task subsets:
+- H1 (15 near-miss tasks): +1 new solve, 582s
+- H2 (13 overfit tasks): +2 exact, -6 overfits, 121s
+- H3 (10 color-fix candidates): 0 new solves, 356s
+
+### Partial Benchmark Results (v0.27)
+
+Training at 122/400: 36 exact (29.5%), 5 overfits (4.1%)
+vs v0.26 at same checkpoint: ~25/100 exact (25%), 7 overfits (7%)
+
+Key wins: higher solve rate and halved overfit rate from LOOCV.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `arc_agent/solver.py` | LOOCV, near-miss pool, position features, step renumbering |
+| `arc_agent/synthesizer.py` | try_color_fix(), try_near_miss_refinement() improvements |
+| `run_subset.py` | New: targeted hypothesis testing tool |
+| `tests/test_primitives.py` | 34 new test lines |
+| `tests/test_synthesizer.py` | 100 new test lines (color-fix, near-miss refinement) |
+| `README.md` | v0.27 results, fixed stale references, updated project structure |
+| `docs/ARCHITECTURE.md` | Fixed primitive count 43→304 |
+| `docs/RESEARCH_PLAN.md` | Updated version to v0.27 |
+
+### Lessons Learned
+
+1. Always validate changes on targeted subsets before running full benchmarks
+2. Revert immediately if speed regression is confirmed — accuracy gains must justify cost
+3. Keep commit history clean: squash add-then-revert cycles before pushing
+4. Document stale numbers are a maintenance burden — automate counts where possible
