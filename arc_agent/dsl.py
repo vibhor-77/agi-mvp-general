@@ -281,6 +281,163 @@ class DSLInterpreter:
                         result[r][c] = rule[key]
             return result
 
+        # Tiling operations
+        if op == "tile_2x2":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h = len(g)
+            result = []
+            for _ in range(2):
+                for r in range(h):
+                    result.append(g[r][:] + g[r][:])
+            return result
+        if op == "tile_3x3":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h = len(g)
+            result = []
+            for _ in range(3):
+                for r in range(h):
+                    result.append(g[r][:] * 3)
+            return result
+
+        # Scaling operations
+        if op == "scale_2x":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            result = []
+            for row in g:
+                new_row = []
+                for cell in row:
+                    new_row.extend([cell, cell])
+                result.append(new_row[:])
+                result.append(new_row[:])
+            return result
+        if op == "scale_3x":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            result = []
+            for row in g:
+                new_row = []
+                for cell in row:
+                    new_row.extend([cell, cell, cell])
+                for _ in range(3):
+                    result.append(new_row[:])
+            return result
+
+        # Gravity operations
+        if op == "gravity_down":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [[0] * w for _ in range(h)]
+            for c in range(w):
+                non_zero = [g[r][c] for r in range(h) if g[r][c] != 0]
+                for i, v in enumerate(reversed(non_zero)):
+                    result[h - 1 - i][c] = v
+            return result
+        if op == "gravity_up":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [[0] * w for _ in range(h)]
+            for c in range(w):
+                non_zero = [g[r][c] for r in range(h) if g[r][c] != 0]
+                for i, v in enumerate(non_zero):
+                    result[i][c] = v
+            return result
+        if op == "gravity_left":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [[0] * w for _ in range(h)]
+            for r in range(h):
+                non_zero = [g[r][c] for c in range(w) if g[r][c] != 0]
+                for i, v in enumerate(non_zero):
+                    result[r][i] = v
+            return result
+        if op == "gravity_right":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [[0] * w for _ in range(h)]
+            for r in range(h):
+                non_zero = [g[r][c] for c in range(w) if g[r][c] != 0]
+                for i, v in enumerate(reversed(non_zero)):
+                    result[r][w - 1 - i] = v
+            return result
+
+        # Symmetry completion
+        if op == "complete_symmetry_h":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            if w < 2:
+                return [row[:] for row in g]
+            result = [row[:] for row in g]
+            mid = w // 2
+            for r in range(h):
+                left_nz = sum(1 for c in range(mid) if g[r][c] != 0)
+                right_nz = sum(1 for c in range(mid, w) if g[r][c] != 0)
+                if left_nz >= right_nz:
+                    for c in range(w):
+                        result[r][w - 1 - c] = result[r][c]
+                else:
+                    for c in range(w):
+                        result[r][c] = result[r][w - 1 - c]
+            return result
+        if op == "complete_symmetry_v":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            if h < 2:
+                return [row[:] for row in g]
+            result = [row[:] for row in g]
+            mid = h // 2
+            top_nz = sum(1 for r in range(mid) for c in range(w)
+                         if g[r][c] != 0)
+            bot_nz = sum(1 for r in range(mid, h) for c in range(w)
+                         if g[r][c] != 0)
+            if top_nz >= bot_nz:
+                for r in range(h):
+                    result[h - 1 - r] = result[r][:]
+            else:
+                for r in range(h):
+                    result[r] = result[h - 1 - r][:]
+            return result
+
+        # Denoise (majority vote)
+        if op == "denoise_3x3":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [row[:] for row in g]
+            for r in range(h):
+                for c in range(w):
+                    counts: dict[int, int] = {}
+                    for dr in range(-1, 2):
+                        for dc in range(-1, 2):
+                            nr, nc = r + dr, c + dc
+                            if 0 <= nr < h and 0 <= nc < w:
+                                v = g[nr][nc]
+                                counts[v] = counts.get(v, 0) + 1
+                    majority = max(counts, key=lambda k: counts[k])
+                    total = sum(counts.values())
+                    if counts[majority] > total // 2:
+                        result[r][c] = majority
+            return result
+
         # Map objects
         if op == "map_objects":
             # args[0] is the evaluated grid, args[1] is the unevaluated lambda
@@ -372,4 +529,20 @@ DSL_OPS: dict[str, tuple[list[DSLType], DSLType]] = {
     "fill_background": ([DSLType.GRID, DSLType.COLOR], DSLType.GRID),
     # Grid, ColorMap → Grid (neighborhood rule)
     "apply_neighbor_rule": ([DSLType.GRID, DSLType.COLOR_MAP], DSLType.GRID),
+    # Grid → Grid (tiling)
+    "tile_2x2": ([DSLType.GRID], DSLType.GRID),
+    "tile_3x3": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (scaling)
+    "scale_2x": ([DSLType.GRID], DSLType.GRID),
+    "scale_3x": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (gravity)
+    "gravity_down": ([DSLType.GRID], DSLType.GRID),
+    "gravity_up": ([DSLType.GRID], DSLType.GRID),
+    "gravity_left": ([DSLType.GRID], DSLType.GRID),
+    "gravity_right": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (symmetry completion)
+    "complete_symmetry_h": ([DSLType.GRID], DSLType.GRID),
+    "complete_symmetry_v": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (denoise)
+    "denoise_3x3": ([DSLType.GRID], DSLType.GRID),
 }

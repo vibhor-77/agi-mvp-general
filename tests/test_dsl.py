@@ -484,5 +484,193 @@ class TestDSLSynthesisNeighbor(unittest.TestCase):
         self.assertTrue(cache.is_pixel_perfect(result))
 
 
+class TestDSLSpatialOps(unittest.TestCase):
+    """Test spatial/structural DSL operations: tiling, scaling, gravity, symmetry, denoise."""
+
+    def setUp(self):
+        from arc_agent.dsl import DSLInterpreter
+        self.interp = DSLInterpreter()
+
+    def test_tile_2x2(self):
+        """Tile grid in a 2x2 arrangement."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("tile_2x2", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2], [3, 4]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+            [1, 2, 1, 2],
+            [3, 4, 3, 4],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_tile_3x3(self):
+        """Tile grid in a 3x3 arrangement."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("tile_3x3", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+        self.assertEqual(result, expected)
+
+    def test_scale_2x(self):
+        """Scale each cell to a 2x2 block."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("scale_2x", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2], [3, 4]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [
+            [1, 1, 2, 2],
+            [1, 1, 2, 2],
+            [3, 3, 4, 4],
+            [3, 3, 4, 4],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_scale_3x(self):
+        """Scale each cell to a 3x3 block."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("scale_3x", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+        self.assertEqual(result, expected)
+
+    def test_gravity_down(self):
+        """Move non-zero cells to bottom of columns."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("gravity_down", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 0, 2], [0, 3, 0], [0, 0, 0]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[0, 0, 0], [0, 0, 0], [1, 3, 2]]
+        self.assertEqual(result, expected)
+
+    def test_gravity_up(self):
+        """Move non-zero cells to top of columns."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("gravity_up", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[0, 0, 0], [0, 3, 0], [1, 0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 3, 2], [0, 0, 0], [0, 0, 0]]
+        self.assertEqual(result, expected)
+
+    def test_gravity_left(self):
+        """Move non-zero cells to left of rows."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("gravity_left", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[0, 1, 0], [2, 0, 3]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 0, 0], [2, 3, 0]]
+        self.assertEqual(result, expected)
+
+    def test_gravity_right(self):
+        """Move non-zero cells to right of rows."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("gravity_right", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[0, 1, 0], [2, 0, 3]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[0, 0, 1], [0, 2, 3]]
+        self.assertEqual(result, expected)
+
+    def test_complete_symmetry_h(self):
+        """Complete horizontal symmetry: mirror the denser half."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("complete_symmetry_h", [DSLExpr.input_grid()],
+                               DSLType.GRID)
+        # Left half has content, right is empty
+        grid = [[1, 2, 0, 0], [3, 4, 0, 0]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 2, 2, 1], [3, 4, 4, 3]]
+        self.assertEqual(result, expected)
+
+    def test_complete_symmetry_v(self):
+        """Complete vertical symmetry: mirror the denser half."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("complete_symmetry_v", [DSLExpr.input_grid()],
+                               DSLType.GRID)
+        # Top half has content, bottom is empty
+        grid = [[1, 2], [3, 4], [0, 0], [0, 0]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 2], [3, 4], [3, 4], [1, 2]]
+        self.assertEqual(result, expected)
+
+    def test_denoise_3x3(self):
+        """3x3 majority vote denoising."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("denoise_3x3", [DSLExpr.input_grid()],
+                               DSLType.GRID)
+        # A grid of 1s with a single noisy 2 in the middle
+        grid = [[1, 1, 1], [1, 2, 1], [1, 1, 1]]
+        result = self.interp.evaluate(expr, grid)
+        expected = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+        self.assertEqual(result, expected)
+
+
+class TestDSLSynthesisSpatial(unittest.TestCase):
+    """Test synthesis with spatial operations."""
+
+    def test_synthesize_tile_2x2(self):
+        """Task: tile input grid 2x2."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 2], [3, 4]],
+             "output": [[1, 2, 1, 2], [3, 4, 3, 4],
+                        [1, 2, 1, 2], [3, 4, 3, 4]]},
+            {"input": [[5]],
+             "output": [[5, 5], [5, 5]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_synthesize_scale_2x(self):
+        """Task: scale each cell to 2x2 block."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 2]],
+             "output": [[1, 1, 2, 2], [1, 1, 2, 2]]},
+            {"input": [[3]],
+             "output": [[3, 3], [3, 3]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_synthesize_gravity_down(self):
+        """Task: gravity pushes all cells down."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 0], [0, 2]],
+             "output": [[0, 0], [1, 2]]},
+            {"input": [[3, 4, 0], [0, 0, 5], [0, 0, 0]],
+             "output": [[0, 0, 0], [0, 0, 0], [3, 4, 5]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_synthesize_complete_symmetry_h(self):
+        """Task: complete horizontal symmetry."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 2, 0, 0], [3, 4, 0, 0]],
+             "output": [[1, 2, 2, 1], [3, 4, 4, 3]]},
+            {"input": [[5, 0], [6, 0]],
+             "output": [[5, 5], [6, 6]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+
 if __name__ == "__main__":
     unittest.main()
