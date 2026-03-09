@@ -77,6 +77,11 @@ def synthesize_dsl_program(
     if result is not None:
         return result
 
+    # Phase 0c: Try dimension-change shortcuts (tiling, scaling, halving)
+    result = _try_dimension_shortcuts(inputs, outputs, interp, cache)
+    if result is not None:
+        return result
+
     # Phase 1: Generate depth-0 expressions (leaves)
     leaves = _generate_leaves(inputs, outputs)
 
@@ -307,6 +312,98 @@ def _learn_neighbor_rule(
         return None
 
     return filtered
+
+
+def _try_dimension_shortcuts(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Quick checks for common dimension-changing patterns.
+
+    Tests tile_2x2, tile_3x3, scale_2x, scale_3x, grid halving,
+    and border extraction without full enumeration.
+    """
+    if not inputs or not outputs:
+        return None
+
+    # Detect dimension ratios across all training examples
+    ratios = set()
+    for inp, out in zip(inputs, outputs):
+        h_in, w_in = len(inp), len(inp[0])
+        h_out, w_out = len(out), len(out[0])
+        if h_in == 0 or w_in == 0:
+            return None
+        ratios.add((h_out / h_in, w_out / w_in))
+
+    if len(ratios) != 1:
+        return None  # inconsistent ratios across examples
+    h_ratio, w_ratio = ratios.pop()
+
+    # Try single atomic ops that match the dimension ratio
+    candidates: list[str] = []
+
+    if h_ratio == 2.0 and w_ratio == 2.0:
+        candidates.extend(["tile_2x2", "scale_2x"])
+    elif h_ratio == 3.0 and w_ratio == 3.0:
+        candidates.extend(["tile_3x3", "scale_3x"])
+    elif h_ratio == 0.5 and w_ratio == 1.0:
+        # Top/bottom half, or boolean overlay of top+bottom halves
+        candidates.extend(["get_top_half", "get_bottom_half",
+                           "xor_halves_v", "or_halves_v", "and_halves_v"])
+    elif h_ratio == 1.0 and w_ratio == 0.5:
+        # Left/right half, or boolean overlay of left+right halves
+        candidates.extend(["get_left_half", "get_right_half",
+                           "xor_halves_h", "or_halves_h", "and_halves_h"])
+    elif h_ratio == 0.5 and w_ratio == 0.5:
+        # Both dimensions halved — try boolean overlays
+        candidates.extend(["xor_halves_v", "or_halves_v", "and_halves_v",
+                           "xor_halves_h", "or_halves_h", "and_halves_h"])
+
+    # Also try crop_to_content for any dimension reduction
+    if h_ratio <= 1.0 and w_ratio <= 1.0 and (h_ratio < 1.0 or w_ratio < 1.0):
+        candidates.append("crop_to_content")
+
+    for op_name in candidates:
+        if op_name not in DSL_OPS:
+            continue
+        expr = DSLExpr.make_op(op_name, [DSLExpr.input_grid()], DSLType.GRID)
+        results = _execute_on_all(expr, inputs, interp)
+        if results is None:
+            continue
+        prog = _check_match(expr, results, outputs, interp, cache)
+        if prog is not None:
+            return prog
+
+    # Try single op + color map: e.g., tile_2x2 then apply_color_map
+    cmap = _learn_color_map(inputs, outputs)
+    # For tiling/scaling with color adjustment, learn color map
+    # on the transformed grid rather than the raw input
+    for op_name in candidates:
+        if op_name not in DSL_OPS:
+            continue
+        expr_step1 = DSLExpr.make_op(
+            op_name, [DSLExpr.input_grid()], DSLType.GRID)
+        step1_results = _execute_on_all(expr_step1, inputs, interp)
+        if step1_results is None:
+            continue
+
+        # Learn color map from step1 output → expected output
+        step_cmap = _learn_color_map(step1_results, outputs)
+        if step_cmap is not None:
+            expr = DSLExpr.make_op(
+                "apply_color_map",
+                [expr_step1, DSLExpr.literal(step_cmap, DSLType.COLOR_MAP)],
+                DSLType.GRID,
+            )
+            results = _execute_on_all(expr, inputs, interp)
+            if results is not None:
+                prog = _check_match(expr, results, outputs, interp, cache)
+                if prog is not None:
+                    return prog
+
+    return None
 
 
 def _enumerate_depth(

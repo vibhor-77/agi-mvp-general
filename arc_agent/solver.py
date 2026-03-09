@@ -199,6 +199,11 @@ class FourPillarsSolver:
         # Inject best candidates into seeds for evolution, best first.
         # Use high threshold (0.85) to avoid polluting evolution with noise.
         seed_programs = list(seed_programs) if seed_programs else []
+        # Seed near-miss DSL results into evolution — they often have
+        # correct structure but wrong colors, which evolution can fix.
+        if dsl_result and dsl_result.fitness >= 0.70 and \
+                not cache.is_pixel_perfect(dsl_result):
+            seed_programs.insert(0, dsl_result)
         if culture_result and culture_result.fitness > 0.85:
             seed_programs.insert(0, culture_result)
         if triple_result and triple_result.fitness > 0.85:

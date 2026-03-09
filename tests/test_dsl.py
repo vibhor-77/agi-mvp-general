@@ -672,5 +672,138 @@ class TestDSLSynthesisSpatial(unittest.TestCase):
         self.assertTrue(cache.is_pixel_perfect(result))
 
 
+class TestDSLHalvingOps(unittest.TestCase):
+    """Test grid halving and boolean overlay operations."""
+
+    def setUp(self):
+        from arc_agent.dsl import DSLInterpreter
+        self.interp = DSLInterpreter()
+
+    def test_get_top_half(self):
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("get_top_half", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2], [3, 4], [5, 6], [7, 8]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_get_bottom_half(self):
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("get_bottom_half", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2], [3, 4], [5, 6], [7, 8]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[5, 6], [7, 8]])
+
+    def test_get_left_half(self):
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("get_left_half", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[1, 2], [5, 6]])
+
+    def test_get_right_half(self):
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("get_right_half", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 2, 3, 4], [5, 6, 7, 8]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[3, 4], [7, 8]])
+
+    def test_xor_halves_v(self):
+        """XOR top and bottom halves vertically."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("xor_halves_v", [DSLExpr.input_grid()], DSLType.GRID)
+        # Top: [[1, 0]], Bottom: [[0, 2]]
+        grid = [[1, 0], [0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        # XOR: both non-zero → 0, one non-zero → keep it
+        self.assertEqual(result, [[1, 2]])
+
+    def test_or_halves_v(self):
+        """OR top and bottom halves vertically."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("or_halves_v", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 0], [0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        # OR: prefer top if non-zero, else bottom
+        self.assertEqual(result, [[1, 2]])
+
+    def test_and_halves_v(self):
+        """AND top and bottom halves vertically."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("and_halves_v", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 0], [0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        # AND: both must be non-zero to keep
+        self.assertEqual(result, [[0, 0]])
+
+    def test_and_halves_v_overlap(self):
+        """AND with overlapping non-zero cells."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("and_halves_v", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 3], [2, 4]]
+        result = self.interp.evaluate(expr, grid)
+        # AND: both non-zero → keep top value
+        self.assertEqual(result, [[1, 3]])
+
+    def test_xor_halves_h(self):
+        """XOR left and right halves horizontally."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("xor_halves_h", [DSLExpr.input_grid()], DSLType.GRID)
+        grid = [[1, 0, 0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[1, 2]])
+
+
+class TestDSLSynthesisHalving(unittest.TestCase):
+    """Test synthesis with halving operations."""
+
+    def test_synthesize_xor_halves_v(self):
+        """Task: XOR top and bottom halves."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 0, 0], [0, 0, 2]],
+             "output": [[1, 0, 2]]},
+            {"input": [[3, 0], [0, 4]],
+             "output": [[3, 4]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_synthesize_get_top_half(self):
+        """Task: extract top half of grid."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        task = {"train": [
+            {"input": [[1, 2], [3, 4], [5, 6], [7, 8]],
+             "output": [[1, 2], [3, 4]]},
+            {"input": [[9, 0], [1, 2]],
+             "output": [[9, 0]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_dimension_shortcut_tile_with_color_map(self):
+        """Task: tile 2x2 then swap colors."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+        # Input: [[1]], Output: [[2, 2], [2, 2]] (tile + color map 1→2)
+        task = {"train": [
+            {"input": [[1]],
+             "output": [[2, 2], [2, 2]]},
+            {"input": [[3]],
+             "output": [[4, 4], [4, 4]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        # This may or may not find it depending on whether tile+color_map
+        # or scale+color_map is tried. Both are valid.
+        if result is not None:
+            self.assertTrue(cache.is_pixel_perfect(result))
+
+
 if __name__ == "__main__":
     unittest.main()

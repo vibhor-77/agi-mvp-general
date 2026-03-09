@@ -438,6 +438,70 @@ class DSLInterpreter:
                         result[r][c] = majority
             return result
 
+        # Grid halving (dimension-changing)
+        if op == "get_top_half":
+            g = args[0]
+            if not g or len(g) < 2:
+                return g
+            mid = len(g) // 2
+            return [row[:] for row in g[:mid]]
+        if op == "get_bottom_half":
+            g = args[0]
+            if not g or len(g) < 2:
+                return g
+            mid = len(g) // 2
+            return [row[:] for row in g[mid:]]
+        if op == "get_left_half":
+            g = args[0]
+            if not g or not g[0] or len(g[0]) < 2:
+                return g
+            mid = len(g[0]) // 2
+            return [row[:mid] for row in g]
+        if op == "get_right_half":
+            g = args[0]
+            if not g or not g[0] or len(g[0]) < 2:
+                return g
+            mid = len(g[0]) // 2
+            return [row[mid:] for row in g]
+
+        # Boolean grid combination (overlay halves)
+        if op in ("xor_halves_v", "or_halves_v", "and_halves_v"):
+            g = args[0]
+            if not g or not g[0] or len(g) < 2:
+                return g
+            h, w = len(g), len(g[0])
+            mid = h // 2
+            bool_op = op.split("_")[0]  # xor, or, and
+            result = [[0] * w for _ in range(mid)]
+            for r in range(mid):
+                for c in range(w):
+                    a, b = g[r][c], g[mid + r][c]
+                    if bool_op == "xor":
+                        result[r][c] = (a if b == 0 else (b if a == 0 else 0))
+                    elif bool_op == "or":
+                        result[r][c] = a if a != 0 else b
+                    elif bool_op == "and":
+                        result[r][c] = a if (a != 0 and b != 0) else 0
+            return result
+        if op in ("xor_halves_h", "or_halves_h", "and_halves_h"):
+            g = args[0]
+            if not g or not g[0] or len(g[0]) < 2:
+                return g
+            h, w = len(g), len(g[0])
+            mid = w // 2
+            bool_op = op.split("_")[0]
+            result = [[0] * mid for _ in range(h)]
+            for r in range(h):
+                for c in range(mid):
+                    a, b = g[r][c], g[r][mid + c]
+                    if bool_op == "xor":
+                        result[r][c] = (a if b == 0 else (b if a == 0 else 0))
+                    elif bool_op == "or":
+                        result[r][c] = a if a != 0 else b
+                    elif bool_op == "and":
+                        result[r][c] = a if (a != 0 and b != 0) else 0
+            return result
+
         # Map objects
         if op == "map_objects":
             # args[0] is the evaluated grid, args[1] is the unevaluated lambda
@@ -545,4 +609,16 @@ DSL_OPS: dict[str, tuple[list[DSLType], DSLType]] = {
     "complete_symmetry_v": ([DSLType.GRID], DSLType.GRID),
     # Grid → Grid (denoise)
     "denoise_3x3": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (halving / dimension reduction)
+    "get_top_half": ([DSLType.GRID], DSLType.GRID),
+    "get_bottom_half": ([DSLType.GRID], DSLType.GRID),
+    "get_left_half": ([DSLType.GRID], DSLType.GRID),
+    "get_right_half": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (boolean overlay of halves)
+    "xor_halves_v": ([DSLType.GRID], DSLType.GRID),
+    "or_halves_v": ([DSLType.GRID], DSLType.GRID),
+    "and_halves_v": ([DSLType.GRID], DSLType.GRID),
+    "xor_halves_h": ([DSLType.GRID], DSLType.GRID),
+    "or_halves_h": ([DSLType.GRID], DSLType.GRID),
+    "and_halves_h": ([DSLType.GRID], DSLType.GRID),
 }
