@@ -102,10 +102,18 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _pct(n: int, total: int) -> str:
-    """Format n/total as percentage string, e.g. '5.8%'."""
+    """Format n/total as truncated percentage string, e.g. '5.75%'.
+
+    Uses 2 decimal places and truncates (floors) rather than rounding,
+    to avoid misleading over-reporting. E.g. 23/400 = 5.75%, not 6%.
+    """
     if total == 0:
-        return "0.0%"
-    return f"{100 * n / total:.1f}%"
+        return "0.00%"
+    import math
+    value = 100 * n / total
+    # Truncate to 2 decimal places (floor, not round)
+    truncated = math.floor(value * 100) / 100
+    return f"{truncated:.2f}%"
 
 
 def _task_dimensions(task: dict) -> tuple[str, str]:
@@ -482,6 +490,19 @@ class _BenchmarkTracker:
                 f"{_fmt_duration(elapsed):>7s}  "
                 f"score={score:.3f}  {status:<7s} "
                 f"{method_str}{fluke_detail}{slow_tag}")
+            # Program tree: show the steps used
+            program_steps = r.get("program_steps", [])
+            if program_steps:
+                steps_str = " → ".join(program_steps)
+                print(f"       program: {steps_str}")
+            # Show all candidates and their test results
+            cands = r.get("candidates", [])
+            if len(cands) > 1 or (len(cands) == 1 and cands[0].get("test_exact") is not None):
+                for ci, c in enumerate(cands):
+                    c_icon = "✓" if c.get("test_exact") else "✗"
+                    c_steps = " → ".join(c.get("steps", []))
+                    print(f"       candidate[{ci}] {c_icon} test={c.get('test_score', 0):.3f}  "
+                          f"{c.get('method', '')}  {c_steps}")
             print(
                 f"       cells={cells}  "
                 f"evals={n_evals:,}  "
@@ -762,8 +783,11 @@ def benchmark_solver(
                 "score": wr["result"]["score"],
                 "solved": wr["result"]["solved"],
                 "test_confirmed": wr["result"].get("test_confirmed", False),
+                "test_score": wr["result"].get("test_score", 0.0),
                 "fluke": wr["result"].get("fluke", False),
                 "method": wr["result"].get("method", ""),
+                "program_steps": wr["result"].get("program_steps", []),
+                "candidates": wr["result"].get("candidates", []),
                 "elapsed": round(wr["elapsed"], 3),
                 "n_evals": wr["result"].get("n_evals", 0),
                 "n_train": wr["result"].get("n_train", 0),

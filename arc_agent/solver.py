@@ -339,6 +339,14 @@ class FourPillarsSolver:
         if best_program and task.get("test"):
             test_exact, test_score = validate_on_test(best_program, task)
 
+        # Validate ALL candidates on test (not just the winner)
+        # This lets us see which alternatives also pass/fail test
+        candidate_test_results = []
+        if task.get("test"):
+            for prog, meth in candidates:
+                c_exact, c_score = validate_on_test(prog, task)
+                candidate_test_results.append((c_exact, c_score))
+
         # For fluke diagnostics: per-example train accuracy
         train_example_exact = []
         n_train = len(task.get("train", []))
@@ -351,6 +359,7 @@ class FourPillarsSolver:
                                   test_score=test_score,
                                   n_candidates=len(candidates),
                                   candidates=candidates,
+                                  candidate_test_results=candidate_test_results,
                                   n_evals=cache.n_evals,
                                   n_train=n_train,
                                   train_example_exact=train_example_exact)
@@ -836,6 +845,7 @@ class FourPillarsSolver:
                       test_score: float = 0.0,
                       n_candidates: int = 0,
                       candidates: list | None = None,
+                      candidate_test_results: list | None = None,
                       n_evals: int = 0,
                       n_train: int = 0,
                       train_example_exact: list | None = None):
@@ -846,17 +856,22 @@ class FourPillarsSolver:
             test_exact: True if program is pixel-perfect on all TEST examples.
             test_score: Average pixel accuracy on test examples.
             candidates: List of (Program, method_str) tuples.
+            candidate_test_results: Per-candidate (test_exact, test_score) tuples.
             n_train: Number of training examples for this task.
             train_example_exact: Per-example pixel-perfect booleans (for flukes).
         """
         # Serialize candidates to dicts (Programs aren't JSON-serializable)
         cand_dicts = []
+        test_results = candidate_test_results or []
         if candidates:
-            for prog, meth in candidates:
+            for i, (prog, meth) in enumerate(candidates):
+                c_test_exact, c_test_score = test_results[i] if i < len(test_results) else (False, 0.0)
                 cand_dicts.append({
                     "program": prog.name,
                     "method": meth,
                     "steps": [s.name for s in prog.steps],
+                    "test_exact": c_test_exact,
+                    "test_score": round(c_test_score, 4),
                 })
 
         # Classify solve status
@@ -865,6 +880,9 @@ class FourPillarsSolver:
         # overfit = train-perfect but NOT test-exact
         test_confirmed = pixel_perfect and test_exact
         fluke = (not pixel_perfect) and test_exact
+
+        # Program steps as a list of primitive names (the "program tree")
+        program_steps = [s.name for s in program.steps] if program else []
 
         return {
             "task_id": task_id,
@@ -875,6 +893,7 @@ class FourPillarsSolver:
             "score": score,
             "test_score": test_score,
             "program": program.name if program else "none",
+            "program_steps": program_steps,
             "program_length": len(program) if program else 0,
             "time_seconds": elapsed,
             "method": method,
