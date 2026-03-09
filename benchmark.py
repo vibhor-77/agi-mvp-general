@@ -962,6 +962,13 @@ def main():
             print(f"  Results:  {result['results_path']}")
             print(f"  Culture:  {result['culture_path']}")
 
+        # Suggest next command (helpful: no more digging for culture file)
+        if result and "training" in (result.get("culture_path") or ""):
+            print()
+            print("  Next step — run evaluation with this culture:")
+            print(f"    python benchmark.py --data-dir ARC-AGI/data/evaluation \\")
+            print(f"        --culture-file {result['culture_path']}")
+
         _hline("═")
         print("  Done.")
         _hline("═")
