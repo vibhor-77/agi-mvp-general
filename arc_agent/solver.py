@@ -260,6 +260,7 @@ class FourPillarsSolver:
         # fixes: append, prepend, or replace one step. Collects all high-
         # scoring programs from every search strategy above, deduplicates,
         # and tries each as a refinement base.
+        refined: Optional[Program] = None
         if _budget_ok():
             near_miss_inputs: list[tuple[Program, str]] = list(candidates)
             all_near_miss_sources = [
@@ -290,12 +291,17 @@ class FourPillarsSolver:
         # Many tasks differ from the target by a consistent color substitution
         # (e.g., all 3s should be 5s). This is cheap: one scoring call per
         # candidate, and can convert near-misses to solves.
-        if not candidates and _budget_ok():
+        # Runs unconditionally — even if we have candidates, a color-fixed
+        # variant may be simpler/more generalizable.
+        if _budget_ok():
             all_color_fix_sources = [
                 best_single, pair_result, triple_result, dsl_result,
                 cond_single, cond_pair, object_result, obj_decomp_result,
                 param_result, culture_result,
             ]
+            # Also try color fix on the near-miss refinement result
+            if refined:
+                all_color_fix_sources.append(refined)
             for prog in all_color_fix_sources:
                 if prog and prog.fitness >= 0.80 and not cache.is_pixel_perfect(prog):
                     fixed = self.synthesizer.try_color_fix(prog, cache)
@@ -403,6 +409,14 @@ class FourPillarsSolver:
                 if refined_post and refined_post.fitness >= 0.99:
                     if cache.is_pixel_perfect(refined_post):
                         candidates.append((refined_post, "near_miss_refine"))
+
+                # Also try color fix on the post-evolution refinement result
+                if refined_post and refined_post.fitness >= 0.80 \
+                        and not cache.is_pixel_perfect(refined_post):
+                    fixed = self.synthesizer.try_color_fix(refined_post, cache)
+                    if fixed and fixed.fitness >= 0.99:
+                        if cache.is_pixel_perfect(fixed):
+                            candidates.append((fixed, "color_fix"))
 
         # Step 5a: Check if best single primitive beats evolved
         if best_single and best_single.fitness >= best_score:
