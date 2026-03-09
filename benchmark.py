@@ -716,18 +716,18 @@ def benchmark_solver(
     print(f"  Max generations:  {max_generations}")
     print(f"  Culture input:    {culture_file or '(none)'}")
 
+    # Grid size statistics
+    sizes = list(task_sizes.values())
+    print(f"  Grid sizes:       "
+          f"min={min(sizes)}  median={statistics.median(sizes):.0f}  "
+          f"max={max(sizes)}  total={sum(sizes):,} cells")
+
     # Print artifact paths upfront so users can tail -f immediately
     _section("Output Files (available now for tail -f)")
     print(f"  Results (live):   {results_live}")
     print(f"  Results (final):  {results_path}")
     print(f"  Culture (live):   {culture_live}")
     print(f"  Culture (final):  {save_culture}")
-
-    # Grid size statistics
-    sizes = list(task_sizes.values())
-    print(f"  Grid sizes:       "
-          f"min={min(sizes)}  median={statistics.median(sizes):.0f}  "
-          f"max={max(sizes)}  total={sum(sizes):,} cells")
 
     # Load culture
     if culture_file and os.path.exists(culture_file):
