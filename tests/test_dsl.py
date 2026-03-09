@@ -896,5 +896,204 @@ class TestDSLLoocv(unittest.TestCase):
         self.assertTrue(_loocv_neighbor_rule(inputs, outputs, interp))
 
 
+class TestDSLSymmetryOps(unittest.TestCase):
+    """Test diagonal and 4-way symmetry completion DSL operations."""
+
+    def test_complete_symmetry_diagonal(self):
+        """Complete diagonal symmetry: fill zeros using reflected value."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("complete_symmetry_diagonal", [grid], DSLType.GRID)
+
+        # Grid with partial diagonal symmetry: (0,1)=3 but (1,0)=0
+        inp = [[0, 3, 0], [0, 0, 0], [0, 0, 0]]
+        result = interp.evaluate(expr, inp)
+        # (1,0) should be filled with value from (0,1) = 3
+        self.assertEqual(result[1][0], 3)
+        # Existing non-zero values stay
+        self.assertEqual(result[0][1], 3)
+
+    def test_complete_symmetry_diagonal_no_overwrite(self):
+        """Diagonal completion should not overwrite existing non-zero values."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("complete_symmetry_diagonal", [grid], DSLType.GRID)
+
+        inp = [[1, 2], [3, 4]]
+        result = interp.evaluate(expr, inp)
+        # All cells non-zero, nothing should change
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_complete_symmetry_4way(self):
+        """4-way symmetry: complete across both axes and both diagonals."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("complete_symmetry_4way", [grid], DSLType.GRID)
+
+        # 5x5 grid with a few non-zero cells, should fill symmetrically
+        inp = [
+            [0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+        ]
+        result = interp.evaluate(expr, inp)
+        # (1,2)=1 should reflect to:
+        # H: (3,2), V: (1,2) (same), Diag: (2,1), AntiDiag: (2,3)
+        # And their reflections...
+        self.assertEqual(result[1][2], 1)  # original
+        self.assertEqual(result[3][2], 1)  # horizontal mirror
+        self.assertEqual(result[2][1], 1)  # diagonal
+        self.assertEqual(result[2][3], 1)  # anti-diagonal
+
+    def test_complete_symmetry_diagonal_in_registry(self):
+        """Verify diagonal symmetry is in the DSL_OPS registry."""
+        from arc_agent.dsl import DSL_OPS, DSLType
+        self.assertIn("complete_symmetry_diagonal", DSL_OPS)
+        arg_types, ret = DSL_OPS["complete_symmetry_diagonal"]
+        self.assertEqual(arg_types, [DSLType.GRID])
+        self.assertEqual(ret, DSLType.GRID)
+
+    def test_complete_symmetry_4way_in_registry(self):
+        """Verify 4-way symmetry is in the DSL_OPS registry."""
+        from arc_agent.dsl import DSL_OPS, DSLType
+        self.assertIn("complete_symmetry_4way", DSL_OPS)
+        arg_types, ret = DSL_OPS["complete_symmetry_4way"]
+        self.assertEqual(arg_types, [DSLType.GRID])
+        self.assertEqual(ret, DSLType.GRID)
+
+
+class TestDSLObjectOps(unittest.TestCase):
+    """Test object-level DSL operations."""
+
+    def test_extract_largest_object(self):
+        """Extract the largest connected foreground object as a cropped grid."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("extract_largest_object", [grid], DSLType.GRID)
+
+        # Grid with two objects: a 3x3 block (9 cells) and a single cell
+        inp = [
+            [0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 1, 1, 0],
+            [0, 0, 0, 0, 2],
+        ]
+        result = interp.evaluate(expr, inp)
+        self.assertIsNotNone(result)
+        # Should extract the 3x3 block of 1s
+        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result[0]), 3)
+        self.assertTrue(all(result[r][c] == 1 for r in range(3) for c in range(3)))
+
+    def test_extract_largest_object_in_registry(self):
+        """Verify extract_largest_object is in the DSL_OPS registry."""
+        from arc_agent.dsl import DSL_OPS, DSLType
+        self.assertIn("extract_largest_object", DSL_OPS)
+        arg_types, ret = DSL_OPS["extract_largest_object"]
+        self.assertEqual(arg_types, [DSLType.GRID])
+        self.assertEqual(ret, DSLType.GRID)
+
+    def test_extract_largest_object_empty_grid(self):
+        """Extract from all-zero grid should return the grid unchanged."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("extract_largest_object", [grid], DSLType.GRID)
+
+        inp = [[0, 0], [0, 0]]
+        result = interp.evaluate(expr, inp)
+        self.assertIsNotNone(result)
+
+
+class TestDSLSortOps(unittest.TestCase):
+    """Test sort/reorder DSL operations."""
+
+    def test_sort_rows_by_color_count(self):
+        """Sort rows by number of non-zero cells (ascending)."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        grid = DSLExpr.input_grid()
+        expr = DSLExpr.make_op("sort_rows_by_nonzero", [grid], DSLType.GRID)
+
+        inp = [
+            [1, 1, 1],  # 3 non-zero
+            [1, 0, 0],  # 1 non-zero
+            [1, 1, 0],  # 2 non-zero
+        ]
+        result = interp.evaluate(expr, inp)
+        self.assertIsNotNone(result)
+        # Should be sorted: 1 non-zero, 2 non-zero, 3 non-zero
+        self.assertEqual(result[0], [1, 0, 0])
+        self.assertEqual(result[1], [1, 1, 0])
+        self.assertEqual(result[2], [1, 1, 1])
+
+    def test_sort_rows_by_nonzero_in_registry(self):
+        """Verify sort_rows_by_nonzero is in the DSL_OPS registry."""
+        from arc_agent.dsl import DSL_OPS, DSLType
+        self.assertIn("sort_rows_by_nonzero", DSL_OPS)
+
+
+class TestDSLSynthesisNewOps(unittest.TestCase):
+    """Test that new DSL ops compose correctly in synthesis."""
+
+    def test_replace_color_then_complete_diagonal(self):
+        """Compose replace_color + complete_symmetry_diagonal."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        # replace_color(input, 9, 0) then complete_symmetry_diagonal
+        inp_expr = DSLExpr.input_grid()
+        step1 = DSLExpr.make_op(
+            "replace_color",
+            [inp_expr, DSLExpr.literal(9, DSLType.COLOR),
+             DSLExpr.literal(0, DSLType.COLOR)],
+            DSLType.GRID,
+        )
+        step2 = DSLExpr.make_op(
+            "complete_symmetry_diagonal", [step1], DSLType.GRID,
+        )
+
+        # Grid with 9s as noise and partial diagonal symmetry
+        inp = [[0, 3, 9], [0, 0, 0], [0, 0, 0]]
+        result = interp.evaluate(step2, inp)
+        # After replace 9→0: [[0,3,0],[0,0,0],[0,0,0]]
+        # After diag symm: (0,1)=3 → (1,0)=3
+        self.assertEqual(result[0][1], 3)
+        self.assertEqual(result[1][0], 3)
+        self.assertEqual(result[0][2], 0)  # 9 was erased
+
+    def test_crop_then_extract_largest(self):
+        """Compose crop_to_content + extract_largest_object."""
+        from arc_agent.dsl import DSLExpr, DSLType, DSLInterpreter
+
+        interp = DSLInterpreter()
+        inp_expr = DSLExpr.input_grid()
+        step1 = DSLExpr.make_op("crop_to_content", [inp_expr], DSLType.GRID)
+        step2 = DSLExpr.make_op("extract_largest_object", [step1], DSLType.GRID)
+
+        inp = [
+            [0, 0, 0, 0],
+            [0, 1, 1, 0],
+            [0, 1, 1, 0],
+            [0, 0, 2, 0],
+            [0, 0, 0, 0],
+        ]
+        result = interp.evaluate(step2, inp)
+        self.assertIsNotNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

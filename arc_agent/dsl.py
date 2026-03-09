@@ -416,6 +416,103 @@ class DSLInterpreter:
                     result[r] = result[h - 1 - r][:]
             return result
 
+        # Diagonal symmetry completion
+        if op == "complete_symmetry_diagonal":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [row[:] for row in g]
+            # Fill (r,c) from (c,r) when (r,c)==0 and (c,r)!=0
+            for r in range(min(h, w)):
+                for c in range(min(h, w)):
+                    if result[r][c] == 0 and c < h and r < w:
+                        if result[c][r] != 0:
+                            result[r][c] = result[c][r]
+            return result
+
+        # 4-way symmetry completion (H + V + both diagonals)
+        if op == "complete_symmetry_4way":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            result = [row[:] for row in g]
+            # Iterate until stable (reflections may cascade)
+            for _ in range(4):
+                changed = False
+                for r in range(h):
+                    for c in range(w):
+                        if result[r][c] != 0:
+                            continue
+                        # Try 4 symmetry partners
+                        mirrors = [
+                            (h - 1 - r, c),        # vertical mirror
+                            (r, w - 1 - c),         # horizontal mirror
+                            (c, r) if c < h and r < w else None,  # diagonal
+                            (w - 1 - c, h - 1 - r) if (w - 1 - c) < h and (h - 1 - r) < w else None,  # anti-diag
+                        ]
+                        for m in mirrors:
+                            if m is not None:
+                                mr, mc = m
+                                if 0 <= mr < h and 0 <= mc < w and result[mr][mc] != 0:
+                                    result[r][c] = result[mr][mc]
+                                    changed = True
+                                    break
+                if not changed:
+                    break
+            return result
+
+        # Extract largest foreground object (crop to its bounding box)
+        if op == "extract_largest_object":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            # Find connected components via flood fill
+            visited = [[False] * w for _ in range(h)]
+            components: list[list[tuple[int, int]]] = []
+            for r in range(h):
+                for c in range(w):
+                    if g[r][c] != 0 and not visited[r][c]:
+                        # BFS flood fill
+                        comp: list[tuple[int, int]] = []
+                        stack = [(r, c)]
+                        visited[r][c] = True
+                        while stack:
+                            cr, cc = stack.pop()
+                            comp.append((cr, cc))
+                            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                nr, nc = cr + dr, cc + dc
+                                if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc] and g[nr][nc] != 0:
+                                    visited[nr][nc] = True
+                                    stack.append((nr, nc))
+                        components.append(comp)
+            if not components:
+                return [row[:] for row in g]
+            # Find largest component
+            largest = max(components, key=len)
+            # Extract bounding box
+            min_r = min(r for r, c in largest)
+            max_r = max(r for r, c in largest)
+            min_c = min(c for r, c in largest)
+            max_c = max(c for r, c in largest)
+            result_h = max_r - min_r + 1
+            result_w = max_c - min_c + 1
+            result = [[0] * result_w for _ in range(result_h)]
+            for r, c in largest:
+                result[r - min_r][c - min_c] = g[r][c]
+            return result
+
+        # Sort rows by number of non-zero cells (ascending)
+        if op == "sort_rows_by_nonzero":
+            g = args[0]
+            if not g:
+                return g
+            rows_with_counts = [(sum(1 for c in row if c != 0), row[:]) for row in g]
+            rows_with_counts.sort(key=lambda x: x[0])
+            return [row for _, row in rows_with_counts]
+
         # Denoise (majority vote)
         if op == "denoise_3x3":
             g = args[0]
@@ -607,6 +704,12 @@ DSL_OPS: dict[str, tuple[list[DSLType], DSLType]] = {
     # Grid → Grid (symmetry completion)
     "complete_symmetry_h": ([DSLType.GRID], DSLType.GRID),
     "complete_symmetry_v": ([DSLType.GRID], DSLType.GRID),
+    "complete_symmetry_diagonal": ([DSLType.GRID], DSLType.GRID),
+    "complete_symmetry_4way": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (object extraction)
+    "extract_largest_object": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (sorting)
+    "sort_rows_by_nonzero": ([DSLType.GRID], DSLType.GRID),
     # Grid → Grid (denoise)
     "denoise_3x3": ([DSLType.GRID], DSLType.GRID),
     # Grid → Grid (halving / dimension reduction)
