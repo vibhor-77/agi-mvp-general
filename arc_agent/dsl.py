@@ -225,6 +225,62 @@ class DSLInterpreter:
             g, r0, c0, r1, c1 = args
             return [row[c0:c1 + 1] for row in g[r0:r1 + 1]]
 
+        # Crop to content (bounding box of non-background cells)
+        if op == "crop_to_content":
+            g = args[0]
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            # Find background (most common color)
+            counts = Counter(cell for row in g for cell in row)
+            bg = counts.most_common(1)[0][0]
+            # Find bounding box of non-bg cells
+            min_r, min_c = h, w
+            max_r, max_c = -1, -1
+            for r in range(h):
+                for c in range(w):
+                    if g[r][c] != bg:
+                        min_r = min(min_r, r)
+                        min_c = min(min_c, c)
+                        max_r = max(max_r, r)
+                        max_c = max(max_c, c)
+            if max_r < 0:
+                return g  # all background
+            return [row[min_c:max_c + 1] for row in g[min_r:max_r + 1]]
+
+        # Fill background with a new color
+        if op == "fill_background":
+            g, new_color = args
+            if not g or not g[0]:
+                return g
+            counts = Counter(cell for row in g for cell in row)
+            bg = counts.most_common(1)[0][0]
+            return [[new_color if cell == bg else cell for cell in row]
+                    for row in g]
+
+        # Apply a learned neighborhood rule
+        if op == "apply_neighbor_rule":
+            g, rule = args
+            if not g or not g[0]:
+                return g
+            h, w = len(g), len(g[0])
+            counts = Counter(cell for row in g for cell in row)
+            bg = counts.most_common(1)[0][0]
+            result = [row[:] for row in g]
+            for r in range(h):
+                for c in range(w):
+                    cell = g[r][c]
+                    # Count non-background 4-neighbors
+                    n4 = 0
+                    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w and g[nr][nc] != bg:
+                            n4 += 1
+                    key = (cell, n4)
+                    if key in rule:
+                        result[r][c] = rule[key]
+            return result
+
         # Map objects
         if op == "map_objects":
             # args[0] is the evaluated grid, args[1] is the unevaluated lambda
@@ -310,4 +366,10 @@ DSL_OPS: dict[str, tuple[list[DSLType], DSLType]] = {
     "flip_h": ([DSLType.GRID], DSLType.GRID),
     "flip_v": ([DSLType.GRID], DSLType.GRID),
     "rotate_90": ([DSLType.GRID], DSLType.GRID),
+    # Grid → Grid (structural)
+    "crop_to_content": ([DSLType.GRID], DSLType.GRID),
+    # Grid, Color → Grid
+    "fill_background": ([DSLType.GRID, DSLType.COLOR], DSLType.GRID),
+    # Grid, ColorMap → Grid (neighborhood rule)
+    "apply_neighbor_rule": ([DSLType.GRID, DSLType.COLOR_MAP], DSLType.GRID),
 }

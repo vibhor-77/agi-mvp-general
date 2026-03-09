@@ -67,8 +67,13 @@ def synthesize_dsl_program(
 
     deadline = time.time() + time_budget
 
-    # Phase 0: Try learned color map shortcut
+    # Phase 0a: Try learned color map shortcut
     result = _try_color_map_shortcut(inputs, outputs, interp, cache)
+    if result is not None:
+        return result
+
+    # Phase 0b: Try learned neighbor rule shortcut
+    result = _try_neighbor_rule_shortcut(inputs, outputs, interp, cache)
     if result is not None:
         return result
 
@@ -210,6 +215,98 @@ def _try_color_map_shortcut(
         return None
 
     return _check_match(expr, results, outputs, interp, cache)
+
+
+def _try_neighbor_rule_shortcut(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Quick check: does a learned neighbor rule solve the task?
+
+    Learns a mapping from (cell_color, n_nonbg_4_neighbors) → output_color
+    from I/O pairs. If consistent across all examples, builds a DSL program.
+    """
+    # Only same-dims tasks
+    for inp, out in zip(inputs, outputs):
+        if len(inp) != len(out):
+            return None
+        for ri, ro in zip(inp, out):
+            if len(ri) != len(ro):
+                return None
+
+    rule = _learn_neighbor_rule(inputs, outputs)
+    if rule is None:
+        return None
+
+    expr = DSLExpr.make_op(
+        "apply_neighbor_rule",
+        [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
+        DSLType.GRID,
+    )
+
+    results = _execute_on_all(expr, inputs, interp)
+    if results is None:
+        return None
+
+    return _check_match(expr, results, outputs, interp, cache)
+
+
+def _learn_neighbor_rule(
+    inputs: list[Grid],
+    outputs: list[Grid],
+) -> Optional[dict[tuple[int, int], int]]:
+    """Learn a (cell_color, n_nonbg_4) → output_color rule from I/O pairs.
+
+    For each cell position across all training examples, extract:
+      - The cell's current color
+      - The number of non-background 4-connected neighbors
+      - The expected output color
+
+    If this mapping is consistent (same key → same value), return it.
+    Only return rules that actually change something.
+    """
+    from collections import Counter
+
+    rule: dict[tuple[int, int], int] = {}
+
+    for inp, out in zip(inputs, outputs):
+        h, w = len(inp), len(inp[0])
+        # Background = most common color in input
+        counts = Counter(cell for row in inp for cell in row)
+        bg = counts.most_common(1)[0][0]
+
+        for r in range(h):
+            for c in range(w):
+                cell = inp[r][c]
+                expected = out[r][c]
+
+                # Count non-bg 4-neighbors
+                n4 = 0
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w and inp[nr][nc] != bg:
+                        n4 += 1
+
+                key = (cell, n4)
+                if key in rule:
+                    if rule[key] != expected:
+                        return None  # inconsistent
+                rule[key] = expected
+
+    # Must actually change something
+    has_change = any(key[0] != val for key, val in rule.items())
+    if not has_change:
+        return None
+
+    # Filter to only include entries that change the color
+    # (reduces rule size, prevents unnecessary rewrites)
+    filtered = {k: v for k, v in rule.items() if k[0] != v}
+    if not filtered:
+        return None
+
+    return filtered
 
 
 def _enumerate_depth(

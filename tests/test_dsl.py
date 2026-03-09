@@ -364,5 +364,125 @@ class TestDSLSynthesis(unittest.TestCase):
         self.assertTrue(cache.is_pixel_perfect(result))
 
 
+# ============================================================
+# 6. New DSL operations: neighbor rule, crop, fill
+# ============================================================
+
+class TestDSLNeighborOps(unittest.TestCase):
+    """Test neighborhood-based DSL operations."""
+
+    def setUp(self):
+        from arc_agent.dsl import DSLInterpreter
+        self.interp = DSLInterpreter()
+
+    def test_crop_to_content(self):
+        """Crop grid to bounding box of non-background cells."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("crop_to_content", [DSLExpr.input_grid()],
+                               DSLType.GRID)
+        grid = [
+            [0, 0, 0, 0],
+            [0, 1, 2, 0],
+            [0, 3, 0, 0],
+            [0, 0, 0, 0],
+        ]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[1, 2], [3, 0]])
+
+    def test_crop_to_content_full(self):
+        """If all cells are non-zero, return full grid."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        expr = DSLExpr.make_op("crop_to_content", [DSLExpr.input_grid()],
+                               DSLType.GRID)
+        grid = [[1, 2], [3, 4]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[1, 2], [3, 4]])
+
+    def test_fill_background(self):
+        """Fill background (most common color) with a new color."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        grid_in = DSLExpr.input_grid()
+        new_color = DSLExpr.literal(5, DSLType.COLOR)
+        expr = DSLExpr.make_op("fill_background", [grid_in, new_color],
+                               DSLType.GRID)
+        grid = [[0, 1, 0], [0, 0, 2]]
+        result = self.interp.evaluate(expr, grid)
+        self.assertEqual(result, [[5, 1, 5], [5, 5, 2]])
+
+    def test_apply_neighbor_rule(self):
+        """Apply a learned neighborhood rule table."""
+        from arc_agent.dsl import DSLExpr, DSLType
+        grid_in = DSLExpr.input_grid()
+        # Rule: (cell_color, n_nonbg_neighbors_4) → new_color
+        # "If cell is 0 and has exactly 2 non-bg neighbors, become 5"
+        rule = DSLExpr.literal(
+            {(0, 2): 5},  # (cell_color, n_nonbg_4) → new_color
+            DSLType.COLOR_MAP,
+        )
+        expr = DSLExpr.make_op("apply_neighbor_rule", [grid_in, rule],
+                               DSLType.GRID)
+        grid = [
+            [0, 1, 0],
+            [1, 0, 1],
+            [0, 1, 0],
+        ]
+        result = self.interp.evaluate(expr, grid)
+        # Center cell (1,1) is 0 with 4 non-bg neighbors → not matched (4≠2)
+        # Cells (0,1), (1,0), (1,2), (2,1) are non-zero → unchanged
+        # Corners (0,0), (0,2), (2,0), (2,2) are 0 with 2 non-bg neighbors → 5
+        expected = [
+            [5, 1, 5],
+            [1, 0, 1],
+            [5, 1, 5],
+        ]
+        self.assertEqual(result, expected)
+
+
+class TestDSLSynthesisNeighbor(unittest.TestCase):
+    """Test synthesis with neighbor-based operations."""
+
+    def test_synthesize_crop_to_content(self):
+        """Task: crop grid to bounding box of non-zero cells."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+
+        task = {"train": [
+            {"input": [[0, 0, 0], [0, 1, 0], [0, 0, 0]],
+             "output": [[1]]},
+            {"input": [[0, 0, 0, 0], [0, 2, 3, 0], [0, 0, 0, 0]],
+             "output": [[2, 3]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+    def test_synthesize_neighbor_rule(self):
+        """Task solvable by a neighborhood rule."""
+        from arc_agent.dsl_synth import synthesize_dsl_program
+        from arc_agent.scorer import TaskCache
+
+        # Task: fill corners of a cross pattern
+        # Input has a cross of 1s, output fills the empty corners with 5
+        task = {"train": [
+            {"input": [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+             "output": [[5, 1, 5], [1, 1, 1], [5, 1, 5]]},
+            {"input": [[0, 0, 1, 0, 0],
+                       [0, 0, 1, 0, 0],
+                       [1, 1, 1, 1, 1],
+                       [0, 0, 1, 0, 0],
+                       [0, 0, 1, 0, 0]],
+             "output": [[5, 5, 1, 5, 5],
+                        [5, 5, 1, 5, 5],
+                        [1, 1, 1, 1, 1],
+                        [5, 5, 1, 5, 5],
+                        [5, 5, 1, 5, 5]]},
+        ]}
+        cache = TaskCache(task)
+        result = synthesize_dsl_program(task, cache, time_budget=5.0)
+        self.assertIsNotNone(result)
+        self.assertTrue(cache.is_pixel_perfect(result))
+
+
 if __name__ == "__main__":
     unittest.main()
