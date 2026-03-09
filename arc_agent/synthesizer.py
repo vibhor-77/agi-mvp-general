@@ -430,13 +430,24 @@ class ProgramSynthesizer:
         cache: "TaskCache | None" = None,
         top_k: int = 15,
     ) -> Optional[Program]:
-        """Exhaustively try single-step conditional programs.
+        """Exhaustively try single-step conditional programs with optimizations.
 
         For each predicate P and each pair of top primitives (A, B):
             if P(input) → A(input)  else → B(input)
 
-        Complexity: P × top_k² where P = # predicates, typically 17 × 15² = 3,825.
-        Each call is cheap (predicate is O(grid), concept is cached).
+        Optimizations:
+        1. PREDICATE PRE-FILTERING: Skip predicates that return the same value
+           for all inputs (non-branching). These are redundant with single
+           concepts already tested.
+        2. BRANCH GROUPING: Partition inputs by predicate outcome. Score each
+           concept independently on each group, then combine the best scores.
+           This allows early pruning of bad concept combinations.
+        3. EARLY EXIT: If best possible score (perfect on remaining examples)
+           can't beat current best, skip this predicate.
+
+        Original complexity: P × top_k² where P = # predicates (17 × 225 = 3,825).
+        Optimized complexity: P' × top_k² where P' = non-trivial predicates (<17),
+        plus O(P × N × top_k) for per-group scoring.
 
         Args:
             task: ARC task dict
@@ -465,14 +476,93 @@ class ProgramSynthesizer:
         singles.sort(key=lambda x: x[0], reverse=True)
         top_concepts = [c for _, c in singles[:top_k]]
 
+        # Pre-compute input groups for each predicate (reused below)
+        # predicate_groups[i] = (true_indices, false_indices, is_trivial)
+        predicate_groups = []
+        for pred in predicates:
+            true_indices = []
+            false_indices = []
+            for idx, inp in enumerate(cache._inputs):
+                try:
+                    result = pred(inp)
+                    if result:
+                        true_indices.append(idx)
+                    else:
+                        false_indices.append(idx)
+                except Exception:
+                    # Predicate failed; treat as False
+                    false_indices.append(idx)
+
+            # OPTIMIZATION 1: Skip predicates that always return same value
+            # (no branching = already tested as single concepts)
+            is_trivial = len(true_indices) == 0 or len(false_indices) == 0
+            predicate_groups.append((true_indices, false_indices, is_trivial))
+
         best_prog = None
         best_score = 0.0
 
-        for pred in predicates:
-            for then_c in top_concepts:
-                for else_c in top_concepts:
+        for pred_idx, pred in enumerate(predicates):
+            true_indices, false_indices, is_trivial = predicate_groups[pred_idx]
+
+            # Skip non-branching predicates (OPTIMIZATION 1)
+            if is_trivial:
+                continue
+
+            # OPTIMIZATION 3: Early exit check
+            # Best possible score = 1.0 if we had perfect concepts on each branch
+            # If this can't beat best_score, skip entire predicate
+            if best_score >= 0.99:
+                return best_prog  # Already found near-perfect solution
+
+            # OPTIMIZATION 2: Pre-score each concept on each group
+            # Use concept indices as keys since Concept objects are not hashable
+            concept_scores = []  # list of (concept, true_score, false_score)
+            n_true = len(true_indices) if true_indices else 1  # avoid div by zero
+            n_false = len(false_indices) if false_indices else 1
+
+            for c_idx, c in enumerate(top_concepts):
+                true_score = 0.0
+                false_score = 0.0
+
+                # Score on true branch
+                for idx in true_indices:
+                    inp = cache._inputs[idx]
+                    exp = cache._expected[idx]
+                    exp_h, exp_w = cache._exp_dims[idx]
+                    predicted = c.apply(inp)
+                    from .scorer import _safe_to_np, _structural_similarity_np
+                    p = _safe_to_np(predicted)
+                    if p is not None:
+                        pred_h, pred_w = p.shape
+                        true_score += _structural_similarity_np(p, exp, pred_h, pred_w, exp_h, exp_w)
+
+                # Score on false branch
+                for idx in false_indices:
+                    inp = cache._inputs[idx]
+                    exp = cache._expected[idx]
+                    exp_h, exp_w = cache._exp_dims[idx]
+                    predicted = c.apply(inp)
+                    from .scorer import _safe_to_np, _structural_similarity_np
+                    p = _safe_to_np(predicted)
+                    if p is not None:
+                        pred_h, pred_w = p.shape
+                        false_score += _structural_similarity_np(p, exp, pred_h, pred_w, exp_h, exp_w)
+
+                concept_scores.append((c, true_score / n_true, false_score / n_false))
+
+            # Try best combinations per group (OPTIMIZATION 2 continued)
+            # For each branch, rank concepts by their per-group score
+            true_ranked = sorted(concept_scores, key=lambda x: x[1], reverse=True)
+            false_ranked = sorted(concept_scores, key=lambda x: x[2], reverse=True)
+
+            # Prune to top candidates per branch to reduce branching
+            best_true = [x[0] for x in true_ranked[:min(5, len(true_ranked))]]
+            best_false = [x[0] for x in false_ranked[:min(5, len(false_ranked))]]
+
+            for then_c in best_true:
+                for else_c in best_false:
                     if then_c is else_c:
-                        continue  # identity → no branching
+                        continue
                     cond = ConditionalConcept(pred, then_c, else_c)
                     prog = Program([cond])
                     score = cache.score_program(prog)
@@ -491,14 +581,17 @@ class ProgramSynthesizer:
         cache: "TaskCache | None" = None,
         top_k: int = 10,
     ) -> Optional[Program]:
-        """Try 2-step programs involving conditionals.
+        """Try 2-step programs involving conditionals with optimizations.
 
         Combines top single conditionals with top primitives:
             conditional → primitive  (post-process)
             primitive → conditional  (pre-process)
 
-        Uses greedy selection: builds best conditional per predicate first,
-        then pairs with top-k primitives.
+        Optimizations:
+        1. PREDICATE PRE-FILTERING: Skip trivial predicates (same value for all inputs)
+        2. BRANCH GROUPING: Score concepts per input group (like try_conditional_singles)
+        3. AGGRESSIVE PRUNING: Keep only top 5 conditional + 5 primitive candidates
+           for pairing (reduces O(P × top_k²) to O(5 × 5) per predicate)
 
         Args:
             task: ARC task dict
@@ -526,35 +619,98 @@ class ProgramSynthesizer:
         singles.sort(key=lambda x: x[0], reverse=True)
         top_concepts = [c for _, c in singles[:top_k]]
 
-        # Build best conditional per predicate (greedy sampling)
-        best_conds: list[ConditionalConcept] = []
+        # Pre-compute input groups for each predicate (reused below)
+        # predicate_groups[i] = (true_indices, false_indices, is_trivial)
+        predicate_groups = []
         for pred in predicates:
-            best_cond = None
-            best_cond_score = 0.0
-            # Try top_k random pairs from top concepts
-            for i in range(min(top_k, len(top_concepts))):
-                for j in range(min(top_k, len(top_concepts))):
-                    if i == j:
+            true_indices = []
+            false_indices = []
+            for idx, inp in enumerate(cache._inputs):
+                try:
+                    result = pred(inp)
+                    if result:
+                        true_indices.append(idx)
+                    else:
+                        false_indices.append(idx)
+                except Exception:
+                    false_indices.append(idx)
+
+            is_trivial = len(true_indices) == 0 or len(false_indices) == 0
+            predicate_groups.append((true_indices, false_indices, is_trivial))
+
+        # Build best conditional per predicate (OPTIMIZATION 2: branch grouping)
+        best_conds: list[tuple[float, ConditionalConcept]] = []
+
+        for pred_idx, pred in enumerate(predicates):
+            true_indices, false_indices, is_trivial = predicate_groups[pred_idx]
+
+            # Skip trivial predicates (OPTIMIZATION 1)
+            if is_trivial:
+                continue
+
+            # OPTIMIZATION 2: Score concepts per branch
+            n_true = len(true_indices) if true_indices else 1
+            n_false = len(false_indices) if false_indices else 1
+            concept_scores = []  # list of (concept, true_score, false_score)
+
+            for c_idx, c in enumerate(top_concepts):
+                true_score = 0.0
+                false_score = 0.0
+
+                for idx in true_indices:
+                    inp = cache._inputs[idx]
+                    exp = cache._expected[idx]
+                    exp_h, exp_w = cache._exp_dims[idx]
+                    predicted = c.apply(inp)
+                    from .scorer import _safe_to_np, _structural_similarity_np
+                    p = _safe_to_np(predicted)
+                    if p is not None:
+                        pred_h, pred_w = p.shape
+                        true_score += _structural_similarity_np(p, exp, pred_h, pred_w, exp_h, exp_w)
+
+                for idx in false_indices:
+                    inp = cache._inputs[idx]
+                    exp = cache._expected[idx]
+                    exp_h, exp_w = cache._exp_dims[idx]
+                    predicted = c.apply(inp)
+                    from .scorer import _safe_to_np, _structural_similarity_np
+                    p = _safe_to_np(predicted)
+                    if p is not None:
+                        pred_h, pred_w = p.shape
+                        false_score += _structural_similarity_np(p, exp, pred_h, pred_w, exp_h, exp_w)
+
+                concept_scores.append((c, true_score / n_true, false_score / n_false))
+
+            # Rank by per-group scores
+            true_ranked = sorted(concept_scores, key=lambda x: x[1], reverse=True)
+            false_ranked = sorted(concept_scores, key=lambda x: x[2], reverse=True)
+
+            best_true = [x[0] for x in true_ranked[:5]]
+            best_false = [x[0] for x in false_ranked[:5]]
+
+            # Try all combinations within pruned sets
+            for then_c in best_true:
+                for else_c in best_false:
+                    if then_c is else_c:
                         continue
-                    cond = ConditionalConcept(pred, top_concepts[i], top_concepts[j])
+                    cond = ConditionalConcept(pred, then_c, else_c)
                     prog = Program([cond])
                     score = cache.score_program(prog)
-                    if score > best_cond_score:
-                        best_cond_score = score
-                        best_cond = cond
-            if best_cond is not None and best_cond_score > 0.3:
-                best_cond.fitness = best_cond_score
-                best_conds.append(best_cond)
+                    if score > 0.3:  # Only keep above threshold
+                        best_conds.append((score, cond))
 
-        # Sort and keep top-5
-        best_conds.sort(key=lambda c: c.fitness, reverse=True)
+        # Sort and keep top-5 (OPTIMIZATION 3: aggressive pruning)
+        best_conds.sort(key=lambda x: x[0], reverse=True)
         best_conds = best_conds[:5]
 
         best_prog = None
         best_score = 0.0
 
-        for cond in best_conds:
-            for prim in top_concepts:
+        # Pair with top-5 primitives only (OPTIMIZATION 3)
+        pair_concepts = top_concepts[:5]
+
+        for score, cond in best_conds:
+            for prim in pair_concepts:
                 # cond → prim
                 prog = Program([cond, prim])
                 score = cache.score_program(prog)
