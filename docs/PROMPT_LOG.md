@@ -1608,22 +1608,29 @@ Built a program synthesis engine that constructs novel Grid→Grid transforms fr
 - 585 tests all pass (35 DSL-specific tests)
 - The `crop_to_content` composition with geometric ops found new solutions
 
+**v0.26c (DSL extended with spatial ops)**:
+- Added 11 more DSL operations: tile_2x2, tile_3x3, scale_2x, scale_3x, gravity_down/up/left/right, complete_symmetry_h/v, denoise_3x3
+- DSL synthesis now solves 9/10 sample tasks independently (up from ~5)
+- 600 tests all pass (50 DSL-specific tests)
+- Full benchmark pending (user must run on their machine with ARC data)
+
 ### Files Created/Modified
 
 | File | Action |
 |------|--------|
-| `arc_agent/dsl.py` | **NEW** — DSL expression tree + interpreter (14 ops + map_objects combinator) |
+| `arc_agent/dsl.py` | **NEW** — DSL expression tree + interpreter (25 ops + map_objects combinator) |
 | `arc_agent/dsl_synth.py` | **NEW** — Bottom-up synthesis engine with color map + neighbor rule shortcuts |
 | `arc_agent/solver.py` | Added `_try_dsl_synthesis()` at step 3.96 |
 | `arc_agent/object_decompose.py` | Added by_input_color, by_position, by_shape strategies |
-| `tests/test_dsl.py` | **NEW** — 35 tests for DSL + synthesis |
+| `tests/test_dsl.py` | **NEW** — 50 tests for DSL + synthesis |
 | `tests/test_object_decompose.py` | Updated: unittest.TestCase, new strategy tests |
+| `scripts/quick_bench.py` | Quick DSL synthesis benchmark on sample tasks |
 | `.gitignore` | Added `*.log` |
 
 ### Next Steps
 
-1. **Extend DSL operations**: Add neighbors_4/8, flood_fill_component, find_objects, is_border — these are the sub-operations most existing primitives are built from
-2. **Cell-level iteration combinator**: `for_each_cell(grid, fn(cell, r, c, neighbors) -> color)` — this single combinator can express most local operations (outline, fill_enclosed, denoise, etc.)
+1. **Run full benchmark**: `python benchmark.py --data-dir ARC-AGI/data/training` and eval to measure impact
+2. **Cell-level iteration combinator**: `for_each_cell(grid, fn(cell, r, c, neighbors) -> color)` — for outline, border detection, and other local operations
 3. **Increase synthesis depth/budget**: Currently depth 2 with 5s; try depth 3 with 10s on unsolved tasks
 4. **Seed evolution with DSL**: Use DSL-synthesized programs as seeds for evolutionary search
-5. **Path to ARC-AGI-2 / Zork / robotics**: The synthesis engine is domain-agnostic; the specific DSL ops are domain-specific. Swap grid ops for action primitives → same engine works for planning
+5. **Path to ARC-AGI-2 / Zork / robotics**: The synthesis engine is domain-agnostic; swap grid ops for action primitives → same engine works for planning

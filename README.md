@@ -194,7 +194,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 585 tests
+├── tests/                           # 600 tests
 │   ├── test_primitives.py           # Grid transforms (55 tests)
 │   ├── test_scene.py                # Object-centric reasoning (26 tests)
 │   ├── test_concepts.py             # Concept system (21 tests)
