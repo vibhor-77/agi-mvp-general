@@ -2520,3 +2520,29 @@ After (deterministic decomposition):
 - 691 tests pass (688 + 3 new)
 - No regression on 15-task benchmark (3/15 solved, same as baseline)
 - Decomposition now fast enough to be worth running on every unsolved task
+
+### Additional Changes (same session)
+
+1. **Extended color_fix coverage** — `try_color_fix` now runs on near-miss refinement results from both step 3k and step 5, and runs unconditionally (not just when no candidates exist). This catches cases where a refined program has a consistent color substitution error.
+
+2. **Added directional neighbor feature extractors** — Two new extractors for the neighbor-rule learner:
+   - `directional`: (center, N, S, E, W) — captures orientation-dependent patterns
+   - `directional_8`: (center, N, NE, E, SE, S, SW, W, NW) — full 8-neighborhood colors
+   - More discriminative than count-based features while still protected by LOOCV and complexity checks
+
+3. **Analysis findings**:
+   - 31/40 top unsolved tasks have same-dims with <20% pixel changes ("local modification" tasks)
+   - 8 tasks where identity scores 0.90+ (only 3-8% pixels change)
+   - These tasks require context beyond local neighborhoods (object membership, global properties)
+   - Neighbor rules can't solve them because the same local pattern maps to different colors in different examples
+   - Evolution has 83% overfit rate on eval (5 overfits vs 1 actual solve)
+
+### Commits
+
+- `74c4969` — Replace evolutionary synthesis with deterministic search in decomposition
+- `1016dd3` — Extend color_fix to cover near-miss refinement results
+- `9504ab3` — Add directional neighbor feature extractors for local-rule learning
+
+### Test Count
+
+694 tests (all passing)
