@@ -106,7 +106,8 @@ class FourPillarsSolver:
         # Pre-convert expected outputs once for all scoring in this task.
         # The cache is passed to _try_single_primitives and synthesizer.synthesize
         # so np.array() is called once per training example, not thousands of times.
-        cache = TaskCache(task)
+        # The budget is stored on the cache so search methods can check it.
+        cache = TaskCache(task, evals_budget=evals_budget)
 
         # Step 1: Extract task features (for cross-task transfer)
         features = extract_task_features(task)

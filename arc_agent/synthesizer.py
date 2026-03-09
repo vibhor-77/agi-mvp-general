@@ -349,6 +349,8 @@ class ProgramSynthesizer:
         best_score = 0.0
 
         for a in top_concepts:
+            if not cache.budget_ok:
+                break
             for b in top_concepts:
                 prog = Program([a, b])
                 score = cache.score_program(prog)
@@ -394,6 +396,8 @@ class ProgramSynthesizer:
         for concept in self.toolkit.concepts.values():
             if concept.kind == "predicate":
                 continue
+            if not cache.budget_ok:
+                break
 
             # Try appending: pair → concept
             prog  = Program(pair_steps + [concept])
@@ -463,7 +467,11 @@ class ProgramSynthesizer:
         best_score = 0.0
 
         for a in top_concepts:
+            if not cache.budget_ok:
+                break
             for b in top_concepts:
+                if not cache.budget_ok:
+                    break
                 for c in top_concepts:
                     # Skip degenerate A→A→A triples: equivalent to single A
                     # (already tested). Saves ~N evaluations per loop.
@@ -521,10 +529,12 @@ class ProgramSynthesizer:
         best_score = 0.0
 
         for near_miss in near_misses:
+            if not cache.budget_ok:
+                break
             steps = list(near_miss.steps)
 
             # Try appending
-            if len(steps) < self.max_program_length:
+            if len(steps) < self.max_program_length and cache.budget_ok:
                 for concept in all_concepts:
                     prog = Program(steps + [concept])
                     score = cache.score_program(prog)
@@ -536,7 +546,7 @@ class ProgramSynthesizer:
                             return best_prog
 
             # Try prepending
-            if len(steps) < self.max_program_length:
+            if len(steps) < self.max_program_length and cache.budget_ok:
                 for concept in all_concepts:
                     prog = Program([concept] + steps)
                     score = cache.score_program(prog)
@@ -549,6 +559,8 @@ class ProgramSynthesizer:
 
             # Try replacing each step
             for i in range(len(steps)):
+                if not cache.budget_ok:
+                    break
                 for concept in all_concepts:
                     if concept.name == steps[i].name:
                         continue  # skip identity replacement
@@ -760,6 +772,8 @@ class ProgramSynthesizer:
         best_score = 0.0
 
         for pred_idx, pred in enumerate(predicates):
+            if not cache.budget_ok:
+                break
             true_indices, false_indices, is_trivial = predicate_groups[pred_idx]
 
             # Skip non-branching predicates (OPTIMIZATION 1)

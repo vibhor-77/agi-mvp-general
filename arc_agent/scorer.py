@@ -172,10 +172,11 @@ class TaskCache:
         scores = cache.score_population(programs)
     """
 
-    def __init__(self, task: dict) -> None:
+    def __init__(self, task: dict, evals_budget: int = 0) -> None:
         train = task.get("train", [])
         self.n_examples = len(train)
         self.n_evals = 0  # total program evaluations (for instrumentation)
+        self.evals_budget = evals_budget  # 0 = unlimited
 
         # Pre-convert expected outputs once
         self._expected: list[np.ndarray] = []
@@ -193,6 +194,11 @@ class TaskCache:
         for ex in test:
             self._test_expected.append(np.array(ex["output"], dtype=np.uint8))
             self._test_inputs.append(ex["input"])
+
+    @property
+    def budget_ok(self) -> bool:
+        """True if under budget (or budget is unlimited)."""
+        return self.evals_budget == 0 or self.n_evals < self.evals_budget
 
     def score_program(self, program) -> float:
         """Score one program using pre-converted expected arrays."""
