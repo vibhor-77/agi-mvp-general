@@ -2521,6 +2521,47 @@ class TestNeighborRuleLearner(unittest.TestCase):
         self.assertIsInstance(feat, tuple)
         self.assertEqual(len(feat), 5)  # (cell, is_border, n4, n8, dom8)
 
+    def test_directional_feature_extractor(self):
+        """Directional extractor captures N/S/E/W neighbor colors."""
+        from arc_agent.solver import FourPillarsSolver
+        grid = [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+        ]
+        # Center cell: N=2, S=8, E=6, W=4
+        feat = FourPillarsSolver._extract_features_directional(grid, 1, 1)
+        self.assertEqual(feat, (5, 2, 8, 6, 4))
+
+        # Corner cell (0,0): N=-1 (OOB), S=4, E=2, W=-1 (OOB)
+        feat_corner = FourPillarsSolver._extract_features_directional(grid, 0, 0)
+        self.assertEqual(feat_corner, (1, -1, 4, 2, -1))
+
+    def test_directional_8_feature_extractor(self):
+        """8-directional extractor captures all 8 neighbor colors."""
+        from arc_agent.solver import FourPillarsSolver
+        grid = [
+            [1, 2, 3],
+            [4, 5, 6],
+            [7, 8, 9],
+        ]
+        # Center: N=2, NE=3, E=6, SE=9, S=8, SW=7, W=4, NW=1
+        feat = FourPillarsSolver._extract_features_directional_8(grid, 1, 1)
+        self.assertEqual(feat, (5, 2, 3, 6, 9, 8, 7, 4, 1))
+        self.assertEqual(len(feat), 9)
+
+    def test_directional_extractors_in_feature_list(self):
+        """Directional extractors are included in the neighbor rule search."""
+        solver = self._make_solver()
+        # Check both extractors exist and are callable
+        feat4 = solver._extract_features_directional([[1, 2], [3, 4]], 0, 0)
+        self.assertIsInstance(feat4, tuple)
+        self.assertEqual(len(feat4), 5)  # center + N/S/E/W
+
+        feat8 = solver._extract_features_directional_8([[1, 2], [3, 4]], 0, 0)
+        self.assertIsInstance(feat8, tuple)
+        self.assertEqual(len(feat8), 9)  # center + 8 directions
+
 
 class TestV20ToolkitContents(unittest.TestCase):
     def test_new_v20_primitives_exist(self):

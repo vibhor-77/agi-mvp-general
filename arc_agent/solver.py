@@ -924,6 +924,48 @@ class FourPillarsSolver:
         n4, n8, _dom4, dom8 = FourPillarsSolver._neighbor_info(grid, r, c, bg)
         return (cell, is_border, n4, n8, dom8)
 
+    @staticmethod
+    def _extract_features_directional(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (center_color, N_color, S_color, E_color, W_color)
+
+        Uses actual directional neighbor colors instead of counts.
+        More discriminative: distinguishes "red to the north" from "red to the east."
+        Uses -1 for out-of-bounds (border awareness built in).
+        """
+        rows = len(grid)
+        cols = len(grid[0]) if grid else 0
+        cell = grid[r][c]
+        n = grid[r - 1][c] if r > 0 else -1
+        s = grid[r + 1][c] if r < rows - 1 else -1
+        e = grid[r][c + 1] if c < cols - 1 else -1
+        w = grid[r][c - 1] if c > 0 else -1
+        return (cell, n, s, e, w)
+
+    @staticmethod
+    def _extract_features_directional_8(grid: Grid, r: int, c: int) -> tuple:
+        """Features: (center, N, NE, E, SE, S, SW, W, NW)
+
+        Full 8-directional neighbor colors. Most discriminative but highest
+        risk of overfitting. Combined with complexity/LOOCV checks, this
+        catches patterns that depend on diagonal neighbors.
+        """
+        rows = len(grid)
+        cols = len(grid[0]) if grid else 0
+        cell = grid[r][c]
+
+        def _get(rr, cc):
+            return grid[rr][cc] if 0 <= rr < rows and 0 <= cc < cols else -1
+
+        return (cell,
+                _get(r - 1, c),      # N
+                _get(r - 1, c + 1),  # NE
+                _get(r, c + 1),      # E
+                _get(r + 1, c + 1),  # SE
+                _get(r + 1, c),      # S
+                _get(r + 1, c - 1),  # SW
+                _get(r, c - 1),      # W
+                _get(r - 1, c - 1))  # NW
+
     def _learn_neighbor_rules(self, train: list[dict]) -> list[Concept]:
         """Learn neighbor-rule concepts from training examples.
 
@@ -943,6 +985,8 @@ class FourPillarsSolver:
             ("with_row", self._extract_features_with_row),
             ("with_col", self._extract_features_with_col),
             ("with_position", self._extract_features_with_position),
+            ("directional", self._extract_features_directional),
+            ("directional_8", self._extract_features_directional_8),
         ]
 
         concepts = []
