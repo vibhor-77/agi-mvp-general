@@ -2,26 +2,26 @@
 """
 Four Pillars AGI — Performance & Accuracy Benchmark
 ====================================================
-Run full benchmark (parallel by default, all outputs auto-saved):
+Full pipeline (train + eval in one command):
+
+    python benchmark.py --pipeline
+
+Run training only:
 
     python benchmark.py --data-dir ARC-AGI/data/training
 
-Run a quick subset:
+Run eval with a specific culture file:
+
+    python benchmark.py --data-dir ARC-AGI/data/evaluation \\
+        --culture-file cultures/<timestamp>_training.json
+
+Quick subset:
 
     python benchmark.py --data-dir ARC-AGI/data/training --tasks 20
 
-Single-process mode (easier to debug):
+Single-process (easier to debug):
 
     python benchmark.py --data-dir ARC-AGI/data/training --workers 1
-
-Train → Eval with culture transfer:
-
-    # Step 1: Train (culture auto-saved to cultures/)
-    python benchmark.py --data-dir ARC-AGI/data/training
-
-    # Step 2: Eval with culture from step 1
-    python benchmark.py --data-dir ARC-AGI/data/evaluation \\
-        --culture-file cultures/<timestamp>_training.json
 
 All runs automatically produce:
   - logs/<timestamp>_<mode>.log      — full console output
@@ -856,6 +856,11 @@ def benchmark_solver(
     return {
         "times": tracker.times,
         "scores": tracker.scores,
+        "solved": tracker.exact,
+        "overfits": tracker.overfits,
+        "flukes": tracker.flukes,
+        "fails": tracker.fails,
+        "total": done,
         "results_path": results_path,
         "culture_path": save_culture,
     }
@@ -948,35 +953,40 @@ def main():
         "--no-log", action="store_true",
         help="Disable log file output (console only)",
     )
+    parser.add_argument(
+        "--pipeline", action="store_true",
+        help=(
+            "Run full train→eval pipeline in one command. "
+            "Trains on ARC-AGI/data/training, then evaluates on "
+            "ARC-AGI/data/evaluation with the culture learned from training. "
+            "Overrides --data-dir and --culture-file."
+        ),
+    )
+    parser.add_argument(
+        "--train-dir",
+        default="ARC-AGI/data/training",
+        help="Training data dir for --pipeline mode (default: ARC-AGI/data/training)",
+    )
+    parser.add_argument(
+        "--eval-dir",
+        default="ARC-AGI/data/evaluation",
+        help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
+    )
     args = parser.parse_args()
 
-    # ── Generate a single timestamp for all artifacts ───────────────
-    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.pipeline:
+        _run_pipeline(args)
+    else:
+        _run_single(args)
 
-    # ── Set up tee logging ────────────────────────────────────────────
-    tee = None
-    if not args.no_log:
-        os.makedirs("logs", exist_ok=True)
-        if args.log_file:
-            log_path = args.log_file
-        else:
-            # Detect mode for filename
-            if "eval" in args.data_dir.lower():
-                mode_tag = "evaluation"
-            elif "test" in args.data_dir.lower() and "training" not in args.data_dir.lower():
-                mode_tag = "test"
-            else:
-                mode_tag = "training"
-            log_path = f"logs/{run_timestamp}_{mode_tag}.log"
-        tee = _TeeWriter(log_path, sys.stdout)
-        sys.stdout = tee
+
+def _run_single(args):
+    """Run a single benchmark (training OR evaluation)."""
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tee, log_path = _setup_logging(args, run_timestamp)
 
     try:
-        _hline("═")
-        print("  Four Pillars AGI — Benchmark")
-        print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        _hline("═")
-
+        _print_header()
         numba_active = _report_environment()
         _benchmark_operations()
 
@@ -995,13 +1005,7 @@ def main():
         if result is not None and args.tasks > 0:
             _extrapolate(result["times"], numba_active)
 
-        # Print artifact locations
-        _section("Artifacts")
-        if not args.no_log:
-            print(f"  Log:      {log_path}")
-        if result:
-            print(f"  Results:  {result['results_path']}")
-            print(f"  Culture:  {result['culture_path']}")
+        _print_artifacts(log_path, result, args.no_log)
 
         # Suggest next command (helpful: no more digging for culture file)
         if result and "training" in (result.get("culture_path") or ""):
@@ -1019,6 +1023,126 @@ def main():
         if tee:
             sys.stdout = tee._original
             tee.close()
+
+
+def _run_pipeline(args):
+    """Run full train→eval pipeline: train first, then eval with learned culture."""
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Pipeline uses a single log file for both phases
+    tee = None
+    log_path = None
+    if not args.no_log:
+        os.makedirs("logs", exist_ok=True)
+        log_path = f"logs/{run_timestamp}_pipeline.log"
+        tee = _TeeWriter(log_path, sys.stdout)
+        sys.stdout = tee
+
+    try:
+        _print_header()
+        print("  Mode: PIPELINE (train → eval)")
+        _hline("─")
+        numba_active = _report_environment()
+        _benchmark_operations()
+
+        # ── Phase 1: Training ──────────────────────────────────────────
+        _section("PHASE 1: TRAINING")
+        train_result = benchmark_solver(
+            data_dir=args.train_dir,
+            n_tasks=args.tasks,
+            seed=args.seed,
+            population_size=args.population_size,
+            max_generations=args.max_generations,
+            culture_file=args.culture_file,
+            workers=args.workers,
+            run_timestamp=run_timestamp,
+        )
+
+        if train_result is None:
+            print("\n  ERROR: Training failed — no tasks completed.")
+            return
+
+        culture_path = train_result["culture_path"]
+        print(f"\n  Training complete. Culture: {culture_path}")
+
+        # ── Phase 2: Evaluation ────────────────────────────────────────
+        _section("PHASE 2: EVALUATION (with culture from training)")
+        eval_result = benchmark_solver(
+            data_dir=args.eval_dir,
+            n_tasks=args.tasks,
+            seed=args.seed,
+            population_size=args.population_size,
+            max_generations=args.max_generations,
+            culture_file=culture_path,
+            workers=args.workers,
+            run_timestamp=run_timestamp,
+        )
+
+        # ── Pipeline summary ──────────────────────────────────────────
+        _section("PIPELINE SUMMARY")
+        if train_result:
+            t_solved = train_result["solved"]
+            t_total = train_result["total"]
+            t_overfit = train_result["overfits"]
+            print(f"  Training:   {t_solved}/{t_total} solved "
+                  f"({_pct(t_solved, t_total)})"
+                  f"{'  [+' + str(t_overfit) + ' overfit]' if t_overfit else ''}")
+        if eval_result:
+            e_solved = eval_result["solved"]
+            e_total = eval_result["total"]
+            e_overfit = eval_result["overfits"]
+            print(f"  Evaluation: {e_solved}/{e_total} solved "
+                  f"({_pct(e_solved, e_total)})"
+                  f"{'  [+' + str(e_overfit) + ' overfit]' if e_overfit else ''}")
+
+        _print_artifacts(log_path, train_result, args.no_log, label="Train")
+        _print_artifacts(None, eval_result, True, label="Eval")
+
+        _hline("═")
+        print("  Pipeline complete.")
+        _hline("═")
+        print()
+
+    finally:
+        if tee:
+            sys.stdout = tee._original
+            tee.close()
+
+
+def _setup_logging(args, run_timestamp: str):
+    """Set up tee logging. Returns (tee, log_path) or (None, None)."""
+    if args.no_log:
+        return None, None
+    os.makedirs("logs", exist_ok=True)
+    if args.log_file:
+        log_path = args.log_file
+    else:
+        if "eval" in args.data_dir.lower():
+            mode_tag = "evaluation"
+        elif "test" in args.data_dir.lower() and "training" not in args.data_dir.lower():
+            mode_tag = "test"
+        else:
+            mode_tag = "training"
+        log_path = f"logs/{run_timestamp}_{mode_tag}.log"
+    tee = _TeeWriter(log_path, sys.stdout)
+    sys.stdout = tee
+    return tee, log_path
+
+
+def _print_header():
+    _hline("═")
+    print("  Four Pillars AGI — Benchmark")
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    _hline("═")
+
+
+def _print_artifacts(log_path, result, no_log, label=""):
+    _section(f"Artifacts{' (' + label + ')' if label else ''}")
+    if log_path and not no_log:
+        print(f"  Log:      {log_path}")
+    if result:
+        print(f"  Results:  {result['results_path']}")
+        print(f"  Culture:  {result['culture_path']}")
 
 
 if __name__ == "__main__":

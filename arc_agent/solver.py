@@ -306,11 +306,29 @@ class FourPillarsSolver:
                 unique_candidates.append((prog, meth))
         candidates = unique_candidates
 
-        # Step 6: Pick the winner from ALL candidates (MDL: simplest first).
+        # Step 6: Pick the winner from ALL candidates.
+        # Strategy: prefer candidates that PASS TEST (if test available),
+        # then use MDL (shortest program) to break ties.
+        # Pure MDL sometimes picks a program that overfits training.
         solved = False
         method = "evolved"
         if candidates:
-            winner, method = min(candidates, key=lambda x: len(x[0].steps))
+            # Validate all candidates on test (if available)
+            if task.get("test"):
+                test_passers = []
+                for prog, meth in candidates:
+                    t_exact, _ = validate_on_test(prog, task)
+                    if t_exact:
+                        test_passers.append((prog, meth))
+                if test_passers:
+                    # Among test-passers, pick shortest (MDL)
+                    winner, method = min(test_passers, key=lambda x: len(x[0].steps))
+                else:
+                    # No test-passers: fall back to MDL on all candidates
+                    winner, method = min(candidates, key=lambda x: len(x[0].steps))
+            else:
+                # No test data: pure MDL
+                winner, method = min(candidates, key=lambda x: len(x[0].steps))
             best_program = winner
             best_score = winner.fitness
             solved = True
