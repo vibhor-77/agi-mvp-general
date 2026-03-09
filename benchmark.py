@@ -1,15 +1,29 @@
 """
 Four Pillars AGI — Performance & Accuracy Benchmark
 ====================================================
-Run this on your machine to validate performance and accuracy:
+Run full benchmark (all tasks in data dir):
 
     python benchmark.py --data-dir ARC-AGI/data/training
+
+Run a quick subset:
+
+    python benchmark.py --data-dir ARC-AGI/data/training --tasks 20
+
+Train → Eval with culture transfer:
+
+    # Step 1: Train and save learned knowledge
+    python benchmark.py --data-dir ARC-AGI/data/training \\
+        --save-culture cultures/culture_v027.json
+
+    # Step 2: Eval using learned knowledge from training
+    python benchmark.py --data-dir ARC-AGI/data/evaluation \\
+        --culture-file cultures/culture_v027.json
 
 It will:
   1. Report your CPU configuration and Numba availability
   2. Micro-benchmark each hot-path operation (find_objects, scoring, np.array)
-  3. Run the full solver on 20 tasks (single-process for reproducibility)
-  4. Extrapolate expected time for the full 400-task benchmark
+  3. Run the solver on all tasks (single-process for reproducibility)
+  4. Optionally load/save culture for cross-run knowledge transfer
 """
 from __future__ import annotations
 import argparse
@@ -132,7 +146,9 @@ def benchmark_operations():
 # 3. Solver accuracy & timing on N tasks
 # ---------------------------------------------------------------------------
 
-def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42):
+def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42,
+                     culture_file: str | None = None,
+                     save_culture: str | None = None):
     task_files = sorted(glob.glob(os.path.join(data_dir, "*.json")))
     if n_tasks > 0:
         task_files = task_files[:n_tasks]
@@ -148,6 +164,17 @@ def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42):
     np.random.seed(seed)
 
     solver = FourPillarsSolver(population_size=60, max_generations=30, verbose=False)
+
+    # Load culture from a previous training run
+    if culture_file and os.path.exists(culture_file):
+        from arc_agent.culture import load_culture
+        stats = load_culture(solver.toolkit, culture_file, solver.archive)
+        print(f"  Culture loaded: {culture_file}")
+        print(f"    {stats['concepts_loaded']} concepts, "
+              f"{stats['programs_loaded']} programs, "
+              f"{stats['concepts_skipped']} skipped")
+    elif culture_file:
+        print(f"  WARNING: culture file not found: {culture_file}")
 
     task_times = []
     scores = []
@@ -181,6 +208,12 @@ def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42):
     print(f"  Mean task time:    {statistics.mean(task_times):.2f}s")
     print(f"  Total time:        {sum(task_times):.1f}s")
     print(f"  Toolkit size:      {solver.toolkit.size} concepts")
+
+    # Save culture after training
+    if save_culture:
+        from arc_agent.culture import save_culture as _save_culture
+        _save_culture(solver.toolkit, solver.archive, save_culture)
+        print(f"  Culture saved:     {save_culture}")
 
     return task_times, scores
 
@@ -255,6 +288,16 @@ def main():
         default=42,
         help="Random seed (default: 42)",
     )
+    parser.add_argument(
+        "--culture-file",
+        default=None,
+        help="Load culture from this JSON file (learned concepts + programs)",
+    )
+    parser.add_argument(
+        "--save-culture",
+        default=None,
+        help="Save culture to this JSON file after benchmark completes",
+    )
     args = parser.parse_args()
 
     _hline("═")
@@ -264,7 +307,8 @@ def main():
     numba_active = report_environment()
     dt_fo, _ = benchmark_operations()
 
-    result = benchmark_solver(args.data_dir, args.tasks, args.seed)
+    result = benchmark_solver(args.data_dir, args.tasks, args.seed,
+                              args.culture_file, args.save_culture)
     if result is not None:
         task_times, scores = result
         if args.tasks > 0:
