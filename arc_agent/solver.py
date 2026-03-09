@@ -344,7 +344,8 @@ class FourPillarsSolver:
                                   test_exact=test_exact,
                                   test_score=test_score,
                                   n_candidates=len(candidates),
-                                  candidates=candidates)
+                                  candidates=candidates,
+                                  n_evals=cache.n_evals)
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -826,7 +827,8 @@ class FourPillarsSolver:
                       test_exact: bool = False,
                       test_score: float = 0.0,
                       n_candidates: int = 0,
-                      candidates: list | None = None):
+                      candidates: list | None = None,
+                      n_evals: int = 0):
         """Build the per-task result dict.
 
         Args:
@@ -870,6 +872,7 @@ class FourPillarsSolver:
             "toolkit_size": self.toolkit.size,
             "n_candidates": n_candidates,
             "candidates": cand_dicts,
+            "n_evals": n_evals,
         }
 
     def solve_batch(self, tasks: dict[str, dict]) -> dict:

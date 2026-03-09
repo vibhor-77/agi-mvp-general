@@ -175,6 +175,7 @@ class TaskCache:
     def __init__(self, task: dict) -> None:
         train = task.get("train", [])
         self.n_examples = len(train)
+        self.n_evals = 0  # total program evaluations (for instrumentation)
 
         # Pre-convert expected outputs once
         self._expected: list[np.ndarray] = []
@@ -195,6 +196,7 @@ class TaskCache:
 
     def score_program(self, program) -> float:
         """Score one program using pre-converted expected arrays."""
+        self.n_evals += 1
         if self.n_examples == 0:
             return 0.0
         total = 0.0
@@ -217,6 +219,7 @@ class TaskCache:
             return [0.0] * len(programs)
 
         scores = []
+        self.n_evals += len(programs)
         for program in programs:
             total = 0.0
             for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):

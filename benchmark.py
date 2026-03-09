@@ -237,8 +237,16 @@ def _solve_one(args):
     """Solve a single task in a worker process.
 
     Creates a fresh solver per call — no shared mutable state between workers.
+    Prints a Started line at actual execution time (not queue time) so that
+    in parallel mode the user sees when work truly begins on each task.
     """
-    task_id, task, population_size, max_generations, seed, culture_path = args
+    task_id, task, population_size, max_generations, seed, culture_path, \
+        idx, n_tasks, train_dims, test_dims, cells = args
+
+    # Print Started at actual execution time (from the worker process)
+    print(f"  >> [{idx:3d}/{n_tasks}] {task_id}  "
+          f"cells={cells:5d}  train=[{train_dims}]  test=[{test_dims}]",
+          flush=True)
 
     random.seed(seed)
     np.random.seed(seed)
@@ -267,6 +275,9 @@ def _solve_one(args):
         "result": result,
         "elapsed": elapsed,
         "toolkit_size": solver.toolkit.size,
+        "cells": cells,
+        "train_dims": train_dims,
+        "test_dims": test_dims,
     }
 
 
@@ -290,11 +301,9 @@ class _BenchmarkTracker:
     when complete, and flags potential stragglers in rolling summaries.
     """
 
-    def __init__(self, n_tasks: int, n_workers: int,
-                 task_dims: dict, task_sizes: dict):
+    def __init__(self, n_tasks: int, n_workers: int, task_sizes: dict):
         self.n_tasks = n_tasks
         self.n_workers = n_workers
-        self.task_dims = task_dims    # task_id -> (train_dims, test_dims)
         self.task_sizes = task_sizes  # task_id -> total_cells
         self.lock = threading.Lock()
 
@@ -304,30 +313,19 @@ class _BenchmarkTracker:
         self.flukes = 0
         self.overfits = 0
         self.fails = 0
-        self.dispatched = 0
 
+        self.total_evals = 0  # total program evaluations across all tasks
         self.scores: list[float] = []
         self.times: list[float] = []
         self.by_method: dict[str, int] = {}
         self.start_time = time.time()
 
         # Per-task tracking for straggler detection
-        self.start_times: dict[str, float] = {}  # task_id -> dispatch time
         self.completed: set[str] = set()
         # All task results for saving
         self.all_results: dict[str, dict] = {}
 
-    def task_started(self, idx: int, task_id: str):
-        """Log when a task is dispatched to the pool."""
-        with self.lock:
-            self.dispatched += 1
-            self.start_times[task_id] = time.time()
-            train_d, test_d = self.task_dims.get(task_id, ("?", "?"))
-            cells = self.task_sizes.get(task_id, 0)
-            print(f"  >> [{idx:3d}/{self.n_tasks}] {task_id}  "
-                  f"cells={cells:5d}  train=[{train_d}]  test=[{test_d}]")
-
-    def task_done(self, idx: int, worker_result: dict):
+    def task_done(self, worker_result: dict):
         """Log when a task completes with running stats."""
         with self.lock:
             self.done += 1
@@ -335,6 +333,12 @@ class _BenchmarkTracker:
             r = worker_result["result"]
             elapsed = worker_result["elapsed"]
             task_id = worker_result["task_id"]
+            cells = worker_result.get("cells", 0)
+            train_dims = worker_result.get("train_dims", "?")
+            test_dims = worker_result.get("test_dims", "?")
+            n_evals = r.get("n_evals", 0)
+            self.total_evals += n_evals
+
             self.completed.add(task_id)
             self.all_results[task_id] = worker_result
 
@@ -366,8 +370,7 @@ class _BenchmarkTracker:
             icon = _STATUS_ICON[status]
             score = r["score"]
             method_str = r.get("method", "") if solved else ""
-            active = self.dispatched - self.done
-            pending = self.n_tasks - self.dispatched
+            pending = self.n_tasks - self.done
 
             # Is this task slow? Compare against running median
             slow_tag = ""
@@ -381,19 +384,23 @@ class _BenchmarkTracker:
                 f"{_fmt_duration(elapsed):>7s}  "
                 f"score={score:.3f}  {status:<7s} {method_str}{slow_tag}")
             print(
-                f"       totals: "
-                f"{_pct(self.done, self.n_tasks):>3s} done  "
-                f"exact={self.exact}({_pct(self.exact, self.done)})  "
-                f"overfit={self.overfits}  fluke={self.flukes}  "
-                f"fail={self.fails}  "
-                f"active={active}  pending={pending}")
+                f"       cells={cells}  "
+                f"evals={n_evals:,}  "
+                f"train=[{train_dims}]  test=[{test_dims}]")
+            print(
+                f"       done={self.done}/{self.n_tasks}  "
+                f"exact={self.exact}/{self.done}  "
+                f"overfit={self.overfits}/{self.done}  "
+                f"fluke={self.flukes}/{self.done}  "
+                f"fail={self.fails}/{self.done}  "
+                f"pending={pending}")
 
             # Rolling summary every 25 tasks (or at the end)
             if self.done % 25 == 0 or self.done == self.n_tasks:
                 self._print_summary()
 
     def _print_summary(self):
-        """Print a rolling summary with straggler info (lock already held)."""
+        """Print a rolling summary (lock already held)."""
         elapsed = time.time() - self.start_time
         mean_score = statistics.mean(self.scores) if self.scores else 0
         med_time = statistics.median(self.times) if self.times else 0
@@ -402,44 +409,35 @@ class _BenchmarkTracker:
         eta = remaining / rate if rate > 0 else 0
 
         print()
-        print(f"  ┌── Progress: {self.done}/{self.n_tasks} "
-              f"({_pct(self.done, self.n_tasks)})  "
+        print(f"  ┌── Progress: {self.done}/{self.n_tasks}  "
               f"{_fmt_duration(elapsed)} elapsed  "
-              f"ETA {_fmt_duration(eta)} ──")
-        print(f"  │  Rate: {rate:.2f} tasks/s  "
-              f"({self.n_workers} workers)")
-        print(f"  │  ✓ exact={self.exact}  "
-              f"◇ overfit={self.overfits}  "
-              f"△ fluke={self.flukes}  "
-              f"✗ fail={self.fails}")
+              f"ETA {_fmt_duration(eta)}  "
+              f"{rate:.1f} tasks/s ──")
+        print(f"  │  ✓ exact={self.exact}/{self.done}  "
+              f"◇ overfit={self.overfits}/{self.done}  "
+              f"△ fluke={self.flukes}/{self.done}  "
+              f"✗ fail={self.fails}/{self.done}")
         print(f"  │  Score: mean={mean_score:.3f}  "
-              f"Time: median={med_time:.1f}s  "
-              f"mean={statistics.mean(self.times):.1f}s")
+              f"Time: median={med_time:.1f}s  mean={statistics.mean(self.times):.1f}s  "
+              f"Evals: {self.total_evals:,}")
         if self.by_method:
             methods = "  ".join(f"{m}:{c}" for m, c in
                                 sorted(self.by_method.items(),
                                        key=lambda x: -x[1]))
             print(f"  │  Methods: {methods}")
 
-        # Straggler detection: show in-flight tasks that are taking >3x median
-        if med_time > 0 and self.done < self.n_tasks:
-            now = time.time()
-            stragglers = []
-            for tid, t0 in self.start_times.items():
-                if tid not in self.completed:
-                    in_flight = now - t0
-                    if in_flight > med_time * 3:
-                        cells = self.task_sizes.get(tid, 0)
-                        stragglers.append((tid, in_flight, cells))
-            if stragglers:
-                stragglers.sort(key=lambda x: -x[1])
-                print(f"  │")
-                print(f"  │  *** Stragglers (>{med_time * 3:.0f}s = "
-                      f"3x median): ***")
-                for tid, dur, cells in stragglers[:5]:
-                    print(f"  │    {tid}  "
-                          f"{_fmt_duration(dur)} in-flight  "
-                          f"cells={cells}")
+        # Straggler post-mortem: show the slowest completed tasks so far
+        if len(self.times) >= 10:
+            task_time_pairs = [
+                (tid, wr["elapsed"], self.task_sizes.get(tid, 0))
+                for tid, wr in self.all_results.items()
+            ]
+            task_time_pairs.sort(key=lambda x: -x[1])
+            top3 = task_time_pairs[:3]
+            slowest_str = "  ".join(
+                f"{t[0][:8]}({_fmt_duration(t[1])},c={t[2]})"
+                for t in top3)
+            print(f"  │  Slowest: {slowest_str}")
 
         print(f"  └{'─' * 60}")
         print()
@@ -527,42 +525,31 @@ def benchmark_solver(
         print(f"  WARNING: culture file not found: {culture_file}")
         culture_file = None
 
-    # Build worker args
+    # Build worker args (includes idx, dims, cells for Started line in worker)
     sorted_ids = sorted(tasks.keys())
     culture_path = culture_file or ""
     worker_args = [
         (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000, culture_path)
+         seed + i * 1000, culture_path,
+         i + 1, n_total,  # idx, n_tasks
+         task_dims[task_id][0], task_dims[task_id][1],  # train_dims, test_dims
+         task_sizes[task_id])  # cells
         for i, task_id in enumerate(sorted_ids)
     ]
 
     _section(f"Running {n_total} tasks on {n_workers} workers")
 
-    tracker = _BenchmarkTracker(n_total, n_workers, task_dims, task_sizes)
-    task_idx = {tid: i + 1 for i, tid in enumerate(sorted_ids)}
+    tracker = _BenchmarkTracker(n_total, n_workers, task_sizes)
 
     try:
         if n_workers == 1:
             for args in worker_args:
-                tid = args[0]
-                idx = task_idx[tid]
-                tracker.task_started(idx, tid)
-                r = _solve_one(args)
-                tracker.task_done(idx, r)
+                r = _solve_one(args)  # prints Started inside worker
+                tracker.task_done(r)
         else:
-            # Print all Started lines, then stream Done results
-            for args in worker_args:
-                tid = args[0]
-                idx = task_idx[tid]
-                tracker.task_started(idx, tid)
-
-            print()
-
             with multiprocessing.Pool(processes=n_workers) as pool:
                 for r in pool.imap_unordered(_solve_one, worker_args):
-                    tid = r["task_id"]
-                    idx = task_idx[tid]
-                    tracker.task_done(idx, r)
+                    tracker.task_done(r)
 
     except KeyboardInterrupt:
         print("\n\n  Aborted by user — partial results below.\n")
@@ -580,20 +567,23 @@ def benchmark_solver(
     done = tracker.done
     train_perfect = tracker.exact + tracker.overfits
 
-    print(f"  Tasks completed:   {done}/{n_total}")
-    print(f"  ✓ Test confirmed:  {tracker.exact}/{done}  "
-          f"({_pct(tracker.exact, done)})  ← golden metric")
+    print(f"  Tasks:             {done}/{n_total}")
+    print(f"  ✓ Solved:          {tracker.exact}/{done}  "
+          f"({_pct(tracker.exact, done)})  ← train+test confirmed")
     print(f"    Train-perfect:   {train_perfect}/{done}  "
           f"({_pct(train_perfect, done)})")
     if tracker.overfits > 0:
         print(f"    ◇ Overfit:       {tracker.overfits}/{done}  "
-              f"({_pct(tracker.overfits, done)})")
+              f"({_pct(tracker.overfits, done)})  "
+              f"(train-perfect, test-fail)")
     if tracker.flukes > 0:
         print(f"    △ Fluke:         {tracker.flukes}/{done}  "
-              f"({_pct(tracker.flukes, done)})")
+              f"({_pct(tracker.flukes, done)})  "
+              f"(train-fail, test-pass)")
     print(f"    ✗ Fail:          {tracker.fails}/{done}  "
           f"({_pct(tracker.fails, done)})")
     print(f"  Mean score:        {statistics.mean(tracker.scores):.3f}")
+    print(f"  Total evaluations: {tracker.total_evals:,}")
     print(f"  Median task time:  {statistics.median(tracker.times):.2f}s")
     print(f"  Mean task time:    {statistics.mean(tracker.times):.2f}s")
     total_wall = time.time() - tracker.start_time
@@ -609,17 +599,18 @@ def benchmark_solver(
     # Show top-5 slowest tasks (straggler post-mortem)
     if len(tracker.times) >= 10:
         task_time_pairs = [
-            (tid, wr["elapsed"], wr["result"]["score"])
+            (tid, wr["elapsed"], wr["result"]["score"],
+             wr.get("cells", 0), wr["result"].get("n_evals", 0))
             for tid, wr in tracker.all_results.items()
         ]
         task_time_pairs.sort(key=lambda x: -x[1])
         print(f"  Slowest tasks:")
-        for tid, dur, sc in task_time_pairs[:5]:
-            cells = task_sizes.get(tid, 0)
+        for tid, dur, sc, cells, evals in task_time_pairs[:5]:
             print(f"    {tid}  {_fmt_duration(dur):>7s}  "
-                  f"cells={cells:5d}  score={sc:.3f}")
+                  f"cells={cells:5d}  evals={evals:,}  score={sc:.3f}")
 
-    print(f"  Legend: ✓=test confirmed  ◇=overfit  △=fluke  ✗=fail")
+    print(f"  Legend: ✓=solved (train+test)  ◇=overfit (train only)  "
+          f"△=fluke (test only)  ✗=fail")
 
     # ── Save results JSON ─────────────────────────────────────────────
     results_data = {
@@ -637,13 +628,14 @@ def benchmark_solver(
             "wall_clock_seconds": total_wall,
         },
         "summary": {
-            "test_confirmed": tracker.exact,
+            "solved": tracker.exact,
             "train_perfect": train_perfect,
             "overfits": tracker.overfits,
             "flukes": tracker.flukes,
             "fails": tracker.fails,
             "mean_score": round(statistics.mean(tracker.scores), 4),
             "median_time": round(statistics.median(tracker.times), 2),
+            "total_evals": tracker.total_evals,
             "by_method": tracker.by_method,
         },
         "tasks": {
@@ -654,6 +646,8 @@ def benchmark_solver(
                 "fluke": wr["result"].get("fluke", False),
                 "method": wr["result"].get("method", ""),
                 "elapsed": round(wr["elapsed"], 3),
+                "n_evals": wr["result"].get("n_evals", 0),
+                "cells": wr.get("cells", 0),
                 "toolkit_size": wr["toolkit_size"],
             }
             for tid, wr in tracker.all_results.items()
