@@ -339,13 +339,21 @@ class FourPillarsSolver:
         if best_program and task.get("test"):
             test_exact, test_score = validate_on_test(best_program, task)
 
+        # For fluke diagnostics: per-example train accuracy
+        train_example_exact = []
+        n_train = len(task.get("train", []))
+        if best_program and not solved:
+            train_example_exact = cache.per_example_exact(best_program)
+
         return self._make_result(task_id, best_program, best_score, elapsed, method,
                                   pixel_perfect=solved,
                                   test_exact=test_exact,
                                   test_score=test_score,
                                   n_candidates=len(candidates),
                                   candidates=candidates,
-                                  n_evals=cache.n_evals)
+                                  n_evals=cache.n_evals,
+                                  n_train=n_train,
+                                  train_example_exact=train_example_exact)
 
     def _try_culture_programs(self, task: dict,
                                cache: "TaskCache | None" = None) -> Optional[Program]:
@@ -828,17 +836,18 @@ class FourPillarsSolver:
                       test_score: float = 0.0,
                       n_candidates: int = 0,
                       candidates: list | None = None,
-                      n_evals: int = 0):
+                      n_evals: int = 0,
+                      n_train: int = 0,
+                      train_example_exact: list | None = None):
         """Build the per-task result dict.
 
         Args:
             pixel_perfect: True if program is pixel-perfect on all TRAINING examples.
             test_exact: True if program is pixel-perfect on all TEST examples.
             test_score: Average pixel accuracy on test examples.
-            candidates: List of (Program, method_str) tuples — all pixel-perfect
-                        candidates found during search. Serialized as dicts with
-                        'program' (name), 'method', and 'steps' (list of step names)
-                        so they can survive JSON serialization and cross-process transfer.
+            candidates: List of (Program, method_str) tuples.
+            n_train: Number of training examples for this task.
+            train_example_exact: Per-example pixel-perfect booleans (for flukes).
         """
         # Serialize candidates to dicts (Programs aren't JSON-serializable)
         cand_dicts = []
@@ -873,6 +882,8 @@ class FourPillarsSolver:
             "n_candidates": n_candidates,
             "candidates": cand_dicts,
             "n_evals": n_evals,
+            "n_train": n_train,
+            "train_example_exact": train_example_exact or [],
         }
 
     def solve_batch(self, tasks: dict[str, dict]) -> dict:

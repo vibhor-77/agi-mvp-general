@@ -233,6 +233,27 @@ class TaskCache:
 
         return scores
 
+    def per_example_exact(self, program) -> list[bool]:
+        """Check each training example individually for pixel-perfect match.
+
+        Returns a list of booleans, one per training example, indicating
+        whether the program produces pixel-perfect output for that example.
+        Useful for diagnosing flukes (passed test but missed some train examples).
+        """
+        results = []
+        for inp, e, (exp_h, exp_w) in zip(self._inputs, self._expected, self._exp_dims):
+            predicted = program.execute(inp)
+            p = _safe_to_np(predicted)
+            if p is None:
+                results.append(False)
+                continue
+            pred_h, pred_w = p.shape
+            if pred_h != exp_h or pred_w != exp_w:
+                results.append(False)
+            else:
+                results.append(bool(np.array_equal(p, e)))
+        return results
+
     def is_pixel_perfect(self, program) -> bool:
         """Check if program produces pixel-perfect output on ALL training examples.
 

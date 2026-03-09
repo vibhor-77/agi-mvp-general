@@ -102,10 +102,10 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _pct(n: int, total: int) -> str:
-    """Format n/total as percentage string, e.g. '25%'."""
+    """Format n/total as percentage string, e.g. '5.8%'."""
     if total == 0:
-        return "0%"
-    return f"{100 * n / total:.0f}%"
+        return "0.0%"
+    return f"{100 * n / total:.1f}%"
 
 
 def _task_dimensions(task: dict) -> tuple[str, str]:
@@ -147,6 +147,56 @@ def _task_grid_size(task: dict) -> int:
                 g = ex.get(key, [[]])
                 total += len(g) * (len(g[0]) if g else 0)
     return total
+
+
+def _aggregate_culture(all_results: dict, save_path: str) -> None:
+    """Aggregate learned culture from all worker results and save to JSON.
+
+    Each worker independently discovers concepts and programs. This merges
+    them into a single culture file, deduplicating by name.
+    """
+    all_concepts: dict[str, dict] = {}
+    all_programs: list[dict] = []
+    all_features: dict[str, dict] = {}
+
+    for wr in all_results.values():
+        for concept in wr.get("_learned_concepts", []):
+            name = concept["name"]
+            if name not in all_concepts:
+                all_concepts[name] = concept
+
+        all_programs.extend(wr.get("_solved_programs", []))
+
+        for tid, features in wr.get("_task_features", {}).items():
+            if tid not in all_features:
+                serializable = {}
+                for k, v in features.items():
+                    if isinstance(v, (bool, int, float, str)):
+                        serializable[k] = v
+                all_features[tid] = serializable
+
+    # Deduplicate programs by (task_id, name) pair
+    seen = set()
+    unique_programs = []
+    for prog in all_programs:
+        key = (prog.get("task_id", ""), prog.get("name", ""))
+        if key not in seen:
+            seen.add(key)
+            unique_programs.append(prog)
+
+    culture = {
+        "version": "0.9",
+        "learned_concepts": list(all_concepts.values()),
+        "successful_programs": unique_programs,
+        "task_features": all_features,
+    }
+
+    with open(save_path, "w") as f:
+        json.dump(culture, f, indent=2)
+
+    print(f"    Learned concepts: {len(all_concepts)}")
+    print(f"    Successful programs: {len(unique_programs)}")
+    print(f"    Task features: {len(all_features)}")
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +320,33 @@ def _solve_one(args):
     result = solver.solve_task(task, task_id)
     elapsed = time.perf_counter() - t0
 
+    # Collect culture data for aggregation across workers
+    learned_concepts = []
+    for name, concept in solver.toolkit.concepts.items():
+        if name.startswith("learned_"):
+            from arc_agent.culture import _extract_step_names
+            step_names = _extract_step_names(concept)
+            learned_concepts.append({
+                "name": name,
+                "steps": step_names,
+                "kind": concept.kind,
+                "usage_count": concept.usage_count,
+                "success_count": concept.success_count,
+            })
+
+    solved_programs = []
+    for tid, programs in solver.archive.task_solutions.items():
+        for prog in programs:
+            step_names = [s.name for s in prog.steps]
+            all_ok = all(sn in solver.toolkit.concepts for sn in step_names)
+            if all_ok and step_names:
+                solved_programs.append({
+                    "task_id": tid,
+                    "steps": step_names,
+                    "fitness": prog.fitness,
+                    "name": prog.name,
+                })
+
     return {
         "task_id": task_id,
         "result": result,
@@ -278,6 +355,10 @@ def _solve_one(args):
         "cells": cells,
         "train_dims": train_dims,
         "test_dims": test_dims,
+        # Culture data for cross-worker aggregation
+        "_learned_concepts": learned_concepts,
+        "_solved_programs": solved_programs,
+        "_task_features": dict(solver.archive.task_features),
     }
 
 
@@ -320,6 +401,10 @@ class _BenchmarkTracker:
         self.by_method: dict[str, int] = {}
         self.start_time = time.time()
 
+        # Fluke train accuracy tracking
+        self.fluke_train_hit = 0   # train examples that fluke programs got right
+        self.fluke_train_total = 0 # total train examples across fluke tasks
+
         # Per-task tracking for straggler detection
         self.completed: set[str] = set()
         # All task results for saving
@@ -353,12 +438,17 @@ class _BenchmarkTracker:
             if tc:
                 self.exact += 1
                 status = "exact"
-            elif solved and not tc:
-                self.overfits += 1
-                status = "overfit"
             elif fl:
                 self.flukes += 1
                 status = "fluke"
+                # Track per-example train accuracy for flukes
+                tex = r.get("train_example_exact", [])
+                n_train = r.get("n_train", 0)
+                self.fluke_train_total += n_train
+                self.fluke_train_hit += sum(tex)
+            elif solved and not tc:
+                self.overfits += 1
+                status = "overfit"
             else:
                 self.fails += 1
                 status = "fail"
@@ -379,19 +469,29 @@ class _BenchmarkTracker:
                 if elapsed > med * 3:
                     slow_tag = "  *** SLOW ***"
 
+            # Fluke detail: show train hit/miss
+            fluke_detail = ""
+            if status == "fluke":
+                tex = r.get("train_example_exact", [])
+                n_train = r.get("n_train", 0)
+                n_hit = sum(tex)
+                fluke_detail = f"  (train {n_hit}/{n_train} exact)"
+
             print(
                 f"  {icon} [{self.done:3d}/{self.n_tasks}] {task_id}  "
                 f"{_fmt_duration(elapsed):>7s}  "
-                f"score={score:.3f}  {status:<7s} {method_str}{slow_tag}")
+                f"score={score:.3f}  {status:<7s} "
+                f"{method_str}{fluke_detail}{slow_tag}")
             print(
                 f"       cells={cells}  "
                 f"evals={n_evals:,}  "
                 f"train=[{train_dims}]  test=[{test_dims}]")
+            # Reorder: exact+fluke first (accuracy), then overfit+fail
             print(
                 f"       done={self.done}/{self.n_tasks}  "
                 f"exact={self.exact}/{self.done}  "
-                f"overfit={self.overfits}/{self.done}  "
                 f"fluke={self.flukes}/{self.done}  "
+                f"overfit={self.overfits}/{self.done}  "
                 f"fail={self.fails}/{self.done}  "
                 f"pending={pending}")
 
@@ -413,10 +513,16 @@ class _BenchmarkTracker:
               f"{_fmt_duration(elapsed)} elapsed  "
               f"ETA {_fmt_duration(eta)}  "
               f"{rate:.1f} tasks/s ──")
+        # Reorder: exact+fluke (accuracy) first, then overfit+fail
+        fluke_train_str = ""
+        if self.flukes > 0 and self.fluke_train_total > 0:
+            fluke_train_str = (f"  (fluke train: "
+                               f"{self.fluke_train_hit}/{self.fluke_train_total})")
         print(f"  │  ✓ exact={self.exact}/{self.done}  "
-              f"◇ overfit={self.overfits}/{self.done}  "
               f"△ fluke={self.flukes}/{self.done}  "
-              f"✗ fail={self.fails}/{self.done}")
+              f"◇ overfit={self.overfits}/{self.done}  "
+              f"✗ fail={self.fails}/{self.done}"
+              f"{fluke_train_str}")
         print(f"  │  Score: mean={mean_score:.3f}  "
               f"Time: median={med_time:.1f}s  mean={statistics.mean(self.times):.1f}s  "
               f"Evals: {self.total_evals:,}")
@@ -568,18 +674,29 @@ def benchmark_solver(
     train_perfect = tracker.exact + tracker.overfits
 
     print(f"  Tasks:             {done}/{n_total}")
+    # Accuracy metrics first (exact + fluke = passed test)
+    passed_test = tracker.exact + tracker.flukes
     print(f"  ✓ Solved:          {tracker.exact}/{done}  "
           f"({_pct(tracker.exact, done)})  ← train+test confirmed")
+    if tracker.flukes > 0:
+        fluke_train_str = ""
+        if tracker.fluke_train_total > 0:
+            fluke_train_str = (f", train accuracy: "
+                               f"{tracker.fluke_train_hit}/"
+                               f"{tracker.fluke_train_total}")
+        print(f"    △ Fluke:         {tracker.flukes}/{done}  "
+              f"({_pct(tracker.flukes, done)})  "
+              f"(test-pass, train-fail{fluke_train_str})")
+    if passed_test != tracker.exact:
+        print(f"    Passed test:     {passed_test}/{done}  "
+              f"({_pct(passed_test, done)})")
+    # Then overfit + fail
     print(f"    Train-perfect:   {train_perfect}/{done}  "
           f"({_pct(train_perfect, done)})")
     if tracker.overfits > 0:
         print(f"    ◇ Overfit:       {tracker.overfits}/{done}  "
               f"({_pct(tracker.overfits, done)})  "
               f"(train-perfect, test-fail)")
-    if tracker.flukes > 0:
-        print(f"    △ Fluke:         {tracker.flukes}/{done}  "
-              f"({_pct(tracker.flukes, done)})  "
-              f"(train-fail, test-pass)")
     print(f"    ✗ Fail:          {tracker.fails}/{done}  "
           f"({_pct(tracker.fails, done)})")
     print(f"  Mean score:        {statistics.mean(tracker.scores):.3f}")
@@ -636,6 +753,8 @@ def benchmark_solver(
             "mean_score": round(statistics.mean(tracker.scores), 4),
             "median_time": round(statistics.median(tracker.times), 2),
             "total_evals": tracker.total_evals,
+            "fluke_train_hit": tracker.fluke_train_hit,
+            "fluke_train_total": tracker.fluke_train_total,
             "by_method": tracker.by_method,
         },
         "tasks": {
@@ -647,6 +766,8 @@ def benchmark_solver(
                 "method": wr["result"].get("method", ""),
                 "elapsed": round(wr["elapsed"], 3),
                 "n_evals": wr["result"].get("n_evals", 0),
+                "n_train": wr["result"].get("n_train", 0),
+                "train_example_exact": wr["result"].get("train_example_exact", []),
                 "cells": wr.get("cells", 0),
                 "toolkit_size": wr["toolkit_size"],
             }
@@ -662,17 +783,12 @@ def benchmark_solver(
         json.dump(results_data, f, indent=2)
     print(f"\n  Results saved:     {results_path}")
 
-    # ── Save culture ──────────────────────────────────────────────────
+    # ── Save culture (aggregated from all workers) ─────────────────
     os.makedirs("cultures", exist_ok=True)
     if not save_culture:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_culture = f"cultures/{ts}_{mode}.json"
-    from arc_agent.culture import save_culture as _save_culture
-    from arc_agent.solver import FourPillarsSolver
-    solver = FourPillarsSolver(population_size=population_size,
-                               max_generations=max_generations,
-                               verbose=False)
-    _save_culture(solver.toolkit, solver.archive, save_culture)
+    _aggregate_culture(tracker.all_results, save_culture)
     print(f"  Culture saved:     {save_culture}")
 
     return {
