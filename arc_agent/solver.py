@@ -333,8 +333,16 @@ class FourPillarsSolver:
         # Decay exploration over time
         self.explorer.decay_epsilon()
 
+        # Validate best program on test examples (if available)
+        test_exact = False
+        test_score = 0.0
+        if best_program and task.get("test"):
+            test_exact, test_score = validate_on_test(best_program, task)
+
         return self._make_result(task_id, best_program, best_score, elapsed, method,
                                   pixel_perfect=solved,
+                                  test_exact=test_exact,
+                                  test_score=test_score,
                                   n_candidates=len(candidates),
                                   candidates=candidates)
 
@@ -814,11 +822,17 @@ class FourPillarsSolver:
         return result if result else None
 
     def _make_result(self, task_id, program, score, elapsed, method,
-                      pixel_perfect: bool = False, n_candidates: int = 0,
+                      pixel_perfect: bool = False,
+                      test_exact: bool = False,
+                      test_score: float = 0.0,
+                      n_candidates: int = 0,
                       candidates: list | None = None):
         """Build the per-task result dict.
 
         Args:
+            pixel_perfect: True if program is pixel-perfect on all TRAINING examples.
+            test_exact: True if program is pixel-perfect on all TEST examples.
+            test_score: Average pixel accuracy on test examples.
             candidates: List of (Program, method_str) tuples — all pixel-perfect
                         candidates found during search. Serialized as dicts with
                         'program' (name), 'method', and 'steps' (list of step names)
@@ -834,10 +848,21 @@ class FourPillarsSolver:
                     "steps": [s.name for s in prog.steps],
                 })
 
+        # Classify solve status
+        # test_confirmed = pixel-perfect on BOTH train AND test (the golden metric)
+        # fluke = passed test but NOT train-perfect (lucky generalization)
+        # overfit = train-perfect but NOT test-exact
+        test_confirmed = pixel_perfect and test_exact
+        fluke = (not pixel_perfect) and test_exact
+
         return {
             "task_id": task_id,
             "solved": pixel_perfect,
+            "test_exact": test_exact,
+            "test_confirmed": test_confirmed,
+            "fluke": fluke,
             "score": score,
+            "test_score": test_score,
             "program": program.name if program else "none",
             "program_length": len(program) if program else 0,
             "time_seconds": elapsed,

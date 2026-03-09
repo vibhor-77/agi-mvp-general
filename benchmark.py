@@ -178,8 +178,11 @@ def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42,
 
     task_times = []
     scores = []
-    solved = 0
-    partial = 0  # >0.80
+    train_perfect = 0     # pixel-perfect on training examples
+    test_confirmed = 0    # pixel-perfect on BOTH train AND test
+    flukes = 0            # passed test but NOT train-perfect
+    partial = 0           # >0.80 score but not solved
+    by_method = {}
 
     for i, tf in enumerate(task_files, 1):
         task_id = os.path.basename(tf).replace(".json", "")
@@ -192,22 +195,58 @@ def benchmark_solver(data_dir: str, n_tasks: int = 0, seed: int = 42,
 
         task_times.append(elapsed)
         scores.append(result["score"])
+
         if result["solved"]:
-            solved += 1
+            train_perfect += 1
+            method = result.get("method", "unknown")
+            by_method[method] = by_method.get(method, 0) + 1
         elif result["score"] > 0.80:
             partial += 1
 
-        status = "✓" if result["solved"] else ("~" if result["score"] > 0.80 else "✗")
-        print(f"  [{i:2d}/{n_tasks}] {status} {task_id}  score={result['score']:.3f}  {elapsed:.2f}s")
+        if result.get("test_confirmed"):
+            test_confirmed += 1
+        if result.get("fluke"):
+            flukes += 1
+
+        # Status: ✓=test_confirmed, ◇=train-only (overfit), △=fluke, ~=partial, ✗=low
+        if result.get("test_confirmed"):
+            status = "✓"
+        elif result["solved"]:
+            status = "◇"  # train-perfect but not test-confirmed
+        elif result.get("fluke"):
+            status = "△"
+        elif result["score"] > 0.80:
+            status = "~"
+        else:
+            status = "✗"
+
+        method_str = f"  {result.get('method', '')}" if result["solved"] else ""
+        print(f"  [{i:2d}/{n_tasks}] {status} {task_id}  score={result['score']:.3f}  "
+              f"{elapsed:.2f}s{method_str}")
 
     print()
-    print(f"  Solved (exact):    {solved}/{n_tasks}  ({100*solved/n_tasks:.0f}%)")
+    print(f"  Test confirmed:    {test_confirmed}/{n_tasks}  "
+          f"({100*test_confirmed/n_tasks:.0f}%)  ← golden metric")
+    print(f"  Train-perfect:     {train_perfect}/{n_tasks}  "
+          f"({100*train_perfect/n_tasks:.0f}%)")
+    if flukes > 0:
+        print(f"  Flukes:            {flukes}/{n_tasks}  "
+              f"({100*flukes/n_tasks:.0f}%)")
+    overfit = train_perfect - test_confirmed
+    if overfit > 0:
+        print(f"  Overfit:           {overfit}/{n_tasks}  "
+              f"({100*overfit/n_tasks:.0f}%)")
     print(f"  Partial (>80%):    {partial}/{n_tasks}  ({100*partial/n_tasks:.0f}%)")
     print(f"  Mean score:        {statistics.mean(scores):.3f}")
     print(f"  Median task time:  {statistics.median(task_times):.2f}s")
     print(f"  Mean task time:    {statistics.mean(task_times):.2f}s")
     print(f"  Total time:        {sum(task_times):.1f}s")
     print(f"  Toolkit size:      {solver.toolkit.size} concepts")
+    print(f"  Legend: ✓=test confirmed  ◇=overfit  △=fluke  ~=partial  ✗=low")
+    if by_method:
+        print(f"  By method:")
+        for m, c in sorted(by_method.items(), key=lambda x: -x[1]):
+            print(f"    {m}: {c}")
 
     # Save culture after training
     if save_culture:
