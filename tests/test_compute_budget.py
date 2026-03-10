@@ -1,7 +1,7 @@
 """Tests for the cell-normalized compute budget system.
 
 Covers:
-- Cell-normalized budget with per-task ceiling: min(compute_cap/cells, 10K)
+- Cell-normalized budget with proportional ceiling
 - Budget gating of search phases in the solver
 - Budget exceeded flag in solver output
 - Contest mode (uncapped: compute_cap=0)
@@ -16,37 +16,58 @@ from arc_agent.sample_tasks import SAMPLE_TASKS
 
 
 class TestCellNormalizedBudget(unittest.TestCase):
-    """Test the budget formula: min(compute_cap / cells, 10K).
+    """Test the budget formula: min(compute_cap/cells, compute_cap/DEFAULT_CELLS).
 
     The single user-facing control is --compute-cap (default 8M). The
-    per-task eval budget is min(max(compute_cap // cells, 500), 10_000).
-    The 10K ceiling prevents small-grid runaway; compute_cap controls
-    when large-grid tasks get fewer evals due to cost normalization.
+    per-task eval budget is min(max(compute_cap//cells, 500), max_evals)
+    where max_evals = compute_cap // DEFAULT_CELLS (800).
+
+    At default 8M: max_evals = 10K — the natural saturation point.
+    At higher caps (e.g. 400M): max_evals = 500K — allows deep search.
     When compute_cap=0 (contest mode), evals are effectively unlimited.
     """
 
-    MAX_EVALS_PER_TASK = 10_000
+    DEFAULT_CELLS = 800
 
     def _effective(self, compute_cap, cells):
         """Replicate the budget calculation from dataset.py / benchmark.py."""
         if compute_cap > 0 and cells > 0:
-            return min(max(compute_cap // cells, 500), self.MAX_EVALS_PER_TASK)
+            max_evals = compute_cap // self.DEFAULT_CELLS
+            return min(max(compute_cap // cells, 500), max(max_evals, 500))
         return 10_000_000  # Effectively unlimited
 
-    def test_small_grid_hits_ceiling(self):
-        """Small grids with generous cap should hit the 10K ceiling."""
-        # 8M / 9 = 888K, capped to 10K
+    def test_small_grid_hits_ceiling_at_default_cap(self):
+        """Small grids with default 8M cap should hit the 10K ceiling."""
+        # 8M / 9 = 888K, ceiling = 8M / 800 = 10K
         self.assertEqual(self._effective(8_000_000, 9), 10_000)
 
-    def test_medium_grid_hits_ceiling(self):
-        """Medium grids (800 cells) with default cap should hit 10K ceiling."""
-        # 8M / 800 = 10K exactly
+    def test_medium_grid_at_default_cap(self):
+        """Medium grids (800 cells) with default cap get 10K."""
+        # 8M / 800 = 10K = ceiling
         self.assertEqual(self._effective(8_000_000, 800), 10_000)
 
     def test_large_grid_below_ceiling(self):
         """Large grids should get proportionally fewer evals (below ceiling)."""
         # 8M / 5000 = 1600, below 10K ceiling
         self.assertEqual(self._effective(8_000_000, 5000), 1600)
+
+    def test_high_cap_allows_more_evals(self):
+        """With 400M cap, small grids should get up to 500K evals."""
+        # 400M / 9 = 44M, ceiling = 400M / 800 = 500K
+        self.assertEqual(self._effective(400_000_000, 9), 500_000)
+
+    def test_high_cap_medium_grid(self):
+        """With 400M cap, medium grids get 500K (at ceiling)."""
+        # 400M / 800 = 500K = ceiling
+        self.assertEqual(self._effective(400_000_000, 800), 500_000)
+
+    def test_ceiling_scales_with_cap(self):
+        """Ceiling should be proportional to compute_cap."""
+        c1 = self._effective(8_000_000, 9)     # 10K ceiling
+        c2 = self._effective(400_000_000, 9)   # 500K ceiling
+        self.assertEqual(c1, 10_000)
+        self.assertEqual(c2, 500_000)
+        self.assertEqual(c2 / c1, 50)  # 400M/8M = 50x
 
     def test_contest_mode_unlimited(self):
         """Contest mode (compute_cap=0) should give effectively unlimited evals."""
@@ -67,21 +88,20 @@ class TestCellNormalizedBudget(unittest.TestCase):
         self.assertGreater(eff_small, eff_large)
 
     def test_low_cap_fast_iteration(self):
-        """Low compute-cap should give tight budgets below ceiling."""
-        # 200K / 100 cells = 2K (below 10K ceiling)
-        self.assertEqual(self._effective(200_000, 100), 2000)
-        # 200K / 900 cells < 500, so minimum 500 applies
+        """Low compute-cap should give tight budgets."""
+        # 200K / 100 cells = 2000, ceiling = max(200K/800, 500) = max(250, 500) = 500
+        # min(max(2000, 500), 500) = min(2000, 500) = 500
+        self.assertEqual(self._effective(200_000, 100), 500)
+        # 200K / 900 cells = 222, floor to 500, ceiling = 500
+        # min(max(222, 500), 500) = min(500, 500) = 500
         self.assertEqual(self._effective(200_000, 900), 500)
+        # 1M / 100 cells = 10K, ceiling = max(1M/800, 500) = 1250
+        # min(10K, 1250) = 1250
+        self.assertEqual(self._effective(1_000_000, 100), 1250)
 
     def test_minimum_500_evals(self):
         """Even with tiny compute-cap, minimum 500 evals is enforced."""
         self.assertEqual(self._effective(100, 10_000), 500)
-
-    def test_ceiling_is_10k(self):
-        """No task should exceed 10K evals regardless of compute-cap."""
-        for cap in [1_000_000, 8_000_000, 100_000_000]:
-            eff = self._effective(cap, 9)  # Tiny grid
-            self.assertLessEqual(eff, 10_000)
 
 
 class TestBudgetGating(unittest.TestCase):

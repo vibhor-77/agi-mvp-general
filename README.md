@@ -107,9 +107,9 @@ tail -f logs/*_pipeline.log         # watch full console output
 
 ### Compute budget strategy
 
-The solver uses a **cell-normalized computational budget with a per-task ceiling** to maximize solve rate per minute of compute. The per-task eval budget is: `min(compute_cap / cells, 10K)`, where `cells` is the average grid cell count.
+The solver uses a **cell-normalized computational budget with a proportional ceiling** to maximize solve rate per minute of compute. The per-task eval budget is: `min(compute_cap / cells, compute_cap / 800)`, where `cells` is the average grid cell count and 800 is the median grid size.
 
-The **10K per-task ceiling** is the natural saturation point: deterministic search uses ~1-3K evals, evolution adds ~7-9K, and returns diminish sharply beyond that. Without this ceiling, small-grid tasks (e.g., 120 cells) would get enormous budgets (e.g., 8M/120 = 66K evals) that burn time in low-ROI triples search. The **compute_cap** controls when cell-normalization kicks in for large-grid tasks: each eval is more expensive on large grids, so they get proportionally fewer.
+At the **default 8M cap**, the ceiling is 10K evals/task — the natural saturation point where deterministic search (~1-3K) + evolution (~7-9K) exhaust useful work. At **higher caps** (e.g., 400M for contest mode), the ceiling scales proportionally to 500K, allowing deep search. This prevents small-grid tasks from getting runaway budgets at the default cap, while preserving full search depth when the user explicitly requests more compute.
 
 | Mode | Command | Compute cap | Approx. time (8 workers, M-series Mac) |
 |------|---------|-------------|-------------------------|

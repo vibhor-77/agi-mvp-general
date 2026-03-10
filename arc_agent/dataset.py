@@ -235,19 +235,25 @@ def _solve_one(args: tuple) -> dict:
     compute_cap = args[8] if len(args) > 8 else 8_000_000
     time_limit = args[9] if len(args) > 9 else 0.0
 
-    # Cell-normalized compute cap with per-task ceiling.
-    # Formula: min(compute_cap / cells, MAX_EVALS_PER_TASK)
+    # Cell-normalized compute cap with proportional per-task ceiling.
     #
-    # The ceiling prevents small-grid tasks (few cells) from getting
-    # enormous budgets that burn time in low-ROI triples/DSL search.
-    # 10K is the natural saturation point: deterministic search uses
-    # ~1-3K evals, evolution adds ~7-9K, and returns diminish beyond
-    # that.  The compute_cap controls when cell normalization kicks in
-    # for large-grid tasks (each eval costs more, so they get fewer).
-    MAX_EVALS_PER_TASK = 10_000
+    # Formula: min(compute_cap / cells, max_evals)
+    #   where max_evals = compute_cap / DEFAULT_CELLS
+    #   DEFAULT_CELLS = 800 (median grid size in ARC training)
+    #
+    # At the default 8M cap: max_evals = 8M/800 = 10K — the natural
+    # saturation point where deterministic search (~1-3K) + evolution
+    # (~7-9K) exhaust useful work.  This prevents small-grid tasks
+    # from burning time in low-ROI triples search.
+    #
+    # At higher caps (e.g. 400M for contest mode), the ceiling scales
+    # proportionally: 400M/800 = 500K, allowing deep search when the
+    # user explicitly requests more compute.
+    DEFAULT_CELLS = 800
     if compute_cap > 0:
         cells = _avg_cells(task)
-        evals_budget = min(max(compute_cap // cells, 500), MAX_EVALS_PER_TASK)
+        max_evals = compute_cap // DEFAULT_CELLS
+        evals_budget = min(max(compute_cap // cells, 500), max(max_evals, 500))
     else:
         evals_budget = 10_000_000  # Effectively unlimited
 

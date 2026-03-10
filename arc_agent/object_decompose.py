@@ -226,6 +226,9 @@ def _try_conditional_recolor(
         ("by_input_color", _learn_recolor_by_input_color),
         ("by_position", _learn_recolor_by_position),
         ("by_shape", _learn_recolor_by_shape),
+        ("by_size_rank", _learn_recolor_by_size_rank),
+        ("by_compactness", _learn_recolor_by_compactness),
+        ("by_has_hole", _learn_recolor_by_has_hole),
     ]:
         rule = strategy_fn(train)
         if rule is None:
@@ -528,6 +531,174 @@ def _learn_recolor_by_shape(train: list[dict]) -> dict | None:
     return shape_to_color
 
 
+def _learn_recolor_by_size_rank(train: list[dict]) -> dict | None:
+    """Learn a size-rank→color mapping from training examples.
+
+    Ranks objects within each example by size (0=largest, 1=next, ...),
+    then checks if the same rank always maps to the same output color.
+    Unlike by_size, this handles varying absolute sizes across examples.
+    Returns {rank: output_color} or None.
+    """
+    rank_to_color: dict[int, int] = {}
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        # Sort by size descending to assign ranks
+        sized = [(si["size"], si, so) for si, so in matches]
+        sized.sort(key=lambda x: -x[0])
+
+        for rank, (size, si, so) in enumerate(sized):
+            out_color = so["color"]
+            if rank in rank_to_color:
+                if rank_to_color[rank] != out_color:
+                    return None  # inconsistent
+            rank_to_color[rank] = out_color
+
+    # Must have at least 2 ranks mapping to different colors
+    if len(set(rank_to_color.values())) < 2:
+        return None
+
+    # Must actually change something
+    has_change = False
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+        for si, so in matches:
+            if si["color"] != so["color"]:
+                has_change = True
+                break
+        if has_change:
+            break
+    if not has_change:
+        return None
+
+    return rank_to_color
+
+
+def _compactness(shape: dict) -> float:
+    """Compute compactness of a shape: pixels / bounding_box_area.
+
+    A perfect rectangle has compactness 1.0; L-shapes and irregular
+    objects have compactness < 1.0.
+    """
+    r0, c0, r1, c1 = shape["bbox"]
+    bbox_area = (r1 - r0 + 1) * (c1 - c0 + 1)
+    if bbox_area == 0:
+        return 1.0
+    return shape["size"] / bbox_area
+
+
+def _learn_recolor_by_compactness(train: list[dict]) -> dict | None:
+    """Learn a compactness-based recolor rule from training examples.
+
+    Classifies objects as compact (compactness == 1.0, i.e. rectangle) or
+    non-compact (compactness < 1.0, i.e. irregular shape). Returns
+    {True: color_for_compact, False: color_for_non_compact} or None.
+    """
+    compact_colors: set[int] = set()
+    non_compact_colors: set[int] = set()
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            is_compact = _compactness(si) >= 1.0 - 1e-9
+            if is_compact:
+                compact_colors.add(so["color"])
+            else:
+                non_compact_colors.add(so["color"])
+
+    # Each class must map to exactly one color, and they must differ
+    if len(compact_colors) != 1 or len(non_compact_colors) != 1:
+        return None
+    compact_color = next(iter(compact_colors))
+    non_compact_color = next(iter(non_compact_colors))
+    if compact_color == non_compact_color:
+        return None
+
+    return {True: compact_color, False: non_compact_color}
+
+
+def _has_hole(shape: dict) -> bool:
+    """Check if a shape has an enclosed hole (background pixel surrounded by shape pixels).
+
+    Uses flood fill from the border of the subgrid's bounding box to find
+    all reachable background cells. Any unreachable background cell is a hole.
+    """
+    subgrid = shape["subgrid"]
+    h = len(subgrid)
+    w = len(subgrid[0]) if h > 0 else 0
+    if h <= 2 or w <= 2:
+        return False  # Too small to have an interior hole
+
+    # Find background cells (value 0 or the object's own bg)
+    # In the subgrid, foreground pixels have the shape's color, bg is 0
+    visited = [[False] * w for _ in range(h)]
+
+    # BFS from all border background cells
+    queue = []
+    for r in range(h):
+        for c in range(w):
+            if (r == 0 or r == h - 1 or c == 0 or c == w - 1):
+                if subgrid[r][c] == 0:
+                    visited[r][c] = True
+                    queue.append((r, c))
+
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < h and 0 <= nc < w and not visited[nr][nc]:
+                if subgrid[nr][nc] == 0:
+                    visited[nr][nc] = True
+                    queue.append((nr, nc))
+
+    # Any unvisited background cell is an interior hole
+    for r in range(h):
+        for c in range(w):
+            if subgrid[r][c] == 0 and not visited[r][c]:
+                return True
+    return False
+
+
+def _learn_recolor_by_has_hole(train: list[dict]) -> dict | None:
+    """Learn a hole-based recolor rule from training examples.
+
+    Classifies objects by whether they have an enclosed hole (background
+    pixel fully surrounded by shape pixels). Returns
+    {True: color_for_has_hole, False: color_for_no_hole} or None.
+    """
+    hole_colors: set[int] = set()
+    no_hole_colors: set[int] = set()
+
+    for ex in train:
+        matches = _match_objects_by_position(ex["input"], ex["output"])
+        if matches is None:
+            return None
+
+        for si, so in matches:
+            if _has_hole(si):
+                hole_colors.add(so["color"])
+            else:
+                no_hole_colors.add(so["color"])
+
+    # Each class must map to exactly one color, and they must differ
+    if len(hole_colors) != 1 or len(no_hole_colors) != 1:
+        return None
+    hole_color = next(iter(hole_colors))
+    no_hole_color = next(iter(no_hole_colors))
+    if hole_color == no_hole_color:
+        return None
+
+    return {True: hole_color, False: no_hole_color}
+
+
 def _shape_signature(shape: dict) -> tuple:
     """Compute a translation-invariant, color-invariant shape signature.
 
@@ -565,13 +736,20 @@ def _make_conditional_recolor_fn(
         # Start with a copy of the grid (preserve background)
         result = [row[:] for row in grid]
 
-        for shape in shapes:
+        # Pre-compute size ranks if needed (0=largest, 1=next, ...)
+        size_ranks: dict[int, int] = {}
+        if strategy == "by_size_rank":
+            sorted_by_size = sorted(range(len(shapes)),
+                                     key=lambda i: -shapes[i]["size"])
+            for rank, idx in enumerate(sorted_by_size):
+                size_ranks[idx] = rank
+
+        for i, shape in enumerate(shapes):
             if strategy == "by_size":
                 size = shape["size"]
                 if size in rule:
                     new_color = rule[size]
                 else:
-                    # Unknown size — keep original color
                     new_color = shape["color"]
             elif strategy == "by_singleton":
                 is_multi = shape["size"] > 1
@@ -583,7 +761,6 @@ def _make_conditional_recolor_fn(
                 else:
                     new_color = shape["color"]
             elif strategy == "by_position":
-                # Compute normalized center position
                 center_r = (shape["position"][0] + shape["bbox"][2]) / 2.0 / max(h, 1)
                 center_c = (shape["position"][1] + shape["bbox"][3]) / 2.0 / max(w, 1)
                 axis = rule["axis"]
@@ -598,6 +775,18 @@ def _make_conditional_recolor_fn(
                     new_color = rule[sig]
                 else:
                     new_color = shape["color"]
+            elif strategy == "by_size_rank":
+                rank = size_ranks[i]
+                if rank in rule:
+                    new_color = rule[rank]
+                else:
+                    new_color = shape["color"]
+            elif strategy == "by_compactness":
+                is_compact = _compactness(shape) >= 1.0 - 1e-9
+                new_color = rule[is_compact]
+            elif strategy == "by_has_hole":
+                has_h = _has_hole(shape)
+                new_color = rule[has_h]
             else:
                 new_color = shape["color"]
 

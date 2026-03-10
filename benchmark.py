@@ -729,7 +729,8 @@ def benchmark_solver(
     print(f"  Culture input:    {culture_file or '(none)'}")
     if compute_cap > 0:
         print(f"  Compute cap:      {compute_cap:,} (evals×cells)")
-        print(f"  Evals budget:     min(compute_cap / cells, 10K) per task")
+        max_evals = compute_cap // 800
+        print(f"  Evals budget:     min(compute_cap / cells, {max_evals:,}) per task")
     else:
         print(f"  Evals budget:     unlimited (compute cap disabled)")
 
@@ -762,10 +763,11 @@ def benchmark_solver(
         # Cell-normalized budget: large grids get fewer evals because each
         # eval is proportionally more expensive. This is deterministic and
         # machine-independent (unlike wall-clock timeouts).
-        MAX_EVALS_PER_TASK = 10_000
+        DEFAULT_CELLS = 800  # Median grid size in ARC training
         if compute_cap > 0 and cells > 0:
+            max_evals = compute_cap // DEFAULT_CELLS
             effective_budget = min(max(compute_cap // cells, 500),
-                                  MAX_EVALS_PER_TASK)
+                                  max(max_evals, 500))
         else:
             effective_budget = 10_000_000  # Effectively unlimited
         worker_args.append((
@@ -1073,9 +1075,8 @@ def main():
     parser.add_argument(
         "--compute-cap", type=int, default=8_000_000,
         help="Cell-normalized compute cap (default: 8,000,000). "
-             "Per-task budget = min(compute_cap / cells, 10K). "
-             "10K ceiling prevents small-grid runaway; compute_cap "
-             "normalizes for large-grid cost. 0 to disable.",
+             "Per-task budget = min(compute_cap/cells, compute_cap/800). "
+             "At 8M: ceiling ~10K. At 400M: ~500K. 0 to disable.",
     )
     parser.add_argument(
         "--contest", action="store_true",

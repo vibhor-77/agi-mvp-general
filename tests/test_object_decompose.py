@@ -586,3 +586,244 @@ class TestConditionalRecolor(unittest.TestCase):
 
         assert result is not None
         assert result.fitness >= 0.99
+
+    def test_recolor_by_size_rank(self):
+        """Largest object gets one color, smallest gets another (rank-based).
+
+        Uses same-color objects (separated by background) with varying
+        absolute sizes across examples. by_size fails because sizes differ
+        across examples; by_input_color fails because all objects have same
+        input color. Only rank order is consistent: largest→4, smallest→7.
+        """
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        # Ex1: two color-1 objects. size 3 (largest)→4, size 1 (smallest)→7
+        # Smallest on the LEFT to break by_position
+        inp1 = [
+            [1, 0, 0],
+            [0, 0, 1],
+            [0, 0, 1],
+            [0, 0, 1],
+        ]
+        out1 = [
+            [7, 0, 0],
+            [0, 0, 4],
+            [0, 0, 4],
+            [0, 0, 4],
+        ]
+        # Ex2: two color-1 objects. size 3 (largest)→4, size 2 (smallest)→7
+        # Largest on the RIGHT
+        inp2 = [
+            [0, 1, 0, 1],
+            [0, 1, 0, 1],
+            [0, 0, 0, 1],
+        ]
+        out2 = [
+            [0, 7, 0, 4],
+            [0, 7, 0, 4],
+            [0, 0, 0, 4],
+        ]
+        # Ex3: two color-1 objects. size 2 (largest)→4, size 1 (smallest)→7
+        # Breaks by_size: size 2 mapped to 7 in ex2 but 4 here
+        # Largest on LEFT to break by_position
+        inp3 = [
+            [1, 0, 1],
+            [1, 0, 0],
+        ]
+        out3 = [
+            [4, 0, 7],
+            [4, 0, 0],
+        ]
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+                {"input": inp2, "output": out2},
+                {"input": inp3, "output": out3},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        assert result is not None
+        assert result.fitness >= 0.99
+        assert "rank" in result.name.lower()
+
+    def test_recolor_by_compactness(self):
+        """Rectangular objects get one color, irregular objects another.
+
+        Uses same-color, same-size objects with different compactness.
+        Positions vary to break by_position. Shapes vary to break by_shape.
+        """
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        # Ex1: Two color-3 objects of size 4.
+        # Object A: L-shape (non-compact, bbox 3x2) → color 7, top-left
+        # Object B: 2x2 rectangle (compact=1.0) → color 4, bottom-right
+        inp1 = [
+            [3, 3, 0, 0, 0],
+            [3, 0, 0, 0, 0],
+            [3, 0, 0, 0, 0],
+            [0, 0, 0, 3, 3],
+            [0, 0, 0, 3, 3],
+        ]
+        out1 = [
+            [7, 7, 0, 0, 0],
+            [7, 0, 0, 0, 0],
+            [7, 0, 0, 0, 0],
+            [0, 0, 0, 4, 4],
+            [0, 0, 0, 4, 4],
+        ]
+        # Ex2: Two color-3 objects of size 3.
+        # Object C: 1x3 rectangle (compact=1.0) → color 4, TOP (breaks by_position)
+        # Object D: L-shape (non-compact) → color 7, BOTTOM
+        inp2 = [
+            [3, 3, 3, 0],
+            [0, 0, 0, 0],
+            [0, 3, 3, 0],
+            [0, 0, 3, 0],
+        ]
+        out2 = [
+            [4, 4, 4, 0],
+            [0, 0, 0, 0],
+            [0, 7, 7, 0],
+            [0, 0, 7, 0],
+        ]
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+                {"input": inp2, "output": out2},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        assert result is not None
+        assert result.fitness >= 0.99
+
+    def test_compactness_learner_returns_rule(self):
+        """Unit test: _learn_recolor_by_compactness returns correct rule."""
+        from arc_agent.object_decompose import _learn_recolor_by_compactness
+
+        inp1 = [[3, 3, 0, 0, 0], [3, 0, 0, 0, 0], [3, 0, 0, 0, 0],
+                 [0, 0, 0, 3, 3], [0, 0, 0, 3, 3]]
+        out1 = [[7, 7, 0, 0, 0], [7, 0, 0, 0, 0], [7, 0, 0, 0, 0],
+                 [0, 0, 0, 4, 4], [0, 0, 0, 4, 4]]
+        train = [{"input": inp1, "output": out1}]
+        rule = _learn_recolor_by_compactness(train)
+        assert rule is not None
+        assert rule[True] == 4   # compact → 4
+        assert rule[False] == 7  # non-compact → 7
+
+    def test_recolor_by_has_hole(self):
+        """Objects with holes get one color, solid objects another.
+
+        Uses same-color, same-size objects so that only hole-detection
+        can distinguish them. Sizes differ across examples to break by_size.
+        """
+        from arc_agent.object_decompose import solve_by_object_decomposition
+        from arc_agent.primitives import build_initial_toolkit
+        from arc_agent.scorer import TaskCache
+
+        # Ex1: Both objects have color 1 and size 8.
+        # Object A: 3x3 ring with hole (8 pixels) → color 4
+        # Object B: 2x4 solid rectangle (8 pixels) → color 7
+        inp1 = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 1, 1, 1, 0, 0, 0],
+            [0, 1, 0, 1, 0, 0, 0],
+            [0, 1, 1, 1, 0, 0, 0],
+            [0, 0, 0, 0, 1, 1, 1],
+            [0, 0, 0, 0, 1, 1, 1],
+        ]
+        out1 = [
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 4, 4, 4, 0, 0, 0],
+            [0, 4, 0, 4, 0, 0, 0],
+            [0, 4, 4, 4, 0, 0, 0],
+            [0, 0, 0, 0, 7, 7, 7],
+            [0, 0, 0, 0, 7, 7, 7],
+        ]
+        # Ex2: Both objects have color 2 and size 12.
+        # Object C: 4x4 ring with hole (12 pixels) → color 4
+        # Object D: 3x4 solid rectangle (12 pixels) → color 7
+        inp2 = [
+            [2, 2, 2, 2, 0, 0, 0, 0],
+            [2, 0, 0, 2, 0, 0, 0, 0],
+            [2, 0, 0, 2, 0, 0, 0, 0],
+            [2, 2, 2, 2, 0, 0, 0, 0],
+            [0, 0, 0, 0, 2, 2, 2, 2],
+            [0, 0, 0, 0, 2, 2, 2, 2],
+            [0, 0, 0, 0, 2, 2, 2, 2],
+        ]
+        out2 = [
+            [4, 4, 4, 4, 0, 0, 0, 0],
+            [4, 0, 0, 4, 0, 0, 0, 0],
+            [4, 0, 0, 4, 0, 0, 0, 0],
+            [4, 4, 4, 4, 0, 0, 0, 0],
+            [0, 0, 0, 0, 7, 7, 7, 7],
+            [0, 0, 0, 0, 7, 7, 7, 7],
+            [0, 0, 0, 0, 7, 7, 7, 7],
+        ]
+
+        task = {
+            "train": [
+                {"input": inp1, "output": out1},
+                {"input": inp2, "output": out2},
+            ]
+        }
+
+        toolkit = build_initial_toolkit()
+        cache = TaskCache(task)
+        result = solve_by_object_decomposition(task, toolkit, cache)
+
+        assert result is not None
+        assert result.fitness >= 0.99
+
+    def test_has_hole_learner_returns_rule(self):
+        """Unit test: _learn_recolor_by_has_hole returns correct rule."""
+        from arc_agent.object_decompose import _learn_recolor_by_has_hole, _has_hole
+        from arc_agent.objects import find_foreground_shapes
+
+        # Ring with hole
+        ring = find_foreground_shapes([[1, 1, 1], [1, 0, 1], [1, 1, 1]])[0]
+        assert _has_hole(ring) is True
+
+        # Solid rectangle
+        solid = find_foreground_shapes([[0, 0, 0], [0, 1, 1], [0, 1, 1]])[0]
+        assert _has_hole(solid) is False
+
+        # L-shape (no hole — open, not enclosed)
+        lshape = find_foreground_shapes([[1, 0], [1, 1]])[0]
+        assert _has_hole(lshape) is False
+
+    def test_has_hole_detection(self):
+        """_has_hole correctly identifies enclosed background."""
+        from arc_agent.object_decompose import _has_hole
+        from arc_agent.objects import find_foreground_shapes
+
+        # U-shape (open top, no hole)
+        u = find_foreground_shapes([[1, 0, 1], [1, 0, 1], [1, 1, 1]])[0]
+        assert _has_hole(u) is False
+
+        # O-shape (hole)
+        o = find_foreground_shapes([[1, 1, 1], [1, 0, 1], [1, 1, 1]])[0]
+        assert _has_hole(o) is True
+
+        # Donut with larger hole
+        d_grid = [[0]*6 for _ in range(6)]
+        for r in range(5):
+            for c in range(5):
+                if r == 0 or r == 4 or c == 0 or c == 4:
+                    d_grid[r][c] = 2
+        donut = find_foreground_shapes(d_grid)[0]
+        assert _has_hole(donut) is True
