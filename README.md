@@ -35,10 +35,13 @@ pip install numpy
 git clone https://github.com/fchollet/ARC-AGI.git
 
 # Reproduce our results — one command does train + eval with culture transfer
-# Default: ~33 eval solves in ~48 min (8 workers, Apple M3 Pro)
+# Default: ~25 eval solves in ~18 min (8 workers, Apple M3 Pro)
 python benchmark.py --pipeline
 
-# Quick mode for development (~19 eval solves in ~3 min)
+# Deep mode for near-max solves (~33 eval solves in ~48 min)
+python benchmark.py --pipeline --compute-cap 200M
+
+# Quick mode for fast iteration (~19 eval solves in ~3 min)
 python benchmark.py --pipeline --compute-cap 8M
 
 # Run the test suite (718 tests)
@@ -104,7 +107,7 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
---compute-cap N        Cell-normalized compute cap (default: 200M, accepts K/M/B suffixes)
+--compute-cap N        Cell-normalized compute cap (default: 50M, accepts K/M/B suffixes)
 --contest              Contest mode: uncapped compute, maximize solves
 --help-caps            Show compute cap guide with expected solves and runtimes
 --time-limit N         Max wall-clock seconds per task (default: 0=unlimited)
@@ -114,16 +117,16 @@ tail -f logs/*_pipeline.log         # watch full console output
 
 The solver uses a **cell-normalized computational budget** to maximize solve rate per unit of compute. The per-task eval budget is: `min(compute_cap / cells, compute_cap / 800)`, where `cells` is the task's average grid cell count and 800 is the median ARC grid size.
 
-The default cap of **200M** was chosen via Pareto analysis as the optimal tradeoff: it recovers 97% of known solves (~34/35 eval) in ~30 minutes, compared to ~2.5 hours for the full uncapped run that gains only 1 more solve.
+The default cap of **50M** balances fast iteration (~18 min pipeline, ~25 eval solves) with broad coverage. Use `--compute-cap 200M` for near-max solves (~33) or `--contest` for all 35. See [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) for the full Pareto analysis.
 
-| Mode | Command | Compute cap | Est. eval solves | Est. time (8 workers) |
+| Mode | Command | Compute cap | Est. eval solves | Est. pipeline time (8w) |
 |------|---------|-------------|:---:|:---:|
-| **Quick** | `--compute-cap 8M` | 8M | ~19 | ~3 min |
-| **CI/nightly** | `--compute-cap 50M` | 50M | ~25 | ~18 min |
-| **Default** | `--pipeline` | 200M | ~33 | ~48 min |
+| **Quick** | `--compute-cap 8M` | 8M | ~19 | ~5 min |
+| **Default** | `--pipeline` | 50M | ~25 | ~18 min |
+| **Deep** | `--compute-cap 200M` | 200M | ~33 | ~76 min |
 | **Contest** | `--pipeline --contest` | unlimited | ~35 | ~2.5 hrs |
 
-Times validated on Apple M3 Pro (March 2026). Solves vary ±1-2 across runs.
+Times validated on Apple M3 Pro (March 2026). Results are deterministic with `--seed` (default: 42).
 
 For a full analysis of how these numbers were derived, see [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md).
 
@@ -174,13 +177,13 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 |--------|---------------|-----------------|
 | **Solved (exact)** | 100/400 (25.0%) | 33/400 (8.25%) |
 | Max solves (uncapped) | ~100/400 | 35/400 (8.8%) |
-| Default compute cap | 200M | 200M |
+| Default compute cap | 50M | 50M |
 | Wall-clock (8 workers, M3 Pro) | ~28 min | ~48 min |
 | LLM used | None | None |
 
 Building on v0.28 with Pareto-optimal compute budgeting, new DSL shortcuts, and pipeline improvements:
 
-- **Pareto-optimal compute cap (200M)**: data-driven default recovers 97% of solves (34/35 eval) in 20% of uncapped time. See [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) for full analysis.
+- **Pareto-optimal compute cap (50M default)**: data-driven default for fast iteration (~25 eval solves, ~18 min). Use `--compute-cap 200M` for near-max (~33 solves). See [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) for full analysis.
 - **Human-readable `--compute-cap`**: accepts `200M`, `50M`, `8K`, etc. `--help-caps` shows reference table.
 - **Halves + colormap DSL shortcut**: Phase 0 detection of `or/and/xor_halves_{h,v}` + `apply_color_map` patterns, recovering 2 eval solves without bottom-up enumeration.
 - **8-neighbor and parity neighbor rule shortcuts**: direct application bypassing DSL interpreter key mismatch, recovering 2 eval solves.
@@ -233,7 +236,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 | v0.27 | 97/400 (24.3%) | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
 | v0.28 | 97/400 (24.3%) | 35/400 (8.8%) | 4 new DSL ops, near-miss pool, cell-normalized compute budget |
-| v0.29 | 100/400 (25.0%) | 33/400 (8.25%) | Pareto compute cap (200M default), DSL shortcuts, fill_frame_interior |
+| v0.29 | 100/400 (25.0%) | 33/400 (8.25%) | Pareto compute cap (50M default), DSL shortcuts, fill_frame_interior |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 

@@ -367,7 +367,10 @@ class FourPillarsSolver:
         for restart_idx in range(n_restarts):
             if restart_idx > 0:
                 import random
-                random.seed(random.randint(0, 2**31) + restart_idx * 7919)
+                # Deterministic restart seed: base seed from task-level seeding
+                # + restart offset. Using hash(task_id) ensures different restart
+                # sequences across tasks without depending on RNG state.
+                random.seed(hash(task_id) + restart_idx * 7919)
 
             program, history = self.synthesizer.synthesize(
                 task=task,

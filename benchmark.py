@@ -167,7 +167,10 @@ def _aggregate_culture(all_results: dict, save_path: str) -> None:
     all_programs: list[dict] = []
     all_features: dict[str, dict] = {}
 
-    for wr in all_results.values():
+    # Iterate in sorted task_id order for deterministic culture regardless
+    # of multiprocessing completion order (imap_unordered).
+    for task_id in sorted(all_results.keys()):
+        wr = all_results[task_id]
         for concept in wr.get("_learned_concepts", []):
             name = concept["name"]
             if name not in all_concepts:
@@ -194,9 +197,12 @@ def _aggregate_culture(all_results: dict, save_path: str) -> None:
 
     culture = {
         "version": "0.9",
-        "learned_concepts": list(all_concepts.values()),
-        "successful_programs": unique_programs,
-        "task_features": all_features,
+        "learned_concepts": sorted(all_concepts.values(),
+                                   key=lambda c: c.get("name", "")),
+        "successful_programs": sorted(unique_programs,
+                                      key=lambda p: (p.get("task_id", ""),
+                                                     p.get("name", ""))),
+        "task_features": dict(sorted(all_features.items())),
     }
 
     with open(save_path, "w") as f:
@@ -658,7 +664,7 @@ def benchmark_solver(
     workers: int = 0,
     results_path: str | None = None,
     run_timestamp: str = "",
-    compute_cap: int = 200_000_000,
+    compute_cap: int = 50_000_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
@@ -936,7 +942,7 @@ def benchmark_solver(
                 "cells": wr.get("cells", 0),
                 "toolkit_size": wr["toolkit_size"],
             }
-            for tid, wr in tracker.all_results.items()
+            for tid, wr in sorted(tracker.all_results.items())
         },
     }
 
@@ -1037,19 +1043,19 @@ _COMPUTE_CAP_GUIDE = """\
 ║     cap      ║ solves ║  (8 workers)   ║ (4 work.) ║  evals/task   ║
 ╠══════════════╬════════╬════════════════╬═══════════╬═══════════════╣
 ║      8M      ║  ~19   ║     ~3 min     ║   ~6 min  ║    ~10,000    ║
-║     50M      ║  ~25   ║    ~18 min     ║  ~35 min  ║   ~62,500     ║
+║  *  50M  *   ║  ~25   ║    ~18 min     ║  ~35 min  ║   ~62,500     ║
 ║    100M      ║  ~29   ║    ~35 min     ║  ~70 min  ║  ~125,000     ║
-║  * 200M *    ║  ~33   ║    ~48 min     ║  ~95 min  ║  ~250,000     ║
+║    200M      ║  ~33   ║    ~48 min     ║  ~95 min  ║  ~250,000     ║
 ║    400M      ║  ~35   ║    ~90 min     ║  ~3 hrs   ║  ~500,000     ║
 ║      0       ║  ~35   ║   ~2.5 hrs     ║  ~5 hrs   ║   unlimited   ║
 ╠══════════════╩════════╩════════════════╩═══════════╩═══════════════╣
-║  * = default.  Solves vary ±1-2 due to search nondeterminism.     ║
+║  * = default.  Times are for full pipeline (train + eval).        ║
 ║  Times validated on Apple M3 Pro. ±30% depending on hardware.     ║
 ║  Use --contest for maximum solves (equivalent to --compute-cap 0) ║
 ║                                                                    ║
 ║  Examples:                                                         ║
-║    python benchmark.py --pipeline                     # 200M, ~33  ║
-║    python benchmark.py --pipeline --compute-cap 50M   # quick, ~25 ║
+║    python benchmark.py --pipeline                     # 50M,  ~25  ║
+║    python benchmark.py --pipeline --compute-cap 200M  # deep, ~33  ║
 ║    python benchmark.py --pipeline --compute-cap 8M    # fastest    ║
 ║    python benchmark.py --pipeline --contest           # max solves ║
 ╚══════════════════════════════════════════════════════════════════════╝
@@ -1127,12 +1133,13 @@ def main():
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
     parser.add_argument(
-        "--compute-cap", type=str, default="200M",
+        "--compute-cap", type=str, default="50M",
         help="Cell-normalized compute cap. Accepts human-readable suffixes: "
              "K (thousands), M (millions), B (billions). "
-             "Examples: 200M, 50M, 8M, 400_000_000, 50,000,000. "
-             "Default: 200M (~34 eval solves, ~30min with 8 workers). "
-             "Use 0 to disable. See --help-caps for a full guide.",
+             "Examples: 50M, 200M, 8M, 400_000_000. "
+             "Default: 50M (~25 eval solves, ~18min pipeline). "
+             "Use --contest or 200M for near-max solves. "
+             "See --help-caps for a full guide.",
     )
     parser.add_argument(
         "--contest", action="store_true",
