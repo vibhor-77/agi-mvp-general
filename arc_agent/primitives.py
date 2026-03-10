@@ -3919,6 +3919,70 @@ def fill_grid_intersections(grid: Grid) -> Grid:
     return result
 
 
+def fill_frame_interior(grid: Grid) -> Grid:
+    """Fill inside a rectangular frame with the frame color, preserving marker regions.
+
+    Detects a single-color rectangular border (frame). Fills all background
+    cells inside the frame with the frame color, EXCEPT cells that fall within
+    the bounding box of any other non-bg color ("markers") inside the frame.
+    Useful for: border-thickening tasks with interior markers/objects preserved.
+    """
+    from collections import Counter
+    h, w = _grid_dims(grid)
+    all_vals = [grid[r][c] for r in range(h) for c in range(w)]
+    bg = Counter(all_vals).most_common(1)[0][0]
+
+    # Find candidate frame color: non-bg color forming a rectangle border
+    color_counts = Counter(v for v in all_vals if v != bg)
+    for frame_color, _ in color_counts.most_common():
+        cells = [(r, c) for r in range(h) for c in range(w)
+                 if grid[r][c] == frame_color]
+        if len(cells) < 8:
+            continue
+        rs = [r for r, c in cells]
+        cs = [c for r, c in cells]
+        r0, r1 = min(rs), max(rs)
+        c0, c1 = min(cs), max(cs)
+
+        # Check if cells form a rectangular border (≥ 80% coverage)
+        border = set()
+        for r in range(r0, r1 + 1):
+            border.add((r, c0))
+            border.add((r, c1))
+        for c in range(c0, c1 + 1):
+            border.add((r0, c))
+            border.add((r1, c))
+        cell_set = set(cells)
+        if len(cell_set & border) < 0.8 * len(border):
+            continue
+
+        # Found a frame — find markers inside
+        markers = [(r, c) for r in range(r0 + 1, r1)
+                    for c in range(c0 + 1, c1)
+                    if grid[r][c] != bg and grid[r][c] != frame_color]
+
+        result = _deep_copy_grid(grid)
+        if markers:
+            mr = [r for r, c in markers]
+            mc = [c for r, c in markers]
+            m_r0, m_r1 = min(mr), max(mr)
+            m_c0, m_c1 = min(mc), max(mc)
+            for r in range(r0 + 1, r1):
+                for c in range(c0 + 1, c1):
+                    if m_r0 <= r <= m_r1 and m_c0 <= c <= m_c1:
+                        continue  # preserve marker region
+                    if grid[r][c] == bg:
+                        result[r][c] = frame_color
+        else:
+            for r in range(r0 + 1, r1):
+                for c in range(c0 + 1, c1):
+                    if grid[r][c] == bg:
+                        result[r][c] = frame_color
+        return result
+
+    return grid  # no frame found — return unchanged
+
+
 def propagate_color_h(grid: Grid) -> Grid:
     """Extend each non-bg color rightward to fill bg cells until hitting another color.
 
@@ -4751,6 +4815,8 @@ def build_initial_toolkit(include_objects: bool = True) -> Toolkit:
         ("recolor_smallest_obj_in_each_col", recolor_smallest_obj_in_each_col),
         # V16: Grid intersection fill
         ("fill_grid_intersections", fill_grid_intersections),
+        # V33: Frame interior fill (preserves markers)
+        ("fill_frame_interior", fill_frame_interior),
         # V16: Directional propagation
         ("propagate_color_h", propagate_color_h),
         ("propagate_color_v", propagate_color_v),

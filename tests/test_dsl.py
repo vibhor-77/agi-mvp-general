@@ -1095,5 +1095,114 @@ class TestDSLSynthesisNewOps(unittest.TestCase):
         self.assertIsNotNone(result)
 
 
+class TestFillFrameInterior(unittest.TestCase):
+    """Test the fill_frame_interior primitive."""
+
+    def test_fill_frame_with_markers(self):
+        """Fill inside a 2-border preserving marker bounding box."""
+        from arc_agent.primitives import fill_frame_interior
+
+        inp = [
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 2, 0, 0, 0, 0, 0, 0, 2, 0, 0],
+            [0, 2, 0, 5, 0, 0, 5, 0, 2, 0, 0],
+            [0, 2, 0, 0, 0, 5, 0, 0, 2, 0, 0],
+            [0, 2, 0, 0, 0, 0, 0, 0, 2, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ]
+        expected = [
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 2, 2, 5, 0, 0, 5, 2, 2, 0, 0],
+            [0, 2, 2, 0, 0, 5, 0, 2, 2, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_frame_interior(inp)
+        self.assertEqual(result, expected)
+
+    def test_fill_frame_no_markers(self):
+        """Fill inside a frame with no markers — fill everything."""
+        from arc_agent.primitives import fill_frame_interior
+
+        # Frame must be minority color (bg=0 is majority)
+        inp = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 3, 0, 0, 3, 0],
+            [0, 3, 0, 0, 3, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+        expected = [
+            [0, 0, 0, 0, 0, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 3, 3, 3, 3, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+        result = fill_frame_interior(inp)
+        self.assertEqual(result, expected)
+
+    def test_no_frame_returns_unchanged(self):
+        """Grid with no rectangular frame returns unchanged."""
+        from arc_agent.primitives import fill_frame_interior
+
+        inp = [[1, 0, 0], [0, 2, 0], [0, 0, 3]]
+        result = fill_frame_interior(inp)
+        self.assertEqual(result, inp)
+
+
+class TestNeighborRule8Shortcut(unittest.TestCase):
+    """Test 8-connected neighbor rule in DSL synthesis."""
+
+    def test_8neighbor_rule_learns(self):
+        """8-neighbor rule learns consistent mapping."""
+        from arc_agent.dsl_synth import _learn_neighbor_rule_8
+
+        # Simple task: fill bg cells with >=3 non-bg 8-neighbors
+        inp1 = [[0, 1, 0], [1, 0, 1], [0, 1, 0]]
+        out1 = [[0, 1, 0], [1, 1, 1], [0, 1, 0]]
+        inp2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+        out2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+
+        rule = _learn_neighbor_rule_8([inp1, inp2], [out1, out2])
+        # Center cell (0, 4 diag neighbors) -> 1, rest stay
+        self.assertIsNotNone(rule)
+
+
+class TestNeighborRuleParityShortcut(unittest.TestCase):
+    """Test parity-aware neighbor rule in DSL synthesis."""
+
+    def test_parity_rule_learns_checkerboard(self):
+        """Parity rule learns position-dependent patterns."""
+        from arc_agent.dsl_synth import _learn_neighbor_rule_parity
+
+        # Checkerboard fill: even positions get color 1, odd stay 0
+        inp1 = [[0, 0, 0, 0], [0, 0, 0, 0]]
+        out1 = [[1, 0, 1, 0], [0, 1, 0, 1]]
+
+        rule = _learn_neighbor_rule_parity([inp1], [out1])
+        self.assertIsNotNone(rule)
+
+    def test_parity_rule_inconsistent_returns_none(self):
+        """Inconsistent mapping returns None."""
+        from arc_agent.dsl_synth import _learn_neighbor_rule_parity
+
+        # Same key maps to different outputs
+        inp1 = [[0, 0], [0, 0]]
+        out1 = [[1, 0], [0, 1]]
+        inp2 = [[0, 0], [0, 0]]
+        out2 = [[2, 0], [0, 2]]  # conflicts with out1
+
+        rule = _learn_neighbor_rule_parity([inp1, inp2], [out1, out2])
+        self.assertIsNone(rule)
+
+
 if __name__ == "__main__":
     unittest.main()

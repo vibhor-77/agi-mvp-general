@@ -72,8 +72,16 @@ def synthesize_dsl_program(
     if result is not None:
         return result
 
-    # Phase 0b: Try learned neighbor rule shortcut
+    # Phase 0b: Try learned neighbor rule shortcuts (basic, 8-conn, parity)
     result = _try_neighbor_rule_shortcut(inputs, outputs, interp, cache)
+    if result is not None:
+        return result
+
+    result = _try_neighbor_rule_8_shortcut(inputs, outputs, interp, cache)
+    if result is not None:
+        return result
+
+    result = _try_neighbor_rule_parity_shortcut(inputs, outputs, interp, cache)
     if result is not None:
         return result
 
@@ -362,6 +370,200 @@ def _learn_neighbor_rule(
         return None
 
     return filtered
+
+
+def _try_neighbor_rule_8_shortcut(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Neighbor rule variant using 8-connected neighbor count.
+
+    Like the standard neighbor rule but counts all 8 surrounding cells
+    instead of just 4. This captures diagonal adjacency patterns.
+    Includes LOOCV to prevent overfitting.
+    """
+    # Only same-dims tasks
+    for inp, out in zip(inputs, outputs):
+        if len(inp) != len(out):
+            return None
+        for ri, ro in zip(inp, out):
+            if len(ri) != len(ro):
+                return None
+
+    rule = _learn_neighbor_rule_8(inputs, outputs)
+    if rule is None:
+        return None
+
+    # LOOCV
+    n = len(inputs)
+    if n > 1:
+        for hold in range(n):
+            t_in = inputs[:hold] + inputs[hold + 1:]
+            t_out = outputs[:hold] + outputs[hold + 1:]
+            r = _learn_neighbor_rule_8(t_in, t_out)
+            if r is None:
+                return None
+            expr = DSLExpr.make_op(
+                "apply_neighbor_rule",
+                [DSLExpr.input_grid(), DSLExpr.literal(r, DSLType.COLOR_MAP)],
+                DSLType.GRID,
+            )
+            result = interp.evaluate(expr, inputs[hold])
+            if result is None or result != outputs[hold]:
+                return None
+
+    expr = DSLExpr.make_op(
+        "apply_neighbor_rule",
+        [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
+        DSLType.GRID,
+    )
+    results = _execute_on_all(expr, inputs, interp)
+    if results is None:
+        return None
+    return _check_match(expr, results, outputs, interp, cache)
+
+
+def _learn_neighbor_rule_8(
+    inputs: list[Grid],
+    outputs: list[Grid],
+) -> Optional[dict[tuple[int, int], int]]:
+    """Learn a (cell_color, n_nonbg_8) → output_color rule."""
+    from collections import Counter
+
+    rule: dict[tuple[int, int], int] = {}
+    for inp, out in zip(inputs, outputs):
+        h, w = len(inp), len(inp[0])
+        counts = Counter(cell for row in inp for cell in row)
+        bg = counts.most_common(1)[0][0]
+        for r in range(h):
+            for c in range(w):
+                cell = inp[r][c]
+                expected = out[r][c]
+                n8 = 0
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        if dr == 0 and dc == 0:
+                            continue
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < h and 0 <= nc < w and inp[nr][nc] != bg:
+                            n8 += 1
+                key = (cell, n8)
+                if key in rule and rule[key] != expected:
+                    return None
+                rule[key] = expected
+
+    has_change = any(k[0] != v for k, v in rule.items())
+    if not has_change:
+        return None
+    filtered = {k: v for k, v in rule.items() if k[0] != v}
+    return filtered if filtered else None
+
+
+def _try_neighbor_rule_parity_shortcut(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Neighbor rule variant with row/column parity features.
+
+    Learns (cell_color, n_nonbg_4, row%2, col%2) → output_color.
+    Captures checkerboard-like patterns that depend on position parity.
+    Includes LOOCV to prevent overfitting.
+    """
+    for inp, out in zip(inputs, outputs):
+        if len(inp) != len(out):
+            return None
+        for ri, ro in zip(inp, out):
+            if len(ri) != len(ro):
+                return None
+
+    rule = _learn_neighbor_rule_parity(inputs, outputs)
+    if rule is None:
+        return None
+
+    # LOOCV
+    n = len(inputs)
+    if n > 1:
+        for hold in range(n):
+            t_in = inputs[:hold] + inputs[hold + 1:]
+            t_out = outputs[:hold] + outputs[hold + 1:]
+            r = _learn_neighbor_rule_parity(t_in, t_out)
+            if r is None:
+                return None
+            pred = _apply_parity_rule(r, inputs[hold])
+            if pred != outputs[hold]:
+                return None
+
+    # Build the program — use apply_neighbor_rule with the parity rule dict
+    expr = DSLExpr.make_op(
+        "apply_neighbor_rule",
+        [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
+        DSLType.GRID,
+    )
+    results = _execute_on_all(expr, inputs, interp)
+    if results is None:
+        return None
+    return _check_match(expr, results, outputs, interp, cache)
+
+
+def _learn_neighbor_rule_parity(
+    inputs: list[Grid],
+    outputs: list[Grid],
+) -> Optional[dict[tuple, int]]:
+    """Learn a (cell_color, n_nonbg_4, row%2, col%2) → output_color rule."""
+    from collections import Counter
+
+    rule: dict[tuple, int] = {}
+    for inp, out in zip(inputs, outputs):
+        h, w = len(inp), len(inp[0])
+        counts = Counter(cell for row in inp for cell in row)
+        bg = counts.most_common(1)[0][0]
+        for r in range(h):
+            for c in range(w):
+                cell = inp[r][c]
+                expected = out[r][c]
+                n4 = sum(
+                    1 for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                    if 0 <= r + dr < h and 0 <= c + dc < w
+                    and inp[r + dr][c + dc] != bg
+                )
+                key = (cell, n4, r % 2, c % 2)
+                if key in rule and rule[key] != expected:
+                    return None
+                rule[key] = expected
+
+    has_change = any(k[0] != v for k, v in rule.items())
+    if not has_change:
+        return None
+    filtered = {k: v for k, v in rule.items() if k[0] != v}
+    return filtered if filtered else None
+
+
+def _apply_parity_rule(
+    rule: dict[tuple, int],
+    grid: Grid,
+) -> Grid:
+    """Apply a parity-aware neighbor rule to a grid."""
+    from collections import Counter
+
+    h, w = len(grid), len(grid[0])
+    counts = Counter(cell for row in grid for cell in row)
+    bg = counts.most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            n4 = sum(
+                1 for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1))
+                if 0 <= r + dr < h and 0 <= c + dc < w
+                and grid[r + dr][c + dc] != bg
+            )
+            key = (grid[r][c], n4, r % 2, c % 2)
+            if key in rule:
+                result[r][c] = rule[key]
+    return result
 
 
 def _try_dimension_shortcuts(
