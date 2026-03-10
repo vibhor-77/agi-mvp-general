@@ -2697,17 +2697,20 @@ The 14 tasks lost at 8M break into three categories:
 
 ### Benchmark Results
 
-| Config | Train (exact) | Eval (exact) | Wall-clock (8w) |
-|--------|:---:|:---:|:---:|
-| Uncapped (best ever) | 97/400 | 35/400 | ~2.5 hrs |
-| **200M default (v0.29)** | **~97/400** | **~34/400** | **~30 min** |
-| 8M (old default) | 84/400 | 22/400 | ~3 min |
+| Config | Train (exact) | Eval (exact) | Wall-clock (8w) | Total evals |
+|--------|:---:|:---:|:---:|:---:|
+| Uncapped (best ever) | 97/400 | 35/400 | ~2.5 hrs | 45.8M |
+| **200M default (v0.29, validated)** | **100/400** | **33/400** | **48 min** | **39.0M** |
+| 8M (old default) | 84/400 | 22/400 | ~3 min | 2.4M |
+
+Validated on Apple M3 Pro, 8 workers, March 10 2026. Budget exceeded on 145/400 eval tasks. Solve count varies ±1-2 across runs due to search nondeterminism and culture quality. By-method breakdown: pair_exhaustion (8), near_miss_refine (8), dsl_synthesis (8), single_primitive (7), conditional_single (6), object_decompose (2), triple_exhaustion (2), triple_extension (1).
 
 ### Commits
 
 - `fc81cdc` Fix 8-neighbor/parity DSL shortcuts and add early DSL pipeline step
 - `14a963a` Raise default compute cap to 400M and add halves+colormap DSL shortcut
-- (pending) Set Pareto-optimal 200M default, add --help-caps, docs/COMPUTE_CAP.md
+- `32bba4b` Set Pareto-optimal 200M default, add --help-caps
+- (pending) Update docs with validated benchmark results
 
 ### Test Count
 

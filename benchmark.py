@@ -1036,19 +1036,19 @@ _COMPUTE_CAP_GUIDE = """\
 ║  --compute-  ║ Eval   ║ Est. wall-time ║ Est. time ║    Ceiling    ║
 ║     cap      ║ solves ║  (8 workers)   ║ (4 work.) ║  evals/task   ║
 ╠══════════════╬════════╬════════════════╬═══════════╬═══════════════╣
-║      8M      ║  ~19   ║     ~2 min     ║   ~4 min  ║    ~10,000    ║
-║     50M      ║  ~25   ║    ~11 min     ║  ~22 min  ║   ~62,500     ║
-║    100M      ║  ~29   ║    ~22 min     ║  ~43 min  ║  ~125,000     ║
-║  * 200M *    ║  ~34   ║    ~29 min     ║  ~58 min  ║  ~250,000     ║
-║    400M      ║  ~35   ║    ~55 min     ║ ~110 min  ║  ~500,000     ║
+║      8M      ║  ~19   ║     ~3 min     ║   ~6 min  ║    ~10,000    ║
+║     50M      ║  ~25   ║    ~18 min     ║  ~35 min  ║   ~62,500     ║
+║    100M      ║  ~29   ║    ~35 min     ║  ~70 min  ║  ~125,000     ║
+║  * 200M *    ║  ~33   ║    ~48 min     ║  ~95 min  ║  ~250,000     ║
+║    400M      ║  ~35   ║    ~90 min     ║  ~3 hrs   ║  ~500,000     ║
 ║      0       ║  ~35   ║   ~2.5 hrs     ║  ~5 hrs   ║   unlimited   ║
 ╠══════════════╩════════╩════════════════╩═══════════╩═══════════════╣
-║  * = default.  Eval solves include DSL shortcut bonuses.          ║
-║  Times are estimates for a modern machine (M1/M2 Mac, 8-core).   ║
+║  * = default.  Solves vary ±1-2 due to search nondeterminism.     ║
+║  Times validated on Apple M3 Pro. ±30% depending on hardware.     ║
 ║  Use --contest for maximum solves (equivalent to --compute-cap 0) ║
 ║                                                                    ║
 ║  Examples:                                                         ║
-║    python benchmark.py --pipeline                     # 200M, ~34  ║
+║    python benchmark.py --pipeline                     # 200M, ~33  ║
 ║    python benchmark.py --pipeline --compute-cap 50M   # quick, ~25 ║
 ║    python benchmark.py --pipeline --compute-cap 8M    # fastest    ║
 ║    python benchmark.py --pipeline --contest           # max solves ║

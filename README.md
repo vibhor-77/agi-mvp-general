@@ -35,10 +35,10 @@ pip install numpy
 git clone https://github.com/fchollet/ARC-AGI.git
 
 # Reproduce our results — one command does train + eval with culture transfer
-# Default: ~34 eval solves in ~30 min (8 workers, M-series Mac)
+# Default: ~33 eval solves in ~48 min (8 workers, Apple M3 Pro)
 python benchmark.py --pipeline
 
-# Quick mode for development (~19 eval solves in ~2 min)
+# Quick mode for development (~19 eval solves in ~3 min)
 python benchmark.py --pipeline --compute-cap 8M
 
 # Run the test suite (718 tests)
@@ -118,10 +118,12 @@ The default cap of **200M** was chosen via Pareto analysis as the optimal tradeo
 
 | Mode | Command | Compute cap | Est. eval solves | Est. time (8 workers) |
 |------|---------|-------------|:---:|:---:|
-| **Quick** | `--compute-cap 8M` | 8M | ~19 | ~2 min |
-| **CI/nightly** | `--compute-cap 50M` | 50M | ~25 | ~11 min |
-| **Default** | `--pipeline` | 200M | ~34 | ~29 min |
+| **Quick** | `--compute-cap 8M` | 8M | ~19 | ~3 min |
+| **CI/nightly** | `--compute-cap 50M` | 50M | ~25 | ~18 min |
+| **Default** | `--pipeline` | 200M | ~33 | ~48 min |
 | **Contest** | `--pipeline --contest` | unlimited | ~35 | ~2.5 hrs |
+
+Times validated on Apple M3 Pro (March 2026). Solves vary ±1-2 across runs.
 
 For a full analysis of how these numbers were derived, see [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md).
 
@@ -170,10 +172,10 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
-| **Solved (exact)** | 97/400 (24.3%) | ~34/400 (~8.5%) |
-| Max solves (uncapped) | 97/400 (24.3%) | 35/400 (8.8%) |
+| **Solved (exact)** | 100/400 (25.0%) | 33/400 (8.25%) |
+| Max solves (uncapped) | ~100/400 | 35/400 (8.8%) |
 | Default compute cap | 200M | 200M |
-| Est. runtime (8 workers) | ~15 min | ~29 min |
+| Wall-clock (8 workers, M3 Pro) | ~28 min | ~48 min |
 | LLM used | None | None |
 
 Building on v0.28 with Pareto-optimal compute budgeting, new DSL shortcuts, and pipeline improvements:
@@ -231,7 +233,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 | v0.27 | 97/400 (24.3%) | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
 | v0.28 | 97/400 (24.3%) | 35/400 (8.8%) | 4 new DSL ops, near-miss pool, cell-normalized compute budget |
-| v0.29 | 97/400 (24.3%) | ~34/400 (~8.5%) | Pareto compute cap (200M default), DSL shortcuts, fill_frame_interior |
+| v0.29 | 100/400 (25.0%) | 33/400 (8.25%) | Pareto compute cap (200M default), DSL shortcuts, fill_frame_interior |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 

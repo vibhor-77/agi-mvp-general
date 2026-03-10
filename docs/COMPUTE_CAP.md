@@ -18,14 +18,16 @@ We ran a simulation using the best uncapped benchmark (35 exact eval solves, 45.
 
 | `--compute-cap` | Eval solves | Est. wall-time (8 workers) | Est. time (4 workers) | Ceiling evals/task | Total evals |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| `8M` | ~19 | ~2 min | ~4 min | ~10K | 2.4M |
-| `50M` | ~25 | ~11 min | ~22 min | ~62K | 14.8M |
-| `100M` | ~29 | ~22 min | ~43 min | ~125K | 28.9M |
-| **`200M`** | **~34** | **~29 min** | **~58 min** | **~250K** | **38.8M** |
-| `400M` | ~35 | ~55 min | ~110 min | ~500K | 44.1M |
+| `8M` | ~19 | ~3 min | ~6 min | ~10K | 2.4M |
+| `50M` | ~25 | ~18 min | ~35 min | ~62K | 14.8M |
+| `100M` | ~29 | ~35 min | ~70 min | ~125K | 28.9M |
+| **`200M`** | **~33** | **~48 min** | **~95 min** | **~250K** | **39.0M** |
+| `400M` | ~35 | ~90 min | ~3 hrs | ~500K | 44.1M |
 | `0` (unlimited) | ~35 | ~2.5 hrs | ~5 hrs | unlimited | 45.8M |
 
-**Why 200M is the default:** It recovers 97% of known solves (34/35) while using only 85% of the total compute and running in ~30 minutes on a modern machine. The single lost task (`903d1b4a`) requires 322M compute due to deep near-miss refinement on a 2560-cell grid. Going from 200M to unlimited gains just 1 more solve but costs 4x the time.
+**Validated on Apple M3 Pro (8 workers, March 2026):** The 200M default produced 33 eval solves in 48 minutes wall-clock, using 39.0M total evals. Budget was exceeded on 145/400 tasks. Solve count varies by ±1-2 across runs due to search order nondeterminism and culture quality.
+
+**Why 200M is the default:** It recovers ~94-97% of known solves (33-34/35) while using only 85% of the total compute. The remaining 1-2 tasks require >300M compute each due to deep near-miss refinement on large grids. Going from 200M to unlimited gains only 1-2 more solves but costs ~3x the time.
 
 The curve shows a classic diminishing-returns Pareto front: most tasks are cheap to solve (the first 19 solves cost only 2.4M evals total), but a long tail of expensive tasks drives the total compute. 200M sits at the "knee" where the marginal cost per solve spikes.
 
@@ -44,20 +46,24 @@ These tasks appear in the "+DSL shorts" column and are counted in the solve tota
 
 ## Methodology
 
-The simulation uses actual per-task eval counts and grid sizes from the uncapped benchmark run (`results/20260309_062523_evaluation.jsonl`, 400 tasks, 35 exact solves). For each hypothetical cap, we compute the effective budget per task using the same formula the solver uses, then check whether each solved task's actual eval count fits within that budget.
+The Pareto table was derived in two steps:
 
-Wall-clock times are estimated by scaling from the measured 8M run (2.4M evals in 217 seconds, 4 workers) proportionally to total evals, with a 2x speedup factor for 8 workers (validated against the uncapped 8-worker run at 8,927 seconds). Actual times depend on hardware, system load, and task mix.
+1. **Simulation:** Using actual per-task eval counts and grid sizes from the best uncapped benchmark (`results/20260309_062523_evaluation.jsonl`, 400 tasks, 35 exact solves), we compute the effective budget per task for each hypothetical cap using the formula `min(compute_cap / cells, compute_cap / 800)`, then check whether each solved task's actual eval count fits within that budget.
+
+2. **Validation:** The 200M default was validated with a real benchmark run on an Apple M3 Pro (`results/20260310_101307_evaluation.jsonl`): 33 exact solves, 39.0M total evals, 48 min wall-clock, 5h38m CPU time, 145/400 tasks budget-exceeded. The 1-2 solve difference from the simulation (which predicted ~34) is expected due to culture quality variance and search nondeterminism.
+
+Wall-clock times scale approximately linearly with total evals but include a constant overhead for task setup, culture loading, and result serialization. Larger-budget tasks also tend to have higher per-eval cost (bigger grids), so time does not scale perfectly linearly. The estimates above are calibrated against the validated 200M run and should be treated as ±30% depending on hardware and system load.
 
 ## Quick Reference
 
 ```bash
-# Default: Pareto-optimal balance (~34 solves, ~30 min)
+# Default: Pareto-optimal balance (~33 solves, ~48 min)
 python benchmark.py --pipeline
 
-# Quick iteration during development (~19 solves, ~2 min)
+# Quick iteration during development (~19 solves, ~3 min)
 python benchmark.py --pipeline --compute-cap 8M
 
-# Medium: good for CI/nightly (~25 solves, ~11 min)
+# Medium: good for CI/nightly (~25 solves, ~18 min)
 python benchmark.py --pipeline --compute-cap 50M
 
 # Maximum solves, no time limit (~35 solves, ~2.5 hrs)
