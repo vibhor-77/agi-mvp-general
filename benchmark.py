@@ -658,7 +658,7 @@ def benchmark_solver(
     workers: int = 0,
     results_path: str | None = None,
     run_timestamp: str = "",
-    compute_cap: int = 400_000_000,
+    compute_cap: int = 200_000_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
 
@@ -1002,6 +1002,60 @@ def _extrapolate(task_times: list[float], numba_active: bool):
 # CLI
 # ---------------------------------------------------------------------------
 
+
+def _parse_human_number(s: str) -> int:
+    """Parse a human-readable number with optional K/M/B suffix.
+
+    Examples:
+        "200M"          → 200_000_000
+        "50M"           → 50_000_000
+        "8K"            → 8_000
+        "1.5B"          → 1_500_000_000
+        "400_000_000"   → 400_000_000
+        "50,000,000"    → 50_000_000
+        "0"             → 0
+
+    Raises ValueError on unrecognised input.
+    """
+    s = s.strip().replace(",", "").replace("_", "")
+    if not s:
+        raise ValueError("empty compute-cap value")
+
+    suffixes = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
+    upper = s.upper()
+    for suffix, multiplier in suffixes.items():
+        if upper.endswith(suffix):
+            return int(float(upper[:-1]) * multiplier)
+    return int(float(s))
+
+
+_COMPUTE_CAP_GUIDE = """\
+╔══════════════════════════════════════════════════════════════════════╗
+║                    COMPUTE CAP REFERENCE GUIDE                     ║
+╠══════════════╦════════╦════════════════╦═══════════╦═══════════════╣
+║  --compute-  ║ Eval   ║ Est. wall-time ║ Est. time ║    Ceiling    ║
+║     cap      ║ solves ║  (8 workers)   ║ (4 work.) ║  evals/task   ║
+╠══════════════╬════════╬════════════════╬═══════════╬═══════════════╣
+║      8M      ║  ~19   ║     ~2 min     ║   ~4 min  ║    ~10,000    ║
+║     50M      ║  ~25   ║    ~11 min     ║  ~22 min  ║   ~62,500     ║
+║    100M      ║  ~29   ║    ~22 min     ║  ~43 min  ║  ~125,000     ║
+║  * 200M *    ║  ~34   ║    ~29 min     ║  ~58 min  ║  ~250,000     ║
+║    400M      ║  ~35   ║    ~55 min     ║ ~110 min  ║  ~500,000     ║
+║      0       ║  ~35   ║   ~2.5 hrs     ║  ~5 hrs   ║   unlimited   ║
+╠══════════════╩════════╩════════════════╩═══════════╩═══════════════╣
+║  * = default.  Eval solves include DSL shortcut bonuses.          ║
+║  Times are estimates for a modern machine (M1/M2 Mac, 8-core).   ║
+║  Use --contest for maximum solves (equivalent to --compute-cap 0) ║
+║                                                                    ║
+║  Examples:                                                         ║
+║    python benchmark.py --pipeline                     # 200M, ~34  ║
+║    python benchmark.py --pipeline --compute-cap 50M   # quick, ~25 ║
+║    python benchmark.py --pipeline --compute-cap 8M    # fastest    ║
+║    python benchmark.py --pipeline --contest           # max solves ║
+╚══════════════════════════════════════════════════════════════════════╝
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Four Pillars AGI — performance & accuracy benchmark",
@@ -1073,10 +1127,12 @@ def main():
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
     parser.add_argument(
-        "--compute-cap", type=int, default=400_000_000,
-        help="Cell-normalized compute cap (default: 400,000,000). "
-             "Per-task budget = min(compute_cap/cells, compute_cap/800). "
-             "At 400M: ceiling ~500K. At 8M: ~10K. 0 to disable.",
+        "--compute-cap", type=str, default="200M",
+        help="Cell-normalized compute cap. Accepts human-readable suffixes: "
+             "K (thousands), M (millions), B (billions). "
+             "Examples: 200M, 50M, 8M, 400_000_000, 50,000,000. "
+             "Default: 200M (~34 eval solves, ~30min with 8 workers). "
+             "Use 0 to disable. See --help-caps for a full guide.",
     )
     parser.add_argument(
         "--contest", action="store_true",
@@ -1084,7 +1140,19 @@ def main():
              "Uses unlimited evals per task regardless of grid size. "
              "Equivalent to --compute-cap 0.",
     )
+    parser.add_argument(
+        "--help-caps", action="store_true",
+        help="Show compute cap guide with expected solves and runtimes, then exit.",
+    )
     args = parser.parse_args()
+
+    # Handle --help-caps: show guide and exit
+    if args.help_caps:
+        print(_COMPUTE_CAP_GUIDE)
+        return
+
+    # Parse human-readable compute cap (e.g. "200M", "50K", "8,000,000")
+    args.compute_cap = _parse_human_number(args.compute_cap)
 
     # Contest mode: uncapped — maximize solves, don't save time
     if args.contest:
