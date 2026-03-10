@@ -2548,3 +2548,60 @@ After (deterministic decomposition):
 ### Test Count
 
 694 tests (all passing)
+
+---
+
+## Session 33 — Eval Performance Deep Dive & Anti-Overfit Selection (March 2026)
+
+### Prompt
+
+> Remember the law of diminishing returns. The ROI applies to eval solves, not train solves. Even for train, the best solves is 98, nowhere close to 84. Continue the work without being idle, look at big picture, and do high ROI, fast iterations.
+
+### Claude's Reasoning
+
+Conducted deep analysis of eval performance bottlenecks:
+
+1. **Eval near-miss analysis**: 127 eval tasks score >= 0.90 on test but aren't pixel-perfect. ALL have budget_exceeded=True and use single_primitive method. These represent the largest opportunity for improvement.
+
+2. **Near-miss categorization** (62 non-identity tasks with test >= 0.90):
+   - Recolor/swap: 21 tasks (largest category)
+   - Fill/inpaint: 13 tasks
+   - Extend/connect: 6 tasks
+   - Move/gravity: 6 tasks
+   - Geometric: 5 tasks
+   - Extract/crop: 5 tasks
+
+3. **Root cause**: The primitives are CLOSE but not pixel-perfect. The errors are small (1-5% pixel differences) but specific to each primitive's implementation. This is NOT a search depth problem — no amount of pair/triple composition fixes the primitive's internal logic.
+
+4. **Overfitting analysis**: At 8M cap, 2 out of 23 train-perfect eval programs fail test (8.7% overfit rate). Both use learned/culture-transferred programs. At 400M, overfitting explodes — 14 train-perfect but only 8 test-confirmed (43% overfit rate).
+
+5. **Experiment: Early near-miss refinement** — Tried moving near-miss refinement (append/prepend/replace) before expensive conditional/pair/triple searches. Result: NET NEGATIVE (-1 eval solve). The refinement consumed budget that later phases needed. Removed.
+
+6. **Anti-overfit candidate selection** — Improved program selection to prefer built-in primitives over learned ones when both are pixel-perfect (same length). Uses sort key: (program_length, n_learned_steps, method). This doesn't help the current 2 overfits (they're the only candidates) but is architecturally correct for future use.
+
+### Key Findings
+
+| Metric | Value |
+|--------|-------|
+| Eval test-confirmed | 21/400 (5.25%) |
+| Eval overfits | 2/400 (0.50%) |
+| Eval near-misses (test >= 0.90) | 127 |
+| Eval near-misses (test >= 0.95) | 50 |
+| All near-misses use | single_primitive, budget_exceeded |
+| 2 overfit tasks | learned_40853293_304, learned_neighbor_basic |
+
+### Changes
+
+1. **Anti-overfit candidate selection** (`solver.py`): New `_candidate_sort_key` function that breaks ties by preferring built-in primitives over learned ones.
+
+2. **New test file** (`tests/test_solver_selection.py`): 5 tests covering MDL preference, built-in vs learned preference, and solver behavior.
+
+3. **Fixed test** (`tests/test_culture.py`): Relaxed method assertion to be less fragile.
+
+### Commits
+
+- (pending push)
+
+### Test Count
+
+710 tests (all passing)

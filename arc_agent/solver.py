@@ -446,9 +446,22 @@ class FourPillarsSolver:
         # Step 7: Pick the winner from ALL candidates.
         # Strategy: prefer candidates that PASS TEST (if test available),
         # then use MDL (shortest program) to break ties.
-        # Pure MDL sometimes picks a program that overfits training.
+        # Among equal-length programs, prefer built-in primitives over
+        # learned/culture ones to reduce overfitting (learned programs are
+        # trained on specific tasks and may not generalize).
         solved = False
         method = "evolved"
+
+        def _candidate_sort_key(item: tuple) -> tuple:
+            """Sort key: (length, has_learned_step, method_name).
+
+            Shorter programs first (MDL). Among equal length, prefer
+            programs without learned/culture steps (less overfit risk).
+            """
+            prog, meth = item
+            n_learned = sum(1 for s in prog.steps if s.name.startswith("learned_"))
+            return (len(prog.steps), n_learned, meth)
+
         if candidates:
             # Validate all candidates on test (if available)
             if task.get("test"):
@@ -458,14 +471,14 @@ class FourPillarsSolver:
                     if t_exact:
                         test_passers.append((prog, meth))
                 if test_passers:
-                    # Among test-passers, pick shortest (MDL)
-                    winner, method = min(test_passers, key=lambda x: len(x[0].steps))
+                    # Among test-passers, pick by MDL + prefer built-in
+                    winner, method = min(test_passers, key=_candidate_sort_key)
                 else:
-                    # No test-passers: fall back to MDL on all candidates
-                    winner, method = min(candidates, key=lambda x: len(x[0].steps))
+                    # No test-passers: fall back to MDL + prefer built-in
+                    winner, method = min(candidates, key=_candidate_sort_key)
             else:
-                # No test data: pure MDL
-                winner, method = min(candidates, key=lambda x: len(x[0].steps))
+                # No test data: MDL + prefer built-in
+                winner, method = min(candidates, key=_candidate_sort_key)
             best_program = winner
             best_score = winner.fitness
             solved = True
