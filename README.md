@@ -37,7 +37,7 @@ git clone https://github.com/fchollet/ARC-AGI.git
 # Reproduce our results — one command does train + eval with culture transfer
 python benchmark.py --pipeline
 
-# Run the test suite (694 tests)
+# Run the test suite (695 tests)
 python -m unittest discover -s tests -p "*.py"
 ```
 
@@ -100,37 +100,24 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
---compute-cap N        Cell-normalized compute cap (default: 400M, 0=disable)
---evals-budget N       Max evals per task before cell normalization (default: 150K)
+--compute-cap N        Cell-normalized compute cap (default: 1.5M, 0=disable)
 --contest              Contest mode: uncapped compute, maximize solves
+--time-limit N         Max wall-clock seconds per task (default: 0=unlimited)
 ```
 
 ### Compute budget strategy
 
 The solver uses a **cell-normalized computational budget** to allocate search effort efficiently. The cost of a single program evaluation varies ~200× depending on grid size (53μs for 90-cell grids vs 16ms for 9,000-cell grids), so a flat eval count is a poor cost metric.
 
-The effective per-task budget is: `min(evals_budget, compute_cap / cells)`. The budget gates all search phases: once `cache.n_evals >= evals_budget`, subsequent phases (conditionals, pairs, triples, DSL, object decomposition, near-miss refinement, evolution) are skipped. Only the initial single-primitive scan and culture transfer always run, as they are the cheapest and highest-ROI phases.
+The per-task eval budget is simply: `compute_cap / cells`, where `cells` is the average grid cell count for the task. The budget gates all search phases: once `cache.n_evals >= budget`, subsequent phases (conditionals, pairs, triples, DSL, object decomposition, near-miss refinement, evolution) are skipped. Only the initial single-primitive scan and culture transfer always run, as they are the cheapest and highest-ROI phases.
 
-| Mode | Command | Compute cap | Effect |
-|------|---------|-------------|--------|
-| **Iteration** (default) | `python benchmark.py --pipeline` | 400M | Saves ~18% wall time, 0 solve loss |
-| **Contest** | `python benchmark.py --pipeline --contest` | uncapped | Full compute — maximize solves |
+| Mode | Command | Compute cap | Approx. time (8 workers) |
+|------|---------|-------------|-------------------------|
+| **Fast iteration** | `python benchmark.py --compute-cap 200000` | 200K | ~2 min |
+| **Full search** (default) | `python benchmark.py --pipeline` | 1.5M | ~10 min |
+| **Contest** | `python benchmark.py --pipeline --contest` | unlimited | 30+ min |
 
-**ROI curve** (eval, 400 tasks, v0.28 — cell-normalized budget `min(150K, K/cells)`):
-
-| Compute cap (K) | Solves | Eval time | Time saved | Solves lost |
-|-----------------|--------|-----------|------------|-------------|
-| uncapped | 35 | 784 min | — | 0 |
-| 1000M | 35 | 773 min | 11 min (1%) | 0 |
-| 750M | 35 | 748 min | 35 min (5%) | 0 |
-| 500M | 35 | 691 min | 92 min (12%) | 0 |
-| **400M (iteration default)** | **35** | **642 min** | **141 min (18%)** | **0** |
-| 300M | 34 | 569 min | 214 min (27%) | 1 |
-| 200M | 34 | 465 min | 319 min (41%) | 1 |
-
-The sweet spot for iteration is K=400M: it saves 141 minutes (18%) with zero solve loss. Contest mode (`--contest`) disables the cap entirely — when you're competing for every solve, you don't want to risk losing one to a budget cutoff, even if it means slower runs.
-
-**Why cell-normalized?** A single eval costs ~50μs on a 90-cell grid but ~16ms on a 9,000-cell grid (200× difference). A flat eval count treats these identically, so large-grid tasks burn 25× more wall time for the same budget. Cell normalization allocates time proportionally: a 9,000-cell task gets ~44K evals (vs 150K for small grids), enough for deterministic search but capping the futile evolution phase that never solves on large grids.
+**Why cell-normalized?** A single eval costs ~50μs on a 90-cell grid but ~16ms on a 9,000-cell grid (200× difference). A flat eval count treats these identically, so large-grid tasks burn 25× more wall time for the same budget. Cell normalization allocates time proportionally: large-grid tasks get fewer evals (since each is expensive), small-grid tasks get more (since each is cheap).
 
 **Phase ROI** (eval data):
 
@@ -139,7 +126,7 @@ The sweet spot for iteration is K=400M: it saves 141 minutes (18%) with zero sol
 | Deterministic search | 20 | ~33 min | 0.61 |
 | Evolution (all tasks) | 15 | ~751 min | 0.02 |
 
-Deterministic search delivers 30× better ROI than evolution. Evolution has a 4% solve rate (15/373) but consumes 96% of compute on unsolved tasks. All large-grid (5K+ cells) solves use deterministic methods — large-grid evolution is never productive.
+Deterministic search delivers 30× better ROI than evolution. Evolution has a 4% solve rate (15/373) but consumes 96% of compute on unsolved tasks.
 
 ### Progress display
 
@@ -280,7 +267,7 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 694 tests (15 test files)
+├── tests/                           # 695 tests (15 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
@@ -351,7 +338,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (694 tests)
+- [x] Test suite (695 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)

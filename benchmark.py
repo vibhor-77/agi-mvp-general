@@ -658,7 +658,6 @@ def benchmark_solver(
     workers: int = 0,
     results_path: str | None = None,
     run_timestamp: str = "",
-    evals_budget: int = 150_000,
     compute_cap: int = 400_000_000,
 ) -> dict | None:
     """Run the solver on tasks with parallel execution.
@@ -730,9 +729,9 @@ def benchmark_solver(
     print(f"  Culture input:    {culture_file or '(none)'}")
     if compute_cap > 0:
         print(f"  Compute cap:      {compute_cap:,} (evals×cells)")
-        print(f"  Evals budget:     min({evals_budget:,}, {compute_cap:,}/cells) per task")
+        print(f"  Evals budget:     compute_cap / cells per task")
     else:
-        print(f"  Evals budget:     {evals_budget:,} per task (no compute cap)")
+        print(f"  Evals budget:     unlimited (compute cap disabled)")
 
     # Grid size statistics
     sizes = list(task_sizes.values())
@@ -764,9 +763,9 @@ def benchmark_solver(
         # eval is proportionally more expensive. This is deterministic and
         # machine-independent (unlike wall-clock timeouts).
         if compute_cap > 0 and cells > 0:
-            effective_budget = min(evals_budget, compute_cap // cells)
+            effective_budget = max(compute_cap // cells, 500)
         else:
-            effective_budget = evals_budget
+            effective_budget = 10_000_000  # Effectively unlimited
         worker_args.append((
             task_id, tasks[task_id], population_size, max_generations,
             seed + i * 1000, culture_path,
@@ -838,7 +837,7 @@ def benchmark_solver(
     print(f"  Total evaluations: {tracker.total_evals:,}")
     print(f"  Total CPU time:    {_fmt_duration(tracker.total_cpu_time)}")
     if tracker.budget_exceeded_count > 0:
-        cap_str = f"compute_cap={compute_cap:,}" if compute_cap > 0 else f"evals={evals_budget:,}"
+        cap_str = f"compute_cap={compute_cap:,}" if compute_cap > 0 else "unlimited"
         print(f"  Budget exceeded:   {tracker.budget_exceeded_count}/{done} tasks "
               f"({cap_str})")
     print(f"  Median task time:  {statistics.median(tracker.times):.2f}s")
@@ -906,7 +905,7 @@ def benchmark_solver(
             "total_evals": tracker.total_evals,
             "total_cpu_time": round(tracker.total_cpu_time, 2),
             "budget_exceeded_count": tracker.budget_exceeded_count,
-            "evals_budget": evals_budget,
+            "compute_cap_formula": "compute_cap / cells",
             "compute_cap": compute_cap,
             "fluke_train_hit": tracker.fluke_train_hit,
             "fluke_train_total": tracker.fluke_train_total,
@@ -1070,21 +1069,17 @@ def main():
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
     parser.add_argument(
-        "--evals-budget", type=int, default=150_000,
-        help="Max program evaluations per task (default: 150000). "
-             "Combined with --compute-cap for cell-normalized budgets.",
-    )
-    parser.add_argument(
-        "--compute-cap", type=int, default=400_000_000,
-        help="Cell-normalized compute cap: effective per-task budget = "
-             "min(evals_budget, compute_cap/cells). Large grids get fewer "
-             "evals since each eval is proportionally slower. Default: "
-             "400M (saves ~18%% time, 0 solve loss). Set to 0 to disable.",
+        "--compute-cap", type=int, default=1_500_000,
+        help="Cell-normalized compute cap (default: 1,500,000). "
+             "Per-task eval budget = compute_cap / cells. "
+             "Large grids get fewer evals since each eval is slower. "
+             "Recommended: 200K for fast iteration (~2 min with 8 workers), "
+             "1.5M for full deterministic search, 0 to disable.",
     )
     parser.add_argument(
         "--contest", action="store_true",
         help="Contest mode: disable compute cap entirely to maximize solves. "
-             "Uses full evals_budget for every task regardless of grid size. "
+             "Uses unlimited evals per task regardless of grid size. "
              "Equivalent to --compute-cap 0.",
     )
     args = parser.parse_args()
@@ -1120,8 +1115,7 @@ def _run_single(args):
             workers=args.workers,
             results_path=args.results,
             run_timestamp=run_timestamp,
-            evals_budget=args.evals_budget,
-            compute_cap=args.compute_cap,
+                        compute_cap=args.compute_cap,
         )
         if result is not None and args.tasks > 0:
             _extrapolate(result["times"], numba_active)
@@ -1177,8 +1171,7 @@ def _run_pipeline(args):
             culture_file=args.culture_file,
             workers=args.workers,
             run_timestamp=run_timestamp,
-            evals_budget=args.evals_budget,
-            compute_cap=args.compute_cap,
+                        compute_cap=args.compute_cap,
         )
 
         if train_result is None:
@@ -1199,8 +1192,7 @@ def _run_pipeline(args):
             culture_file=culture_path,
             workers=args.workers,
             run_timestamp=run_timestamp,
-            evals_budget=args.evals_budget,
-            compute_cap=args.compute_cap,
+                        compute_cap=args.compute_cap,
         )
 
         # ── Pipeline summary ──────────────────────────────────────────

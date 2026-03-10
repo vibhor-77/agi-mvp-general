@@ -85,24 +85,21 @@ Over time, the Toolkit grows from simple primitives to increasingly complex comp
 - Object duplication and pattern repetition
 - Sub-pattern detection within objects
 
-### 2. Conditional Logic
+### 2. Conditional Logic — *Partially Addressed in v0.25*
 
-The current programs are linear chains: Step1 → Step2 → Step3. Many ARC tasks require conditional logic: "If the cell is red AND adjacent to blue, then change it to green." This needs:
+~~The current programs are linear chains: Step1 → Step2 → Step3.~~ v0.25 added neighbor-rule learning with LOOCV generalization: the solver learns cell-level conditional transforms based on local neighborhood features (color counts, directional neighbors). Still missing:
 
-- Predicate evaluation on grid regions
-- If-then-else branching in programs
-- For-each-object iteration
+- General if-then-else branching in programs
+- Predicate evaluation on arbitrary grid regions
+- For-each-object iteration with conditionals
 
-### 3. Task Decomposition
+### 3. Task Decomposition — *Addressed in v0.20+*
 
-Hard ARC tasks often require solving sub-problems. For example: "Find the pattern in the top-left quadrant, then tile it across the grid." The system should be able to:
+~~Hard ARC tasks often require solving sub-problems.~~ The DecompositionEngine (v0.20) implements six strategies: color-channel, spatial quadrant, diff-focus, pattern detection, size-ratio, and masking decomposition. See `docs/DECOMPOSITION_IMPROVEMENTS.md` for details. In v0.28, decomposition was further improved with deterministic sub-synthesis (replacing slow evolutionary search for sub-problems) and a 30-second time budget. Still potential improvements:
 
-- Detect that a task is composite
-- Break it into sub-tasks
-- Solve each sub-task independently
-- Compose the sub-solutions
-
-This is the fractal problem-solving from Vibhor's framework — recursively breaking hard problems into simpler ones.
+- Hierarchical decomposition (decompose sub-problems further)
+- Object-tracking decomposition (track individual objects across transforms)
+- Symmetry-based decomposition
 
 ### 4. Persistent State — *Addressed in v0.2*
 

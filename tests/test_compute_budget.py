@@ -1,7 +1,7 @@
 """Tests for the cell-normalized compute budget system.
 
 Covers:
-- Cell-normalized budget calculation (min(evals_budget, compute_cap / cells))
+- Cell-normalized budget calculation: compute_cap / cells
 - Budget gating of search phases in the solver
 - Budget exceeded flag in solver output
 - Contest mode (uncapped: compute_cap=0)
@@ -16,56 +16,60 @@ from arc_agent.sample_tasks import SAMPLE_TASKS
 
 
 class TestCellNormalizedBudget(unittest.TestCase):
-    """Test the cell-normalization formula: min(evals_budget, compute_cap / cells)."""
+    """Test the cell-normalization formula: compute_cap / cells.
 
-    def _effective(self, evals_budget, compute_cap, cells):
-        """Replicate the benchmark.py budget calculation."""
+    The single user-facing control is --compute-cap. The per-task eval
+    budget is derived as max(compute_cap // cells, 500). When
+    compute_cap=0 (contest mode), evals are effectively unlimited.
+    """
+
+    def _effective(self, compute_cap, cells):
+        """Replicate the budget calculation from dataset.py / benchmark.py."""
         if compute_cap > 0 and cells > 0:
-            return min(evals_budget, compute_cap // cells)
-        return evals_budget
+            return max(compute_cap // cells, 500)
+        return 10_000_000  # Effectively unlimited
 
-    def test_small_grid_uncapped(self):
-        """Small grids should use the full evals_budget when cap is generous."""
-        # 400M / 100 = 4M >> 150K, so evals_budget is the binding constraint
-        self.assertEqual(self._effective(150_000, 400_000_000, 100), 150_000)
+    def test_small_grid_high_cap(self):
+        """Small grids with generous cap get many evals."""
+        # 1.5M / 9 = 166K evals
+        self.assertEqual(self._effective(1_500_000, 9), 166_666)
 
-    def test_large_grid_capped(self):
-        """Large grids should be capped below evals_budget."""
-        # 400M / 9000 ≈ 44K < 150K, so compute_cap is the binding constraint
-        eff = self._effective(150_000, 400_000_000, 9000)
-        self.assertEqual(eff, 44444)
-        self.assertLess(eff, 150_000)
+    def test_large_grid_fewer_evals(self):
+        """Large grids should get proportionally fewer evals."""
+        # 1.5M / 900 = 1666 evals
+        eff = self._effective(1_500_000, 900)
+        self.assertEqual(eff, 1666)
 
-    def test_contest_mode_uncapped(self):
-        """Contest mode (compute_cap=0) should always use full evals_budget."""
-        self.assertEqual(self._effective(150_000, 0, 9000), 150_000)
+    def test_contest_mode_unlimited(self):
+        """Contest mode (compute_cap=0) should give effectively unlimited evals."""
+        eff = self._effective(0, 9000)
+        self.assertGreater(eff, 1_000_000)
 
     def test_zero_cells_fallback(self):
-        """Zero cells (edge case) should fall back to full evals_budget."""
-        self.assertEqual(self._effective(150_000, 400_000_000, 0), 150_000)
+        """Zero cells (edge case) should give effectively unlimited evals."""
+        eff = self._effective(1_500_000, 0)
+        self.assertGreater(eff, 1_000_000)
 
     def test_budget_proportional_to_grid_size(self):
         """Larger grids should get proportionally fewer evals."""
-        eff_small = self._effective(150_000, 400_000_000, 100)
-        eff_large = self._effective(150_000, 400_000_000, 10_000)
-        self.assertEqual(eff_small, 150_000)
-        self.assertEqual(eff_large, 40_000)
+        eff_small = self._effective(1_500_000, 100)
+        eff_large = self._effective(1_500_000, 10_000)
+        self.assertEqual(eff_small, 15_000)
+        self.assertEqual(eff_large, 500)  # Minimum 500
         self.assertGreater(eff_small, eff_large)
 
-    def test_breakpoint_cells(self):
-        """The breakpoint where cap starts binding is compute_cap // evals_budget."""
-        breakpoint = 400_000_000 // 150_000  # 2666 cells
-        self.assertEqual(breakpoint, 2666)
-        # At breakpoint: budget ≈ evals_budget
-        self.assertAlmostEqual(
-            self._effective(150_000, 400_000_000, breakpoint),
-            150_000, delta=1
-        )
-        # Above breakpoint: budget drops
-        self.assertLess(
-            self._effective(150_000, 400_000_000, breakpoint + 1000),
-            150_000
-        )
+    def test_fast_iteration_cap(self):
+        """200K compute-cap should give tight budgets for fast iteration."""
+        # 200K / 9 cells = 22K evals
+        self.assertEqual(self._effective(200_000, 9), 22222)
+        # 200K / 100 cells = 2K evals
+        self.assertEqual(self._effective(200_000, 100), 2000)
+        # 200K / 900 cells < 500, so minimum 500 applies
+        self.assertEqual(self._effective(200_000, 900), 500)
+
+    def test_minimum_500_evals(self):
+        """Even with tiny compute-cap, minimum 500 evals is enforced."""
+        self.assertEqual(self._effective(100, 10_000), 500)
 
 
 class TestBudgetGating(unittest.TestCase):

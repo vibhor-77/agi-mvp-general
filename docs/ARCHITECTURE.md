@@ -102,15 +102,26 @@ Explore/exploit balance:
 
 ### `solver.py` — Integration of All Four Pillars
 
-The main learning loop:
+The main learning loop (v0.28 pipeline with cell-normalized compute budget):
 
 1. **Extract features** → record in Archive
 2. **Generate seeds** → exploit past knowledge via Explorer
 3. **Quick check** → try each primitive alone (fast exploit)
-4. **Evolutionary synthesis** → Synthesizer runs full evolution
-5. **Record & promote** → Archive records solution, Explorer promotes to Toolkit
+3a. **Parameterized search** → try primitives with parameter variations
+3b. **Pair search** → try all pairs of top-scoring singles
+3c. **Neighbor-rule learning** → learn cell-level conditional transforms (LOOCV-validated)
+3d. **Near-miss refinement** → refine high-scoring candidates with targeted mutations
+3e. **Color fix** → try consistent color remapping on near-misses
+4. **Decomposition** → break task into sub-problems (6 strategies, deterministic sub-synthesis, 30s budget)
+5. **Evolutionary synthesis** → full evolution (compute-budgeted)
+6. **Post-evolution refinement** → refine and color-fix evolved results
+7. **Record & promote** → Archive records solution, Explorer promotes to Toolkit
 
 Also implements batch solving with cumulative culture metrics.
+
+### `decompose.py` — Task Decomposition Engine
+
+Added in v0.20. Implements six decomposition strategies for breaking complex tasks into simpler sub-problems: color-channel, spatial quadrant, diff-focus, pattern detection, size-ratio, and masking. See `DECOMPOSITION_IMPROVEMENTS.md` for details.
 
 ### `dataset.py` — ARC-AGI Dataset Loader
 

@@ -193,6 +193,15 @@ def _rebuild_candidate_programs(
     return programs
 
 
+def _avg_cells(task: dict) -> int:
+    """Average cell count across all training input grids."""
+    grids = [ex["input"] for ex in task.get("train", [])]
+    if not grids:
+        return 1
+    total = sum(len(g) * len(g[0]) for g in grids if g and g[0])
+    return max(1, total // len(grids))
+
+
 def _solve_one(args: tuple) -> dict:
     """Worker function: solve a single task in a subprocess.
 
@@ -212,12 +221,29 @@ def _solve_one(args: tuple) -> dict:
         Dict with task_id and all per-task metrics, plus a worker_seed
         for reproducibility bookkeeping and culture data for aggregation.
     """
-    # Support both old 7-element and new 8-element args for compatibility
-    if len(args) == 8:
-        task_id, task, population_size, max_generations, seed, culture_path, mode, top_k = args
+    # Support variable-length args for backward compatibility.
+    # Current format: (task_id, task, pop, gens, seed, culture, mode,
+    #                  top_k, compute_cap, time_limit)
+    task_id = args[0]
+    task = args[1]
+    population_size = args[2]
+    max_generations = args[3]
+    seed = args[4]
+    culture_path = args[5]
+    mode = args[6]
+    top_k = args[7] if len(args) > 7 else 3
+    compute_cap = args[8] if len(args) > 8 else 400_000_000
+    time_limit = args[9] if len(args) > 9 else 0.0
+
+    # Cell-normalized compute cap: evals_budget = compute_cap / cells.
+    # This normalizes for ~200× variation in eval cost by grid size
+    # (a 3×3 grid = 9 cells vs a 30×30 grid = 900 cells).
+    # Minimum 500 evals to allow at least single-primitive scan.
+    if compute_cap > 0:
+        cells = _avg_cells(task)
+        evals_budget = max(compute_cap // cells, 500)
     else:
-        task_id, task, population_size, max_generations, seed, culture_path, mode = args
-        top_k = 3
+        evals_budget = 10_000_000  # Effectively unlimited
 
     random.seed(seed)
 
@@ -234,7 +260,9 @@ def _solve_one(args: tuple) -> dict:
         except Exception:
             pass  # Gracefully degrade — run without culture
 
-    result = solver.solve_task(task, task_id, mode=mode)
+    result = solver.solve_task(task, task_id, mode=mode,
+                               evals_budget=evals_budget,
+                               time_limit=time_limit)
     return _collect_result(solver, result, task_id, task, seed, mode=mode,
                            top_k=top_k)
 
@@ -466,6 +494,8 @@ def evaluate_dataset(
     save_culture_path: str = "",
     mode: str = "train",
     top_k: int = 3,
+    compute_cap: int = 1_500_000,
+    time_limit: float = 0.0,
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
 
@@ -493,6 +523,13 @@ def evaluate_dataset(
         top_k:              Number of diverse candidates to test against
                             held-out test output (default 3). Higher = more
                             chances to pass test, but diminishing returns.
+        compute_cap:        Cell-normalized compute cap (default 400M).
+                            The per-task eval budget is compute_cap / cells,
+                            where cells is the avg grid cell count. Set 0
+                            to disable (unlimited evals). Recommended:
+                            10M for fast iteration, 400M for full search.
+        time_limit:         Maximum wall-clock seconds per task (default 0
+                            = unlimited). Non-deterministic.
 
     Returns:
         Dict with keys:
@@ -512,9 +549,12 @@ def evaluate_dataset(
         init_tk = _tmp.toolkit.size
         del _tmp
         print(f"Mode: {mode.upper()}  |  CPU: {describe_cpu()}")
+        tl_str = f"{time_limit:.0f}s" if time_limit > 0 else "unlimited"
+        cc_str = f"{compute_cap:,}" if compute_cap > 0 else "unlimited"
         print(f"Workers: {n_workers}  |  Tasks: {n_tasks}  |  "
               f"Seed: {seed}  |  "
               f"Initial toolkit: {init_tk} concepts")
+        print(f"Compute cap: {cc_str}  |  Time limit: {tl_str}")
         print()
 
     if load_culture_path and verbose:
@@ -524,7 +564,8 @@ def evaluate_dataset(
     # sorted list, so (seed, workers) always gives identical results.
     worker_args = [
         (task_id, tasks[task_id], population_size, max_generations,
-         seed + i * 1000, load_culture_path, mode, top_k)
+         seed + i * 1000, load_culture_path, mode, top_k,
+         compute_cap, time_limit)
         for i, task_id in enumerate(sorted_ids)
     ]
 

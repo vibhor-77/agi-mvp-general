@@ -2,7 +2,7 @@
 
 **Author:** Vibhor Jain
 **Date:** March 2026
-**Status:** Active Research — v0.27 (LOOCV generalization, near-miss refinement, 656 tests)
+**Status:** Active Research — v0.28 (compute budget, color fix, directional features, 694 tests)
 
 ---
 
@@ -256,15 +256,18 @@ The prototype's evolutionary program synthesis is related to:
 
 ```
 arc_agent/
-├── __init__.py          # Package definition (v0.2.0)
+├── __init__.py          # Package definition (v0.28.0)
 ├── concepts.py          # Concept, Program, Toolkit, Archive (Pillar 3)
-├── primitives.py        # DSL primitives — 43 grid transformations
-├── objects.py           # Object-level primitives — 30 concepts (v0.2)
-├── persistence.py       # Toolkit/Archive save/load — JSON (v0.2)
+├── primitives.py        # DSL primitives — 304 grid transformations
+├── objects.py           # Object-level primitives — 30 concepts
+├── decompose.py         # Task decomposition engine — 6 strategies
+├── persistence.py       # Toolkit/Archive save/load — JSON
 ├── synthesizer.py       # Evolutionary program synthesis (Pillar 2)
-├── solver.py            # Main learning loop (integrates all 4 pillars)
+├── solver.py            # Main solver pipeline (integrates all 4 pillars)
 ├── scorer.py            # Feedback scoring engine (Pillar 1)
 ├── explorer.py          # Explore/exploit engine (Pillar 4)
+├── dataset.py           # ARC-AGI dataset loader
+├── evaluate.py          # Benchmark CLI
 ├── sample_tasks.py      # 10 sample ARC-AGI tasks
 └── main.py              # CLI entry point with persistence flags
 ```

@@ -125,6 +125,26 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
             "rate at no extra compute cost."
         ),
     )
+    parser.add_argument(
+        "--compute-cap", type=int, default=1_500_000, dest="compute_cap",
+        help=(
+            "Cell-normalized compute cap (default: 1,500,000). "
+            "Per-task eval budget = compute_cap / avg_cells. "
+            "Normalizes for ~200x variation in eval cost by grid "
+            "size. Recommended: 200,000 for fast iteration "
+            "(~2 min with 8 workers), 1,500,000 for full "
+            "deterministic search, 0 to disable (unlimited)."
+        ),
+    )
+    parser.add_argument(
+        "--time-limit", type=float, default=0.0, dest="time_limit",
+        help=(
+            "Maximum wall-clock seconds per task (default: 0 = unlimited). "
+            "When set, search phases are skipped once the time limit is "
+            "reached. WARNING: non-deterministic, use only for "
+            "development speed, not reproducible benchmarks."
+        ),
+    )
 
 
 def _run(args: argparse.Namespace, mode: str) -> int:
@@ -195,6 +215,8 @@ def _run(args: argparse.Namespace, mode: str) -> int:
         save_culture_path=save_culture_path,
         mode=mode,
         top_k=args.top_k,
+        compute_cap=args.compute_cap,
+        time_limit=args.time_limit,
     )
 
     return 0

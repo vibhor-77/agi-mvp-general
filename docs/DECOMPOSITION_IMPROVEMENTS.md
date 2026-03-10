@@ -227,7 +227,7 @@ All new functionality has comprehensive unit tests:
 - `TestSizeRatioDecomposition`: 3 tests
 - `TestMaskingDecomposition`: 2 tests
 
-**All 41 decomposition tests pass** (plus 604 other tests, totaling 645).
+**44 decomposition tests pass** (694 total tests across the project as of v0.28).
 
 ---
 

@@ -72,12 +72,13 @@ class FourPillarsSolver:
 
     def solve_task(self, task: dict, task_id: str = "unknown",
                    mode: str = "train",
-                   evals_budget: int = 150_000) -> dict:
+                   evals_budget: int = 150_000,
+                   time_limit: float = 0.0) -> dict:
         """Solve a single ARC task using all 4 pillars.
 
         Runs all search strategies exhaustively and collects all pixel-perfect
         candidates. Expensive steps (evolution, decomposition) are skipped
-        if the evaluation budget is exceeded.
+        if the evaluation budget or time limit is exceeded.
 
         Args:
             task: The ARC task dict with 'train' and optionally 'test'.
@@ -89,6 +90,9 @@ class FourPillarsSolver:
                 and machine-independent. Deterministic search always runs;
                 evolution and decomposition are skipped if the budget is
                 exceeded.
+            time_limit: Maximum wall-clock seconds for this task (default 0
+                = unlimited). When positive, search phases are skipped once
+                the time limit is reached.
 
         Returns:
             Dict with solve status, best program, score, and metadata.
@@ -171,9 +175,13 @@ class FourPillarsSolver:
         # the best and most diverse set of candidates. Each expensive phase
         # is gated by the evals budget so --compute-cap actually limits work.
 
-        # Helper: check whether we've exceeded the budget.
+        # Helper: check whether we've exceeded the budget or time limit.
         def _budget_ok() -> bool:
-            return cache.n_evals < evals_budget
+            if cache.n_evals >= evals_budget:
+                return False
+            if time_limit > 0 and (time.time() - start_time) >= time_limit:
+                return False
+            return True
 
         # Step 3c: Conditional search — single conditionals (if-then-else)
         # Exhaustive: try every predicate × top primitive pairs as branches.
@@ -339,12 +347,12 @@ class FourPillarsSolver:
             if self.verbose:
                 print(f"  ⚡ Skipping evolution — {len(candidates)} candidate(s) already found")
 
-        # Skip evolution if evaluation budget exceeded
-        if cache.n_evals >= evals_budget:
+        # Skip evolution if evaluation budget or time limit exceeded
+        if not _budget_ok():
             n_restarts = 0
             if self.verbose:
-                print(f"  ⏱ Skipping evolution — evals budget exceeded "
-                      f"({cache.n_evals:,}/{evals_budget:,})")
+                print(f"  ⏱ Skipping evolution — budget/time limit exceeded "
+                      f"(evals={cache.n_evals:,}/{evals_budget:,})")
 
         for restart_idx in range(n_restarts):
             if restart_idx > 0:
@@ -375,7 +383,7 @@ class FourPillarsSolver:
         # Uses deterministic search (singles/pairs/triples) for sub-problems
         # instead of evolution — 30× more effective per eval.
         # Skip if we already have candidates or evals budget exceeded.
-        if best_score < 0.99 and not candidates and cache.n_evals < evals_budget:
+        if best_score < 0.99 and not candidates and _budget_ok():
             decomposed = self.decomposer.decompose_if_needed(
                 task,
                 best_score,
@@ -394,7 +402,7 @@ class FourPillarsSolver:
         # Step 5: Post-evolution near-miss refinement.
         # Try single-step fixes (append/prepend/replace) on the best program
         # AND all near-miss programs collected from search phases.
-        if not candidates and cache.n_evals < evals_budget:
+        if not candidates and _budget_ok():
             # Build refinement pool: best program + top near-miss candidates
             # Sort by fitness and keep top 3 to limit refinement cost
             near_miss_pool.sort(key=lambda x: x[0].fitness, reverse=True)
