@@ -494,7 +494,7 @@ def evaluate_dataset(
     save_culture_path: str = "",
     mode: str = "train",
     top_k: int = 3,
-    compute_cap: int = 1_500_000,
+    compute_cap: int = 200_000,
     time_limit: float = 0.0,
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
@@ -523,11 +523,11 @@ def evaluate_dataset(
         top_k:              Number of diverse candidates to test against
                             held-out test output (default 3). Higher = more
                             chances to pass test, but diminishing returns.
-        compute_cap:        Cell-normalized compute cap (default 400M).
+        compute_cap:        Cell-normalized compute cap (default 200K).
                             The per-task eval budget is compute_cap / cells,
                             where cells is the avg grid cell count. Set 0
                             to disable (unlimited evals). Recommended:
-                            10M for fast iteration, 400M for full search.
+                            200K for fast iteration, 1.5M for full search.
         time_limit:         Maximum wall-clock seconds per task (default 0
                             = unlimited). Non-deterministic.
 

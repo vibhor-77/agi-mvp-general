@@ -126,14 +126,14 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--compute-cap", type=int, default=1_500_000, dest="compute_cap",
+        "--compute-cap", type=int, default=200_000, dest="compute_cap",
         help=(
-            "Cell-normalized compute cap (default: 1,500,000). "
+            "Cell-normalized compute cap (default: 200,000). "
             "Per-task eval budget = compute_cap / avg_cells. "
             "Normalizes for ~200x variation in eval cost by grid "
-            "size. Recommended: 200,000 for fast iteration "
-            "(~2 min with 8 workers), 1,500,000 for full "
-            "deterministic search, 0 to disable (unlimited)."
+            "size. 200,000 for fast iteration (~2 min with 8 workers), "
+            "1,500,000 for full deterministic search, "
+            "0 to disable (unlimited)."
         ),
     )
     parser.add_argument(

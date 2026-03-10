@@ -1069,11 +1069,11 @@ def main():
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
     parser.add_argument(
-        "--compute-cap", type=int, default=1_500_000,
-        help="Cell-normalized compute cap (default: 1,500,000). "
+        "--compute-cap", type=int, default=200_000,
+        help="Cell-normalized compute cap (default: 200,000). "
              "Per-task eval budget = compute_cap / cells. "
              "Large grids get fewer evals since each eval is slower. "
-             "Recommended: 200K for fast iteration (~2 min with 8 workers), "
+             "200K for fast iteration (~2 min with 8 workers), "
              "1.5M for full deterministic search, 0 to disable.",
     )
     parser.add_argument(

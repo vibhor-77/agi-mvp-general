@@ -100,7 +100,7 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
---compute-cap N        Cell-normalized compute cap (default: 1.5M, 0=disable)
+--compute-cap N        Cell-normalized compute cap (default: 200K, 0=disable)
 --contest              Contest mode: uncapped compute, maximize solves
 --time-limit N         Max wall-clock seconds per task (default: 0=unlimited)
 ```
@@ -113,8 +113,8 @@ The per-task eval budget is simply: `compute_cap / cells`, where `cells` is the 
 
 | Mode | Command | Compute cap | Approx. time (8 workers) |
 |------|---------|-------------|-------------------------|
-| **Fast iteration** | `python benchmark.py --compute-cap 200000` | 200K | ~2 min |
-| **Full search** (default) | `python benchmark.py --pipeline` | 1.5M | ~10 min |
+| **Fast iteration** (default) | `python benchmark.py --pipeline` | 200K | ~2 min |
+| **Full search** | `python benchmark.py --pipeline --compute-cap 1500000` | 1.5M | ~10 min |
 | **Contest** | `python benchmark.py --pipeline --contest` | unlimited | 30+ min |
 
 **Why cell-normalized?** A single eval costs ~50μs on a 90-cell grid but ~16ms on a 9,000-cell grid (200× difference). A flat eval count treats these identically, so large-grid tasks burn 25× more wall time for the same budget. Cell normalization allocates time proportionally: large-grid tasks get fewer evals (since each is expensive), small-grid tasks get more (since each is cheap).
