@@ -1204,5 +1204,67 @@ class TestNeighborRuleParityShortcut(unittest.TestCase):
         self.assertIsNone(rule)
 
 
+class TestHalvesColormapShortcut(unittest.TestCase):
+    """Tests for halves + color_map composition shortcut."""
+
+    def test_or_halves_h_colormap(self):
+        """or_halves_h + color_map should solve tasks like 66f2d22f."""
+        from arc_agent.dsl_synth import _try_halves_colormap_shortcut
+        from arc_agent.dsl import DSLInterpreter
+        from arc_agent.scorer import TaskCache
+
+        # Input: 4x3 grid split horizontally (top half + bottom half)
+        # or_halves_h merges by OR, then color_map remaps
+        inp = [
+            [1, 0, 1],
+            [0, 1, 0],
+            [0, 1, 1],
+            [1, 0, 0],
+        ]
+        # or_halves_h → [[1,1,1],[1,1,0]] (OR of top/bottom pairs)
+        # color_map: {1: 5, 0: 2}
+        out = [
+            [5, 5, 5],
+            [5, 5, 2],
+        ]
+
+        inp2 = [
+            [1, 1, 0],
+            [0, 0, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+        ]
+        # or_halves_h → [[1,1,0],[0,1,1]] → color_map → [[5,5,2],[2,5,5]]
+        out2 = [
+            [5, 5, 2],
+            [2, 5, 5],
+        ]
+
+        task = {"train": [{"input": inp, "output": out},
+                          {"input": inp2, "output": out2}]}
+        cache = TaskCache(task)
+        interp = DSLInterpreter()
+
+        result = _try_halves_colormap_shortcut(
+            [inp, inp2], [out, out2], interp, cache
+        )
+        self.assertIsNotNone(result, "Should find or_halves_h + color_map solution")
+
+    def test_no_match_returns_none(self):
+        """Returns None when no halves+colormap composition works."""
+        from arc_agent.dsl_synth import _try_halves_colormap_shortcut
+        from arc_agent.dsl import DSLInterpreter
+        from arc_agent.scorer import TaskCache
+
+        inp = [[1, 2], [3, 4]]
+        out = [[9, 9], [9, 9]]
+        task = {"train": [{"input": inp, "output": out}]}
+        cache = TaskCache(task)
+        interp = DSLInterpreter()
+
+        result = _try_halves_colormap_shortcut([inp], [out], interp, cache)
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

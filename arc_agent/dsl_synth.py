@@ -93,6 +93,12 @@ def synthesize_dsl_program(
     if result is not None:
         return result
 
+    # Phase 0d: Try halves + color_map compositions
+    # Covers patterns like apply_color_map(or_halves_h(Input), {...})
+    result = _try_halves_colormap_shortcut(inputs, outputs, interp, cache)
+    if result is not None:
+        return result
+
     # In shortcuts_only mode, skip expensive bottom-up enumeration.
     # Used for early pipeline integration (Step 3b2) where we want fast
     # pattern detection without the full synthesis cost.
@@ -610,6 +616,64 @@ def _apply_parity_rule(
             if key in rule:
                 result[r][c] = rule[key]
     return result
+
+
+def _try_halves_colormap_shortcut(
+    inputs: list[Grid],
+    outputs: list[Grid],
+    interp: DSLInterpreter,
+    cache: TaskCache,
+) -> Optional[Program]:
+    """Try composing a halves operation with a color map.
+
+    Covers patterns like apply_color_map(or_halves_h(Input), {2:0, 3:0, 0:5}).
+    Tries all 6 halves variants (or/and/xor × h/v) combined with a learned
+    color map. This is a depth-1 composition that the bottom-up enumerator
+    would find, but doing it as a shortcut makes it available in Phase 0
+    (before budget exhaustion).
+    """
+    halves_ops = [
+        "or_halves_h", "or_halves_v",
+        "and_halves_h", "and_halves_v",
+        "xor_halves_h", "xor_halves_v",
+    ]
+
+    for op_name in halves_ops:
+        # Apply the halves op to each input
+        halved: list[Grid] = []
+        ok = True
+        for inp in inputs:
+            expr = DSLExpr.make_op(op_name, [DSLExpr.input_grid()], DSLType.GRID)
+            result = interp.evaluate(expr, inp)
+            if result is None:
+                ok = False
+                break
+            halved.append(result)
+        if not ok:
+            continue
+
+        # Learn a color map from halved → outputs
+        cmap = _learn_color_map(halved, outputs)
+        if cmap is None:
+            continue
+
+        # Build the composed expression: apply_color_map(op(Input), map)
+        composed = DSLExpr.make_op(
+            "apply_color_map",
+            [
+                DSLExpr.make_op(op_name, [DSLExpr.input_grid()], DSLType.GRID),
+                DSLExpr.literal(cmap, DSLType.COLOR_MAP),
+            ],
+            DSLType.GRID,
+        )
+        results = _execute_on_all(composed, inputs, interp)
+        if results is None:
+            continue
+        match = _check_match(composed, results, outputs, interp, cache)
+        if match is not None:
+            return match
+
+    return None
 
 
 def _try_dimension_shortcuts(

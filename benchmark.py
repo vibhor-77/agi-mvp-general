@@ -1073,10 +1073,10 @@ def main():
         help="Evaluation data dir for --pipeline mode (default: ARC-AGI/data/evaluation)",
     )
     parser.add_argument(
-        "--compute-cap", type=int, default=8_000_000,
-        help="Cell-normalized compute cap (default: 8,000,000). "
+        "--compute-cap", type=int, default=400_000_000,
+        help="Cell-normalized compute cap (default: 400,000,000). "
              "Per-task budget = min(compute_cap/cells, compute_cap/800). "
-             "At 8M: ceiling ~10K. At 400M: ~500K. 0 to disable.",
+             "At 400M: ceiling ~500K. At 8M: ~10K. 0 to disable.",
     )
     parser.add_argument(
         "--contest", action="store_true",
