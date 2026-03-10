@@ -171,6 +171,15 @@ class FourPillarsSolver:
             if cache.is_pixel_perfect(param_result):
                 candidates.append((param_result, "parameterized"))
 
+        # Step 3b2: Early DSL shortcuts (fast, pre-budget-check)
+        # Run the cheap DSL shortcuts (color map, neighbor rules, dimension)
+        # before the expensive exhaustive search phases. These shortcuts learn
+        # patterns directly from I/O pairs and don't require enumeration.
+        dsl_early = self._try_dsl_synthesis(task, cache, shortcuts_only=True)
+        if dsl_early and dsl_early.fitness >= 0.99:
+            if cache.is_pixel_perfect(dsl_early):
+                candidates.append((dsl_early, "dsl_synthesis"))
+
         # No early exit — try all search strategies within budget to find
         # the best and most diverse set of candidates. Each expensive phase
         # is gated by the evals budget so --compute-cap actually limits work.
@@ -254,8 +263,9 @@ class FourPillarsSolver:
 
         # Step 3j: DSL synthesis (novel transform search)
         # Synthesize Grid→Grid transforms from sub-primitive operations.
+        # Skip if early DSL (step 3b2) already found a pixel-perfect solution.
         dsl_result: Optional[Program] = None
-        if _budget_ok():
+        if _budget_ok() and dsl_early is None:
             dsl_result = self._try_dsl_synthesis(task, cache)
             if dsl_result and dsl_result.fitness >= 0.99:
                 if cache.is_pixel_perfect(dsl_result):
@@ -767,16 +777,23 @@ class FourPillarsSolver:
 
     def _try_dsl_synthesis(self, task: dict,
                            cache: "TaskCache",
-                           time_budget: float = 5.0) -> Optional[Program]:
+                           time_budget: float = 5.0,
+                           shortcuts_only: bool = False) -> Optional[Program]:
         """Synthesize a novel Grid→Grid transform from DSL sub-primitives.
 
         Uses bottom-up enumeration over a typed DSL to construct transforms
         that may not exist in the primitive library. This enables solving
         tasks that require novel compositions of basic operations.
+
+        Args:
+            shortcuts_only: If True, only run fast Phase 0 shortcuts.
         """
         from .dsl_synth import synthesize_dsl_program
 
-        result = synthesize_dsl_program(task, cache, time_budget=time_budget)
+        result = synthesize_dsl_program(
+            task, cache, time_budget=time_budget,
+            shortcuts_only=shortcuts_only,
+        )
 
         if result and self.verbose:
             print(f"  ◇ DSL synthesis (score={result.fitness:.3f})")

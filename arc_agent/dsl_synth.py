@@ -39,6 +39,7 @@ def synthesize_dsl_program(
     cache: TaskCache,
     time_budget: float = 5.0,
     max_depth: int = 2,
+    shortcuts_only: bool = False,
 ) -> Optional[Program]:
     """Synthesize a Grid→Grid DSL program from training examples.
 
@@ -53,6 +54,8 @@ def synthesize_dsl_program(
         cache: Pre-computed scoring cache.
         time_budget: Maximum seconds to spend searching.
         max_depth: Maximum expression tree depth to enumerate.
+        shortcuts_only: If True, only run fast Phase 0 shortcuts (color map,
+            neighbor rules, dimension) without bottom-up enumeration.
 
     Returns:
         A Program wrapping the DSL expression, or None if not found.
@@ -89,6 +92,12 @@ def synthesize_dsl_program(
     result = _try_dimension_shortcuts(inputs, outputs, interp, cache)
     if result is not None:
         return result
+
+    # In shortcuts_only mode, skip expensive bottom-up enumeration.
+    # Used for early pipeline integration (Step 3b2) where we want fast
+    # pattern detection without the full synthesis cost.
+    if shortcuts_only:
+        return None
 
     # Phase 1: Generate depth-0 expressions (leaves)
     leaves = _generate_leaves(inputs, outputs)
@@ -396,7 +405,7 @@ def _try_neighbor_rule_8_shortcut(
     if rule is None:
         return None
 
-    # LOOCV
+    # LOOCV using direct application (not DSL interpreter, which uses n4)
     n = len(inputs)
     if n > 1:
         for hold in range(n):
@@ -405,24 +414,53 @@ def _try_neighbor_rule_8_shortcut(
             r = _learn_neighbor_rule_8(t_in, t_out)
             if r is None:
                 return None
-            expr = DSLExpr.make_op(
-                "apply_neighbor_rule",
-                [DSLExpr.input_grid(), DSLExpr.literal(r, DSLType.COLOR_MAP)],
-                DSLType.GRID,
-            )
-            result = interp.evaluate(expr, inputs[hold])
-            if result is None or result != outputs[hold]:
+            pred = _apply_8neighbor_rule(r, inputs[hold])
+            if pred != outputs[hold]:
                 return None
 
-    expr = DSLExpr.make_op(
-        "apply_neighbor_rule",
-        [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
-        DSLType.GRID,
+    # Wrap as Concept (DSL interpreter uses n4, we need n8)
+    captured_rule = dict(rule)
+
+    def _apply_fn(grid: Grid) -> Grid:
+        return _apply_8neighbor_rule(captured_rule, grid)
+
+    concept = Concept(
+        kind="dsl", name="dsl(neighbor_rule_8)",
+        implementation=_apply_fn,
     )
-    results = _execute_on_all(expr, inputs, interp)
-    if results is None:
-        return None
-    return _check_match(expr, results, outputs, interp, cache)
+    prog = Program([concept])
+    score = cache.score_program(prog)
+    if cache.is_pixel_perfect(prog):
+        prog.fitness = score
+        return prog
+    return None
+
+
+def _apply_8neighbor_rule(
+    rule: dict[tuple[int, int], int],
+    grid: Grid,
+) -> Grid:
+    """Apply an 8-connected neighbor rule to a grid."""
+    from collections import Counter
+
+    h, w = len(grid), len(grid[0])
+    counts = Counter(cell for row in grid for cell in row)
+    bg = counts.most_common(1)[0][0]
+    result = [row[:] for row in grid]
+    for r in range(h):
+        for c in range(w):
+            n8 = 0
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    nr, nc = r + dr, c + dc
+                    if 0 <= nr < h and 0 <= nc < w and grid[nr][nc] != bg:
+                        n8 += 1
+            key = (grid[r][c], n8)
+            if key in rule:
+                result[r][c] = rule[key]
+    return result
 
 
 def _learn_neighbor_rule_8(
@@ -497,16 +535,24 @@ def _try_neighbor_rule_parity_shortcut(
             if pred != outputs[hold]:
                 return None
 
-    # Build the program — use apply_neighbor_rule with the parity rule dict
-    expr = DSLExpr.make_op(
-        "apply_neighbor_rule",
-        [DSLExpr.input_grid(), DSLExpr.literal(rule, DSLType.COLOR_MAP)],
-        DSLType.GRID,
+    # The parity rule uses 4-element keys (cell, n4, r%2, c%2) which
+    # the DSL interpreter's apply_neighbor_rule doesn't support.
+    # Wrap directly as a Concept with the rule closure.
+    captured_rule = dict(rule)
+
+    def _apply_fn(grid: Grid) -> Grid:
+        return _apply_parity_rule(captured_rule, grid)
+
+    concept = Concept(
+        kind="dsl", name="dsl(parity_neighbor_rule)",
+        implementation=_apply_fn,
     )
-    results = _execute_on_all(expr, inputs, interp)
-    if results is None:
-        return None
-    return _check_match(expr, results, outputs, interp, cache)
+    prog = Program([concept])
+    score = cache.score_program(prog)
+    if cache.is_pixel_perfect(prog):
+        prog.fitness = score
+        return prog
+    return None
 
 
 def _learn_neighbor_rule_parity(
