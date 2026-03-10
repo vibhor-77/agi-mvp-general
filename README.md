@@ -35,10 +35,14 @@ pip install numpy
 git clone https://github.com/fchollet/ARC-AGI.git
 
 # Reproduce our results — one command does train + eval with culture transfer
+# Default: ~34 eval solves in ~30 min (8 workers, M-series Mac)
 python benchmark.py --pipeline
 
-# Run the test suite (695 tests)
-python -m unittest discover -s tests -p "*.py"
+# Quick mode for development (~19 eval solves in ~2 min)
+python benchmark.py --pipeline --compute-cap 8M
+
+# Run the test suite (718 tests)
+python -m pytest tests/ -q
 ```
 
 The `--pipeline` command runs all 400 training tasks, saves the learned culture, then runs all 400 evaluation tasks using that culture. Results, logs, and culture snapshots are auto-saved with timestamps. Output file paths are printed at the start so you can `tail -f` them in another terminal.
@@ -100,21 +104,26 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
---compute-cap N        Cell-normalized compute cap (default: 8M, 0=disable)
+--compute-cap N        Cell-normalized compute cap (default: 200M, accepts K/M/B suffixes)
 --contest              Contest mode: uncapped compute, maximize solves
+--help-caps            Show compute cap guide with expected solves and runtimes
 --time-limit N         Max wall-clock seconds per task (default: 0=unlimited)
 ```
 
 ### Compute budget strategy
 
-The solver uses a **cell-normalized computational budget with a proportional ceiling** to maximize solve rate per minute of compute. The per-task eval budget is: `min(compute_cap / cells, compute_cap / 800)`, where `cells` is the average grid cell count and 800 is the median grid size.
+The solver uses a **cell-normalized computational budget** to maximize solve rate per unit of compute. The per-task eval budget is: `min(compute_cap / cells, compute_cap / 800)`, where `cells` is the task's average grid cell count and 800 is the median ARC grid size.
 
-At the **default 8M cap**, the ceiling is 10K evals/task — the natural saturation point where deterministic search (~1-3K) + evolution (~7-9K) exhaust useful work. At **higher caps** (e.g., 400M for contest mode), the ceiling scales proportionally to 500K, allowing deep search. This prevents small-grid tasks from getting runaway budgets at the default cap, while preserving full search depth when the user explicitly requests more compute.
+The default cap of **200M** was chosen via Pareto analysis as the optimal tradeoff: it recovers 97% of known solves (~34/35 eval) in ~30 minutes, compared to ~2.5 hours for the full uncapped run that gains only 1 more solve.
 
-| Mode | Command | Compute cap | Approx. time (8 workers, M-series Mac) |
-|------|---------|-------------|-------------------------|
-| **Default** | `python benchmark.py --pipeline` | 8M | ~5 min |
-| **Contest** | `python benchmark.py --pipeline --contest` | unlimited | 30+ min |
+| Mode | Command | Compute cap | Est. eval solves | Est. time (8 workers) |
+|------|---------|-------------|:---:|:---:|
+| **Quick** | `--compute-cap 8M` | 8M | ~19 | ~2 min |
+| **CI/nightly** | `--compute-cap 50M` | 50M | ~25 | ~11 min |
+| **Default** | `--pipeline` | 200M | ~34 | ~29 min |
+| **Contest** | `--pipeline --contest` | unlimited | ~35 | ~2.5 hrs |
+
+For a full analysis of how these numbers were derived, see [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md).
 
 ### Progress display
 
@@ -157,25 +166,25 @@ python -m arc_agent.evaluate infer --data-dir ARC-AGI/data/evaluation \
 
 ## Results
 
-### ARC-AGI-1 v0.28 (current)
+### ARC-AGI-1 v0.29 (current)
 
 | Metric | Training (400) | Evaluation (400) |
 |--------|---------------|-----------------|
-| **Solved (exact)** | 97/400 (24.3%) | 35/400 (8.8%) |
-| Flukes | 3 | 4 |
-| Overfits | 23 | 9 |
-| Mean score | 0.855 | 0.844 |
+| **Solved (exact)** | 97/400 (24.3%) | ~34/400 (~8.5%) |
+| Max solves (uncapped) | 97/400 (24.3%) | 35/400 (8.8%) |
+| Default compute cap | 200M | 200M |
+| Est. runtime (8 workers) | ~15 min | ~29 min |
 | LLM used | None | None |
 
-Building on v0.27 with DSL extensions, broader near-miss refinement, and compute budget:
+Building on v0.28 with Pareto-optimal compute budgeting, new DSL shortcuts, and pipeline improvements:
 
-- **4 new DSL operations**: diagonal symmetry, 4-way symmetry, largest object extraction, row sorting (39 DSL ops total)
-- **Near-miss candidate pool**: collects high-scoring programs from pair, triple, and DSL search for broader refinement (3-4× more refinement candidates)
-- **Cell-normalized compute budget**: caps large-grid evolution runs that never solve, saving ~18% wall time with 0 solve loss (see [Compute budget strategy](#compute-budget-strategy))
-- **Contest mode**: `--contest` flag removes cap entirely for maximum solves
-- **Computational cost logging**: cpu_time, budget_exceeded per task in JSON output
-- **Pipeline summary**: shows both train and eval with flukes
-- **LOOCV generalization**: prevents neighbor rule overfitting (from v0.27)
+- **Pareto-optimal compute cap (200M)**: data-driven default recovers 97% of solves (34/35 eval) in 20% of uncapped time. See [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) for full analysis.
+- **Human-readable `--compute-cap`**: accepts `200M`, `50M`, `8K`, etc. `--help-caps` shows reference table.
+- **Halves + colormap DSL shortcut**: Phase 0 detection of `or/and/xor_halves_{h,v}` + `apply_color_map` patterns, recovering 2 eval solves without bottom-up enumeration.
+- **8-neighbor and parity neighbor rule shortcuts**: direct application bypassing DSL interpreter key mismatch, recovering 2 eval solves.
+- **Early DSL pipeline step (3b2)**: DSL shortcuts run before budget-gated search phases, preventing budget exhaustion from blocking cheap pattern matches.
+- **`fill_frame_interior` primitive**: detects rectangular color frames and fills interior, solving 1 new eval task.
+- **Anti-overfit candidate selection**: prefers shorter programs and built-in primitives over learned ones.
 
 ### ARC-AGI-1 v0.27
 
@@ -222,6 +231,7 @@ Key improvements over v0.26: LOOCV generalization check for neighbor rules (solv
 | v0.26 | 94/400 (23.5%) | 31/400 (7.8%) | Pipeline mode, DSL synthesis, conditional search, test-aware selection |
 | v0.27 | 97/400 (24.3%) | pending | LOOCV generalization, expanded near-miss pool, code cleanup |
 | v0.28 | 97/400 (24.3%) | 35/400 (8.8%) | 4 new DSL ops, near-miss pool, cell-normalized compute budget |
+| v0.29 | 97/400 (24.3%) | ~34/400 (~8.5%) | Pareto compute cap (200M default), DSL shortcuts, fill_frame_interior |
 
 Note: v0.22 appears lower than v0.17 because the metric definition changed. Earlier versions counted "solved" as pixel-perfect on train only; v0.22+ requires pixel-perfect on BOTH train AND test.
 
@@ -255,10 +265,11 @@ agi-mvp-general/
 │   ├── persistence.py               # Toolkit/Archive serialization (JSON)
 │   ├── cpu_utils.py                 # CPU topology detection (P-cores vs E-cores)
 │   └── main.py                      # Legacy CLI entry point
-├── tests/                           # 695 tests (15 test files)
+├── tests/                           # 718 tests (15 test files)
 ├── scripts/                         # Diagnostic/analysis scripts
 ├── docs/                            # Documentation
 │   ├── ARCHITECTURE.md              # Technical architecture guide
+│   ├── COMPUTE_CAP.md               # Compute cap Pareto analysis and tuning guide
 │   ├── DESIGN_NOTES.md              # Design decisions and rationale
 │   ├── RESEARCH_PLAN.md             # Research plan with metrics
 │   └── PROMPT_LOG.md                # Full session history and results
@@ -315,6 +326,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 | Document | Description |
 |----------|-------------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Technical architecture, module responsibilities, data flow |
+| [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) | Compute cap tuning guide with Pareto analysis |
 | [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Design decisions, rationale, known limitations |
 | [docs/RESEARCH_PLAN.md](docs/RESEARCH_PLAN.md) | Research plan with metrics and protocols |
 | [docs/PROMPT_LOG.md](docs/PROMPT_LOG.md) | Full session history: prompts, reasoning, results |
@@ -326,7 +338,7 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] Object-level primitives (connected components, extraction, recoloring)
 - [x] Object-centric scene reasoning (perceive → compare → infer → apply)
 - [x] Persistent Toolkit serialization (save/load across runs)
-- [x] Test suite (695 tests)
+- [x] Test suite (718 tests)
 - [x] ARC-AGI-1 evaluation harness with train/infer/eval modes
 - [x] Exhaustive pair + triple search
 - [x] Conditional logic in programs (if-then-else branching)
@@ -342,6 +354,9 @@ For a detailed architecture walkthrough, see [docs/ARCHITECTURE.md](docs/ARCHITE
 - [x] DSL synthesis engine (typed expression trees + bottom-up enumeration)
 - [x] Near-miss refinement (append/prepend/replace on high-scoring programs)
 - [x] LOOCV generalization check (prevents neighbor rule overfitting)
+- [x] Pareto-optimal compute cap with human-readable parsing
+- [x] DSL Phase 0 shortcuts (halves+colormap, 8-neighbor, parity)
+- [x] Early DSL pipeline step (before budget exhaustion)
 - [ ] Extend DSL: neighborhood queries, flood fill, cell-level iteration combinator
 - [ ] Richer object rules (movement, conditional, relational)
 - [x] Multiple candidate submission (top-k diverse predictions per task)
