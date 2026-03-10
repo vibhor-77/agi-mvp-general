@@ -100,33 +100,21 @@ tail -f logs/*_pipeline.log         # watch full console output
 --pipeline             Run full train→eval in one command
 --train-dir PATH       Training data dir for pipeline (default: ARC-AGI/data/training)
 --eval-dir PATH        Eval data dir for pipeline (default: ARC-AGI/data/evaluation)
---compute-cap N        Cell-normalized compute cap (default: 200K, 0=disable)
+--compute-cap N        Cell-normalized compute cap (default: 8M, 0=disable)
 --contest              Contest mode: uncapped compute, maximize solves
 --time-limit N         Max wall-clock seconds per task (default: 0=unlimited)
 ```
 
 ### Compute budget strategy
 
-The solver uses a **cell-normalized computational budget** to allocate search effort efficiently. The cost of a single program evaluation varies ~200× depending on grid size (53μs for 90-cell grids vs 16ms for 9,000-cell grids), so a flat eval count is a poor cost metric.
+The solver uses a **cell-normalized computational budget with a per-task ceiling** to maximize solve rate per minute of compute. The per-task eval budget is: `min(compute_cap / cells, 10K)`, where `cells` is the average grid cell count.
 
-The per-task eval budget is simply: `compute_cap / cells`, where `cells` is the average grid cell count for the task. The budget gates all search phases: once `cache.n_evals >= budget`, subsequent phases (conditionals, pairs, triples, DSL, object decomposition, near-miss refinement, evolution) are skipped. Only the initial single-primitive scan and culture transfer always run, as they are the cheapest and highest-ROI phases.
+The **10K per-task ceiling** is the natural saturation point: deterministic search uses ~1-3K evals, evolution adds ~7-9K, and returns diminish sharply beyond that. Without this ceiling, small-grid tasks (e.g., 120 cells) would get enormous budgets (e.g., 8M/120 = 66K evals) that burn time in low-ROI triples search. The **compute_cap** controls when cell-normalization kicks in for large-grid tasks: each eval is more expensive on large grids, so they get proportionally fewer.
 
-| Mode | Command | Compute cap | Approx. time (8 workers) |
+| Mode | Command | Compute cap | Approx. time (8 workers, M-series Mac) |
 |------|---------|-------------|-------------------------|
-| **Fast iteration** (default) | `python benchmark.py --pipeline` | 200K | ~2 min |
-| **Full search** | `python benchmark.py --pipeline --compute-cap 1500000` | 1.5M | ~10 min |
+| **Default** | `python benchmark.py --pipeline` | 8M | ~5 min |
 | **Contest** | `python benchmark.py --pipeline --contest` | unlimited | 30+ min |
-
-**Why cell-normalized?** A single eval costs ~50μs on a 90-cell grid but ~16ms on a 9,000-cell grid (200× difference). A flat eval count treats these identically, so large-grid tasks burn 25× more wall time for the same budget. Cell normalization allocates time proportionally: large-grid tasks get fewer evals (since each is expensive), small-grid tasks get more (since each is cheap).
-
-**Phase ROI** (eval data):
-
-| Phase | Solves | Wall time | ROI (solves/min) |
-|-------|--------|-----------|------------------|
-| Deterministic search | 20 | ~33 min | 0.61 |
-| Evolution (all tasks) | 15 | ~751 min | 0.02 |
-
-Deterministic search delivers 30× better ROI than evolution. Evolution has a 4% solve rate (15/373) but consumes 96% of compute on unsolved tasks.
 
 ### Progress display
 

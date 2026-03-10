@@ -232,16 +232,22 @@ def _solve_one(args: tuple) -> dict:
     culture_path = args[5]
     mode = args[6]
     top_k = args[7] if len(args) > 7 else 3
-    compute_cap = args[8] if len(args) > 8 else 400_000_000
+    compute_cap = args[8] if len(args) > 8 else 8_000_000
     time_limit = args[9] if len(args) > 9 else 0.0
 
-    # Cell-normalized compute cap: evals_budget = compute_cap / cells.
-    # This normalizes for ~200× variation in eval cost by grid size
-    # (a 3×3 grid = 9 cells vs a 30×30 grid = 900 cells).
-    # Minimum 500 evals to allow at least single-primitive scan.
+    # Cell-normalized compute cap with per-task ceiling.
+    # Formula: min(compute_cap / cells, MAX_EVALS_PER_TASK)
+    #
+    # The ceiling prevents small-grid tasks (few cells) from getting
+    # enormous budgets that burn time in low-ROI triples/DSL search.
+    # 10K is the natural saturation point: deterministic search uses
+    # ~1-3K evals, evolution adds ~7-9K, and returns diminish beyond
+    # that.  The compute_cap controls when cell normalization kicks in
+    # for large-grid tasks (each eval costs more, so they get fewer).
+    MAX_EVALS_PER_TASK = 10_000
     if compute_cap > 0:
         cells = _avg_cells(task)
-        evals_budget = max(compute_cap // cells, 500)
+        evals_budget = min(max(compute_cap // cells, 500), MAX_EVALS_PER_TASK)
     else:
         evals_budget = 10_000_000  # Effectively unlimited
 
@@ -494,7 +500,7 @@ def evaluate_dataset(
     save_culture_path: str = "",
     mode: str = "train",
     top_k: int = 3,
-    compute_cap: int = 200_000,
+    compute_cap: int = 8_000_000,
     time_limit: float = 0.0,
 ) -> dict:
     """Run the Four Pillars solver on a dataset and collect metrics.
@@ -523,11 +529,11 @@ def evaluate_dataset(
         top_k:              Number of diverse candidates to test against
                             held-out test output (default 3). Higher = more
                             chances to pass test, but diminishing returns.
-        compute_cap:        Cell-normalized compute cap (default 200K).
-                            The per-task eval budget is compute_cap / cells,
-                            where cells is the avg grid cell count. Set 0
-                            to disable (unlimited evals). Recommended:
-                            200K for fast iteration, 1.5M for full search.
+        compute_cap:        Cell-normalized compute cap (default 8M).
+                            Per-task budget = min(compute_cap / cells, 10K).
+                            The 10K ceiling prevents small-grid runaway;
+                            compute_cap controls when large-grid tasks get
+                            fewer evals.  Set 0 to disable (unlimited).
         time_limit:         Maximum wall-clock seconds per task (default 0
                             = unlimited). Non-deterministic.
 
