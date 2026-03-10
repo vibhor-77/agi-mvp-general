@@ -35,20 +35,24 @@ pip install numpy
 git clone https://github.com/fchollet/ARC-AGI.git
 
 # Reproduce our results — one command does train + eval with culture transfer
-# Default: ~25 eval solves in ~18 min (8 workers, Apple M3 Pro)
 python benchmark.py --pipeline
-
-# Deep mode for near-max solves (~33 eval solves in ~48 min)
-python benchmark.py --pipeline --compute-cap 200M
-
-# Quick mode for fast iteration (~19 eval solves in ~3 min)
-python benchmark.py --pipeline --compute-cap 8M
 
 # Run the test suite (718 tests)
 python -m pytest tests/ -q
 ```
 
 The `--pipeline` command runs all 400 training tasks, saves the learned culture, then runs all 400 evaluation tasks using that culture. Results, logs, and culture snapshots are auto-saved with timestamps. Output file paths are printed at the start so you can `tail -f` them in another terminal.
+
+**Compute vs. solves tradeoff:** The `--compute-cap` flag controls how much search budget each task gets. Higher caps find more solutions but take longer. The default (50M) is tuned for fast iteration; use `--compute-cap 200M` to recover near-maximum solves. Times below are for the full pipeline (train + eval) on an Apple M3 Pro with 8 workers.
+
+| Mode | Command | Eval solves | Pipeline time |
+|------|---------|:-----------:|:-------------:|
+| Quick | `--compute-cap 8M` | ~19/400 | ~5 min |
+| **Default** | `--pipeline` | **~25/400** | **~18 min** |
+| Deep | `--compute-cap 200M` | ~33/400 | ~76 min |
+| Contest | `--contest` | ~35/400 | ~2.5 hrs |
+
+Results are deterministic with `--seed` (default: 42). See [docs/COMPUTE_CAP.md](docs/COMPUTE_CAP.md) for the full Pareto analysis.
 
 **Requirements:** Python 3.9+, NumPy 1.24+. See [INSTALL.md](INSTALL.md) for conda/venv setup.
 
